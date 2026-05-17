@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.30.0] - 2026-05-17
+
+ADR-004 wave-1 refactor release. The 12 559-line `lib.php` monolith is decomposed into focused `lib/*.php` modules, the settings type system moves from a database column to a PHP logical-type registry, and theme becomes a per-user preference backed by a new table. Closes milestone #56. **One schema migration set (three migrations). No new operator-facing pages.** Per-user theme is migrated automatically from the old `users.theme` column by the upgrade migration — **no manual operator action is required.**
+
+### Added
+
+- **`user_preferences` table.** New per-user key/value store (`user_id`, `key`, `value`, `updated_at`) with a composite primary key on (`user_id`, `key`) and an `ON DELETE CASCADE` FK to `users`. Created by migration `3.30.0-user-preferences`, which backfills each user's existing `users.theme` value into a `theme` row so no preference is lost on upgrade.
+- **`user_preference.php` endpoint.** A dedicated session-authenticated, CSRF-protected JSON endpoint (`is_logged_in()` + `csrf_require()`) for reading and writing per-user preferences. It is deliberately NOT part of the Bearer-token `api.php` surface — preferences are a browser-session concern. Current allowlist: `theme`.
+- **12 new `lib/*.php` modules.** `lib.php` is decomposed into `lib/utils.php`, `lib/ip.php`, `lib/config.php`, `lib/db.php`, `lib/audit.php`, `lib/presentation.php`, `lib/settings.php`, `lib/user_preferences.php`, `lib/auth.php`, `lib/auth_password.php`, `lib/auth_rate_limit.php`, and `lib/auth_recaptcha.php` — each a single-responsibility unit with a header-comment contract.
+- **`ipam_config()` / `ipam_config_nested()` accessor (ADR-003).** Replaces ad-hoc `global $config` reads with a function accessor in `lib/config.php`, with both-mode cache invalidation; `ipam_config_nested()` is a separate helper for dotted-path lookups.
+- **`testing/scripts/lib-module-linter.php` (ADR-004).** Enforces the module contract: every `lib/*.php` file carries a header comment, no module `require`s another module, and no function name is defined twice across the module set.
+- **`testing/scripts/memory-audit.sh` (ADR-006).** Orphan / stale / drift detection for the agent Memory MCP session-state graph.
+
+### Changed
+
+- **`settings.type` column dropped.** The settings type system is no longer a database column. It is now a PHP logical-type registry in `lib/settings.php` — an 11-value logical-type model with an `ipam_setting_validate()` dispatch that routes each setting to its validator. Migration `3.30.0-drop-settings-type` removes the column. No operator impact.
+- **Per-user theme moved out of the `users` table.** Theme is now stored in `user_preferences` rather than the `users.theme` column. The `users.theme` column is dropped by migration `3.30.0-user-preferences-drop-theme` after the backfill migration has run.
+- **Theme toggle now POSTs `user_preference.php`.** The standalone `set_theme.php` endpoint is retired; the in-app theme toggle writes through the new per-user preference endpoint.
+
+### Fixed
+
+- **`page_header()` partial extraction finished (#910).** The remaining inline page-header logic is consolidated into `lib/presentation.php`.
+- **Bootstrap-admin INSERT deduplicated in `ipam_db_init()` (#911).** The duplicated bootstrap-admin insert path is collapsed to a single statement.
+- **`prune_audit_log()` driver branching promoted to a Dialect helper (#912).** Per-engine SQL no longer lives inline in `prune_audit_log()`; it is dispatched through the Dialect layer.
+- **`ipam_setting_cache_storage()` split (#915).** The multi-mode function is decomposed into single-purpose functions during the `lib/settings.php` extraction.
+- **`to_int` / `to_str` deduplicated (#916).** The duplicated coercion helpers are unified into a single canonical definition (`lib/utils.php`).
+- **`scan_schedule` save/delete handler consolidated (#917).** The scan-schedule POST handling is unified into one handler.
+- **`addresses_handle_post` controller extracted (#918).** The `addresses.php` POST logic is lifted into a dedicated controller function.
+- **`subnets_handle_post` controller extracted (#919).** The `subnets.php` POST logic is lifted into a dedicated controller function.
+- **`change_password.php` POST actions collapsed to a dispatch table (#920).** Six inline POST action branches are replaced by a dispatch table.
+- **`ipam_table_exists()` helper (#921).** The migration-local `tableExists()` is promoted to a shared helper.
+- **`upgrade.sh` no longer drops `lib/config.php` on upgrade.** The bundle's `rsync` exclude for the install's root `config.php` was unanchored, so it also matched the new `lib/config.php` module — leaving the upgraded install unable to boot. The `config.php` and `data/` excludes are now anchored to the install root (`/config.php`, `/data/`).
+- **"Reserve Infra IPs" no longer opens a stray empty drawer.** The pill is a slide-in form-drawer trigger that also carries `data-drawer-title`; the global-drawer click delegate claimed every `[data-drawer-title]` element and opened a second, empty drawer on top of the real form. The delegate now matches on `data-drawer-tpl` — its template-id content source — so it only fires for genuine global-drawer triggers.
+
+### Internal
+
+- **ADR cycle ADR-001 through ADR-006.** ADR-001 (settings type system) landed as **Option D — withdraw the `setting_definitions` table** after a mid-cycle reversal; the type system is a PHP registry, not a DB-defined one. ADR-005 (backup.php orchestrator/codec separation) is accepted but scoped out of v3.30.0 — the sealed codec is scheduled for v3.32.0 and the migration tool for v4.0.0. ADR-002 introduced `user_preferences`; ADR-003 the config accessor; ADR-004 the `lib.php` decomposition; ADR-006 the Memory MCP audit discipline.
+- **`lib.php` drained from ~12 559 lines to 7 911 lines** as wave-1 modules were extracted. The remaining content is the subject of refactor waves 2 and 3.
+- **`lib-module-linter` rule set:** header-comment rule, cross-module-`require` ban, and function-uniqueness rule, each with PHPUnit coverage.
+- **Milestone #56 ("Refactor wave 1 — lib.php decomposition") closed.**
+
 ## [3.29.0] - 2026-05-14
 
 Test-infrastructure release. Closes milestone #80 (28 issues) — CI tooling, security sweep, and test-coverage cluster from the v3.28.0 code-quality review. **No schema migration. No new pages. No operator action required.** Strictly internal: tighter pre-push gate, harder-to-bypass linters, broader unit-test coverage of contracts that previously had only Playwright coverage.
@@ -1880,6 +1921,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.30.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.29.0...v3.30.0
 [3.29.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.3...v3.29.0
 [3.28.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.2...v3.28.3
 [3.28.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.1...v3.28.2

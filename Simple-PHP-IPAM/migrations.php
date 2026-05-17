@@ -1118,11 +1118,11 @@ function ipam_migrations(): array
                 if ($cfgVal === null) continue;
 
                 $default = $def['default'] ?? null;
-                /** @var string $type */
-                $type = $def['type'] ?? 'string';
+                /** @var string $storageType */
+                $storageType = $def['storage_type'] ?? 'string';
                 /** @var mixed $cfgVal */
                 /** @var mixed $default */
-                $same = match ($type) {
+                $same = match ($storageType) {
                     'bool'   => (bool)$cfgVal === (bool)$default,
                     'int'    => (int)(is_numeric($cfgVal) ? $cfgVal : 0) === (int)(is_numeric($default) ? $default : 0),
                     'json'   => $cfgVal === $default,
@@ -1130,7 +1130,15 @@ function ipam_migrations(): array
                 };
                 if ($same) continue;
 
-                ipam_setting_set($db, $key, $cfgVal, null);
+                // $validate=false: this replays values from an arbitrarily
+                // old config.php. A legacy install can hold a value the
+                // current ipam_setting_validate() would reject (e.g. a URL
+                // that pre-dates FILTER_VALIDATE_URL tightening, or an int
+                // outside today's min/max). Importing it must not hard-fail
+                // the upgrade — the value is preserved as-is and the operator
+                // can correct it later in the Settings UI. This is the ONLY
+                // call site that opts out of the data-layer gate (Finding 1).
+                ipam_setting_set($db, $key, $cfgVal, null, null, false);
                 $imported++;
             }
 
@@ -2316,8 +2324,8 @@ function ipam_migrations(): array
                     continue;
                 }
                 $def = $definitions[$key];
-                $type = to_str($def['type']);
-                $encoded = ipam_setting_encode($def['default'], $type);
+                $storageType = to_str($def['storage_type']);
+                $encoded = ipam_setting_encode($def['default'], $storageType);
                 $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
                 $ex->execute([':k' => $key]);
                 if ($ex->fetch()) {
@@ -2327,7 +2335,7 @@ function ipam_migrations(): array
                     $st = $db->prepare(
                         "INSERT INTO settings (tenant_id, {$kc}, value, type) VALUES (NULL, :k, :v, :t)"
                     );
-                    $st->execute([':k' => $key, ':v' => $encoded, ':t' => $type]);
+                    $st->execute([':k' => $key, ':v' => $encoded, ':t' => $storageType]);
                 } catch (\PDOException $e) {
                     // Row already exists (duplicate key) — skip.
                     if (str_contains($e->getMessage(), 'UNIQUE') || str_contains($e->getMessage(), 'Duplicate')) {
@@ -3970,6 +3978,289 @@ function ipam_migrations(): array
                 $migrateScope('backup.schedule_overdue_state', 'schedule_overdue');
             }
         },
+
+        // v3.30.0 Task 3.3 (ADR-001 § Implications) — drop the legacy
+        // `settings.type` column. The PHP setting registry is authoritative;
+        // the per-row storage type is always derivable from the definition, so
+        // the column is redundant. lib/settings.php was rewired in the same
+        // commit to stop reading/writing settings.type.
+        //
+        // Idempotent: a fresh install whose schema file already omits the
+        // column replays this as a no-op. Engine-portable: SQLite rebuilds the
+        // table; MySQL/Postgres use ALTER TABLE DROP COLUMN.
+        //
+        // Invariant #2 (CLAUDE.md): apply_migrations() brackets every migration
+        // with PRAGMA foreign_keys = OFF; this closure must NOT start its own
+        // transaction or touch FK settings.
+        '3.30.0-drop-settings-type' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            if ($driver === 'sqlite') {
+                // Probe PRAGMA table_info for the `type` column; no-op if gone.
+                $cols = ($db->query("PRAGMA table_info(settings)")
+                    ?: throw new \RuntimeException('PRAGMA table_info(settings) failed'))
+                    ->fetchAll();
+                $hasType = false;
+                foreach ($cols as $col) {
+                    if (($col['name'] ?? null) === 'type') { $hasType = true; break; }
+                }
+                if (!$hasType) {
+                    return;
+                }
+                // SQLite cannot DROP COLUMN when the table has partial indexes
+                // — rebuild the table. apply_migrations() has already set
+                // PRAGMA foreign_keys = OFF.
+                $db->exec(
+                    "CREATE TABLE settings_new ("
+                    . "  tenant_id  INTEGER,"
+                    . "  key        TEXT NOT NULL,"
+                    . "  value      TEXT,"
+                    . "  updated_at TEXT NOT NULL DEFAULT (datetime('now')),"
+                    . "  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL"
+                    . ")"
+                );
+                $db->exec(
+                    "INSERT INTO settings_new (tenant_id, key, value, updated_at, updated_by) "
+                    . "SELECT tenant_id, key, value, updated_at, updated_by FROM settings"
+                );
+                $db->exec("DROP TABLE settings");
+                $db->exec("ALTER TABLE settings_new RENAME TO settings");
+                // Recreate the partial uniqueness indexes (schema.sql).
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global "
+                    . "ON settings (key) WHERE tenant_id IS NULL"
+                );
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant "
+                    . "ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL"
+                );
+            } else {
+                // MySQL / Postgres: check information_schema then DROP COLUMN.
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'CURRENT_SCHEMA()';
+                $chk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    . "WHERE table_name = 'settings' AND column_name = 'type' "
+                    . "AND table_schema = {$schemaFn}"
+                );
+                $chk->execute();
+                if ((int) $chk->fetchColumn() === 0) {
+                    return;
+                }
+                // The settings_type_check CHECK constraint is dropped
+                // implicitly with the column on both engines.
+                $db->exec("ALTER TABLE settings DROP COLUMN type");
+            }
+        },
+
+        '3.30.0-user-preferences' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            // 1. CREATE TABLE IF NOT EXISTS — mirrors schema.{driver}.sql.
+            //    MySQL/Postgres fresh installs ship the table directly from
+            //    their schema file and skip this closure via the pre-seed in
+            //    schema_migrations. SQLite fresh installs and upgrades on all
+            //    three engines reach here; IF NOT EXISTS makes it a no-op when
+            //    the schema file already provided the table.
+            if ($driver === 'sqlite') {
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS user_preferences ("
+                    . "  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+                    . "  key        TEXT NOT NULL,"
+                    . "  value      TEXT,"
+                    . "  updated_at TEXT NOT NULL DEFAULT (datetime('now')),"
+                    . "  PRIMARY KEY (user_id, key)"
+                    . ")"
+                );
+            } elseif ($driver === 'mysql') {
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS user_preferences ("
+                    . "  user_id    BIGINT UNSIGNED NOT NULL,"
+                    . "  `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,"
+                    . "  value      TEXT NULL,"
+                    . "  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),"
+                    . "  PRIMARY KEY (user_id, `key`),"
+                    . "  CONSTRAINT fk_user_prefs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+                    . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+                );
+            } else { // pgsql
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS user_preferences ("
+                    . '  user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,'
+                    . '  "key"      TEXT COLLATE "C" NOT NULL,'
+                    . "  value      TEXT NULL,"
+                    . "  updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),"
+                    . '  PRIMARY KEY (user_id, "key")'
+                    . ")"
+                );
+            }
+
+            // 2. Backfill: copy every existing users.theme value into
+            //    user_preferences under key 'theme', one row per user.
+            //    The WHERE NOT EXISTS guard makes repeated replay safe —
+            //    a row already written by a previous run is left unchanged.
+            //    users.theme is NOT NULL DEFAULT 'auto' so every user has a
+            //    value; backfill all of them verbatim. The users.theme column
+            //    itself is dropped in Task 5.3 chunk 4 once readers are
+            //    repointed (ADR-002).
+            //
+            //    Guard: some migration-test fixtures create a minimal users
+            //    table without the theme column (they mark 1.11 as already
+            //    applied but don't actually run it). Skip the backfill when
+            //    the column is absent rather than fail.
+            $nowExpr = match ($driver) {
+                'mysql' => 'UTC_TIMESTAMP()',
+                'pgsql' => "NOW() AT TIME ZONE 'utc'",
+                default => "datetime('now')", // sqlite
+            };
+            $keyCol = match ($driver) {
+                'mysql' => '`key`',
+                'pgsql' => '"key"',
+                default => 'key', // sqlite
+            };
+
+            // Probe for users.theme before backfilling.
+            $hasTheme = false;
+            if ($driver === 'sqlite') {
+                $cols = ($db->query("PRAGMA table_info(users)")
+                    ?: throw new \RuntimeException('PRAGMA table_info(users) failed'))
+                    ->fetchAll();
+                foreach ($cols as $col) {
+                    if (($col['name'] ?? null) === 'theme') {
+                        $hasTheme = true;
+                        break;
+                    }
+                }
+            } else {
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $chk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    . "WHERE table_name = 'users' AND column_name = 'theme' "
+                    . "AND table_schema = {$schemaFn}"
+                );
+                $chk->execute();
+                $hasTheme = (int) $chk->fetchColumn() > 0;
+            }
+            if (!$hasTheme) {
+                return;
+            }
+
+            $db->exec(
+                "INSERT INTO user_preferences (user_id, {$keyCol}, value, updated_at) "
+                . "SELECT u.id, 'theme', u.theme, {$nowExpr} FROM users u "
+                . "WHERE NOT EXISTS ("
+                . "  SELECT 1 FROM user_preferences up "
+                . "  WHERE up.user_id = u.id AND up.{$keyCol} = 'theme'"
+                . ")"
+            );
+        },
+
+        // v3.30.0 Task 5.3 chunk 4b (ADR-002): drop the now-dead users.theme
+        // column. Every reader and writer was repointed to user_preferences in
+        // chunk 4a; the backfill ran in '3.30.0-user-preferences' (which sorts
+        // BEFORE this key). apply_migrations() already set
+        // PRAGMA foreign_keys = OFF before this closure runs (invariant #2).
+        '3.30.0-user-preferences-drop-theme' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            if ($driver === 'sqlite') {
+                // Probe PRAGMA table_info for the `theme` column; no-op if gone.
+                $cols = ($db->query("PRAGMA table_info(users)")
+                    ?: throw new \RuntimeException('PRAGMA table_info(users) failed'))
+                    ->fetchAll();
+                $hasTheme = false;
+                foreach ($cols as $col) {
+                    if (($col['name'] ?? null) === 'theme') { $hasTheme = true; break; }
+                }
+                if (!$hasTheme) {
+                    return;
+                }
+                // SQLite cannot DROP COLUMN when the table has a partial index
+                // (idx_users_oidc_sub uses WHERE oidc_sub IS NOT NULL).
+                // Full table rebuild required. apply_migrations() has already set
+                // PRAGMA foreign_keys = OFF.
+                $db->exec(
+                    "CREATE TABLE users_new ("
+                    . "  id                       INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    . "  username                 TEXT NOT NULL UNIQUE,"
+                    . "  password_hash            TEXT NOT NULL,"
+                    . "  role                     TEXT NOT NULL DEFAULT 'admin',"
+                    . "  is_active                INTEGER NOT NULL DEFAULT 1,"
+                    . "  name                     TEXT NOT NULL DEFAULT '',"
+                    . "  email                    TEXT NOT NULL DEFAULT '',"
+                    . "  oidc_sub                 TEXT,"
+                    . "  last_login_at            TEXT,"
+                    . "  password_changed_at      TEXT,"
+                    . "  timezone                 TEXT,"
+                    . "  pending_email            TEXT,"
+                    . "  pending_email_token_hash TEXT,"
+                    . "  pending_email_expires_at TEXT,"
+                    . "  totp_secret_enc          TEXT,"
+                    . "  totp_enabled             INTEGER NOT NULL DEFAULT 0,"
+                    . "  failed_auth_count        INTEGER NOT NULL DEFAULT 0,"
+                    . "  locked_until             TEXT,"
+                    . "  lock_reason              TEXT,"
+                    . "  email_otp_enabled        INTEGER NOT NULL DEFAULT 0,"
+                    . "  email_otp_hash           TEXT,"
+                    . "  email_otp_expires_at     TEXT,"
+                    . "  email_otp_attempts       INTEGER NOT NULL DEFAULT 0,"
+                    . "  preferred_mfa_method     TEXT,"
+                    . "  created_at               TEXT NOT NULL DEFAULT (datetime('now')),"
+                    . "  updated_at               TEXT NOT NULL DEFAULT (datetime('now'))"
+                    . ")"
+                );
+                $db->exec(
+                    "INSERT INTO users_new ("
+                    . "  id, username, password_hash, role, is_active, name, email,"
+                    . "  oidc_sub, last_login_at, password_changed_at,"
+                    . "  timezone, pending_email, pending_email_token_hash, pending_email_expires_at,"
+                    . "  totp_secret_enc, totp_enabled, failed_auth_count,"
+                    . "  locked_until, lock_reason,"
+                    . "  email_otp_enabled, email_otp_hash, email_otp_expires_at, email_otp_attempts,"
+                    . "  preferred_mfa_method, created_at, updated_at"
+                    . ") SELECT"
+                    . "  id, username, password_hash, role, is_active, name, email,"
+                    . "  oidc_sub, last_login_at, password_changed_at,"
+                    . "  timezone, pending_email, pending_email_token_hash, pending_email_expires_at,"
+                    . "  totp_secret_enc, totp_enabled, failed_auth_count,"
+                    . "  locked_until, lock_reason,"
+                    . "  email_otp_enabled, email_otp_hash, email_otp_expires_at, email_otp_attempts,"
+                    . "  preferred_mfa_method, created_at, updated_at"
+                    . " FROM users"
+                );
+                $db->exec("DROP TABLE users");
+                $db->exec("ALTER TABLE users_new RENAME TO users");
+                // Recreate the partial uniqueness index (schema.sql).
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub "
+                    . "ON users(oidc_sub) WHERE oidc_sub IS NOT NULL"
+                );
+                // Recreate the updated_at trigger (schema.sql).
+                $db->exec(
+                    "CREATE TRIGGER IF NOT EXISTS users_updated_at "
+                    . "AFTER UPDATE ON users "
+                    . "FOR EACH ROW BEGIN "
+                    . "UPDATE users SET updated_at = datetime('now') WHERE id = OLD.id; "
+                    . "END"
+                );
+            } else {
+                // MySQL / Postgres: probe information_schema then DROP COLUMN.
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $chk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    . "WHERE table_name = 'users' AND column_name = 'theme' "
+                    . "AND table_schema = {$schemaFn}"
+                );
+                $chk->execute();
+                if ((int) $chk->fetchColumn() === 0) {
+                    return;
+                }
+                $db->exec("ALTER TABLE users DROP COLUMN theme");
+            }
+        },
+
     ];
 }
 
@@ -4046,19 +4337,28 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
         $hasTenantCol = in_array('tenant_id', $cols, true);
     }
 
+    // v3.30.0 Task 3.3 (ADR-001): the legacy `settings.type` column was
+    // dropped — the storage type is now derived from the PHP setting registry.
+    // On a fresh install the schema file creates `settings` without `type`
+    // and every migration replays, so this seed INSERT must not reference
+    // the column. Pre-v3.30.0 upgrade installs replaying this migration
+    // still have the column (3.30.0-drop-settings-type removes it later),
+    // but it carries a NOT NULL DEFAULT 'string', so omitting it from the
+    // INSERT column list is safe on every install path.
+    //
     // Use CURRENT_TIMESTAMP rather than datetime('now') so the INSERT
     // is portable across all three drivers (CR #1100).
     if ($hasTenantCol) {
         $check = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND ".ipam_key_col()." = :k");
         $ins = $db->prepare(
-            "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (NULL, :k, :v, :t, CURRENT_TIMESTAMP, NULL)"
+            "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, updated_at, updated_by)
+             VALUES (NULL, :k, :v, CURRENT_TIMESTAMP, NULL)"
         );
     } else {
         $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
         $ins = $db->prepare(
-            "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (:k, :v, :t, CURRENT_TIMESTAMP, NULL)"
+            "INSERT INTO settings (".ipam_key_col().", value, updated_at, updated_by)
+             VALUES (:k, :v, CURRENT_TIMESTAMP, NULL)"
         );
     }
 
@@ -4067,7 +4367,7 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
         $check->execute([':k' => $key]);
         if ($check->fetchColumn() !== false) continue;
 
-        $type = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        $storageType = is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string';
         $value = $def['default'] ?? null;
         if (is_array($config)) {
             $cfgKey = $def['config_key'] ?? null;
@@ -4077,10 +4377,11 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
             }
         }
 
+        // v3.30.0 Task 3.3 (ADR-001): no :t bind — settings.type was dropped.
+        // $storageType is still used to encode the value to its stored TEXT form.
         $ins->execute([
             ':k' => $key,
-            ':v' => ipam_setting_encode($value, $type),
-            ':t' => $type,
+            ':v' => ipam_setting_encode($value, $storageType),
         ]);
         $seeded++;
     }

@@ -84,7 +84,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
 
     <?php foreach ($groupDefs as $key => $def):
         if (!empty($def['deprecated'])) continue;
-        $type      = to_str($def['type'] ?? 'string');
+        $type      = to_str($def['storage_type'] ?? 'string');
         $label     = to_str($def['label'] ?? $key);
         $help      = to_str($def['description'] ?? '');
         $sensitive = !empty($def['sensitive']);
@@ -102,7 +102,13 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
         };
 
         $inputId = 'f-' . $fieldName;
-        $options = ($type === 'string') ? ipam_setting_options($def) : null;
+        // Finding 12 (architecture review 2026-05-16): a field renders a
+        // <select> when it HAS options — not when its storage type happens to
+        // be 'string'. ipam_setting_options() already returns null for
+        // optionless fields (and for bool/int/json fields, which never carry
+        // an `options` entry), so resolving it unconditionally is safe: those
+        // fields still fall through to their checkbox / number / text input.
+        $options = ipam_setting_options($def);
         $badgeHtml =
             '<span class="badge badge-' . e($badge['cls']) . ' settings-row__badge">' . e($badge['text']) . '</span>'
           . '<code class="muted settings-row__key">' . e($key) . '</code>';

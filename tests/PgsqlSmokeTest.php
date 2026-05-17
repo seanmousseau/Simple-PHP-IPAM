@@ -20,8 +20,9 @@ use PHPUnit\Framework\TestCase;
  *      enforces the PG14+ version floor.
  *   2. ipam_db_init($db) loads schema.pgsql.sql end-to-end through
  *      PDO::exec() (validates every CREATE TABLE / FUNCTION / TRIGGER).
- *   3. schema_migrations pre-seed covers every historical version so
- *      apply_migrations() is a no-op on fresh Postgres.
+ *   3. schema_migrations pre-seed covers every historical version, so the
+ *      post-bootstrap schema_migrations row count equals
+ *      ipam_migrations_count().
  *   4. Binary IP columns round-trip cleanly for the three locked #410
  *      test vectors under BYTEA with PDO::PARAM_LOB binding.
  *   5. audit_log append-only triggers raise an exception on both UPDATE

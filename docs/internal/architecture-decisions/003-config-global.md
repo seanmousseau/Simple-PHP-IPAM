@@ -57,7 +57,7 @@ Two distinct problems:
 
 ### Why a decision matters now
 
-- ADR-001 (accepted) introduces `setting_definitions` and shifts the read surface for settings into the DB. The `config_key` mirror column in `setting_definitions` formalises the config→settings fallback. Good.
+- ADR-001 (accepted; amended 2026-05-16 to Option D — no DB table) keeps the settings registry in PHP. Each registry entry's `config_key` declares the config→settings fallback. Good.
 - ADR-002 (accepted) introduces `user_preferences` — a third source for some values (theme today, more tomorrow). The "where does X come from?" question grows a third arm.
 - Refactor wave 2 (v3.32.0 — api.php + import_csv + migrations) is where `$config` reads are most concentrated outside lib.php. Decomposing api.php without first deciding how config reads happen means the new files inherit the `global $config;` pattern by default.
 
@@ -70,7 +70,7 @@ The decision lands now so wave 1's `lib/*.php` extractions can use the post-ADR-
 - **Write surface preserved.** `app_secret` and `backup_vault_key` lazy-generation paths (which legitimately write back to `config.php`) must keep working.
 - **Migration cost.** ~60 call sites is meaningful churn; the option's value must justify the churn.
 - **Procedural-friendly.** ADR-004 locked us into procedural-with-files (no PHP namespaces). Any solution here should not force class-based dependency injection just to read a config key.
-- **Coupling to ADR-001 + ADR-002.** Settings registry `config_key` mirror is already DB-schema-described post-ADR-001. ADR-003 should compose with that, not replace it.
+- **Coupling to ADR-001 + ADR-002.** The settings registry's `config_key` mirror is declared in the PHP registry (ADR-001 Option D). ADR-003 should compose with that, not replace it.
 - **Cold-break boundary.** v3.x preserves backward compat for operator-edited `config.php`. Any config-shape change has to keep the file's external contract identical.
 
 ## Options considered
@@ -126,7 +126,7 @@ Functions read via `IpamConfig::get('app_secret')`. The global goes away.
 
 **Mechanism:** After `init.php` runs, `$config` is "absorbed" — DSN goes into the PDO connection, app_secret goes into a one-time-init slot, force_https sets up the redirect, etc. No function ever reads `$config` again. Any value that's needed at runtime is either:
 
-- In the DB (`settings` or `setting_definitions`).
+- In the DB (the `settings` table).
 - Held in a process-scoped helper (`ipam_app_secret()`, `ipam_force_https_enabled()` — each owns one specific config concept).
 - Computed from the current request (`ipam_app_base_url()`).
 
@@ -274,11 +274,11 @@ All four resolved at stamping (2026-05-15):
 
 ## References
 
-- ADR-001 (accepted) — `setting_definitions` schema; `config_key` mirror column documents the formal config→settings fallback.
+- ADR-001 (accepted; amended to Option D) — settings type system; each PHP registry entry's `config_key` documents the formal config→settings fallback.
 - ADR-002 (accepted) — `user_preferences`; introduces a third source for some values.
 - ADR-004 (accepted) — `lib.php` module shape; declares `lib/config.php` as a foundation module.
 - `Simple-PHP-IPAM/config.php.example` — canonical bootstrap surface.
-- `Simple-PHP-IPAM/lib.php:1665` (`ipam_setting_definitions`) — `config_key` mirror declarations.
+- `Simple-PHP-IPAM/lib/settings.php` (`ipam_setting_definitions_registry`) — `config_key` mirror declarations.
 - `Simple-PHP-IPAM/lib.php:3845` (`ipam_validate_config`), `:4921` (`ipam_config_inject_or_replace_key`), `:3775` (`ipam_config_sync`) — existing config shape helpers.
 - `Simple-PHP-IPAM/lib/app_secret.php` (#1178, v3.28.2) — pattern for per-key lazy-gen accessors that ADR-003 leaves intact.
 - `docs/internal/roadmap.md` § 10 (locked 2026-05-11) — ADR-003's source.

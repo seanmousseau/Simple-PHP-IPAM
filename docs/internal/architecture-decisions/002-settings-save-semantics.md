@@ -5,6 +5,38 @@
 **Scope:** prerequisite for refactor wave 1 (v3.30.0); forward-looking policy for `settings.php` save handling.
 **Stamped by:** Sean Mousseau
 
+> **⚠️ Correction (2026-05-16) — the current-state premise was wrong.**
+> During v3.30.0 execution (Task 5.3 prep) the codebase was checked against this
+> ADR and the assumption that `site_theme` is a row in the `settings` table was
+> found to be **factually incorrect**. There is no `site_theme` setting anywhere
+> in the registry. Theme is *already* a per-user preference: a `users.theme`
+> column written by a dedicated `set_theme.php` endpoint (POST
+> `theme=light|dark|auto`, CSRF + session gated, no admin gate, instant-save),
+> with `assets/app.js` `cycleTheme()` POSTing to it and `page_header()` reading
+> `$_SESSION['user_theme']`.
+>
+> **What survives:** the core decision — Option B, "the group form is the only
+> `settings` save path; per-user instant-save preferences live in a separate
+> subsystem with a separate table and endpoint" — is unaffected. Theme already
+> embodies that separation; it is simply implemented as an ad-hoc `users` column
+> + bespoke endpoint rather than the generic `user_preferences` table.
+>
+> **Re-stamped (Sean, 2026-05-16):** Open Question 2 is resolved to **option (a)**
+> — migrate `users.theme` → `user_preferences` with a one-time backfill, retire
+> `set_theme.php`, drop the `users.theme` column. The Recommendation (point 3)
+> and the Implications file list below are corrected accordingly. Task 5.3
+> resumes on this basis.
+>
+> **Endpoint correction (2026-05-16):** earlier revisions of this ADR (Option B
+> mechanism, Recommendation, Implications) described the write endpoint as a
+> resource in `api.php` / a `/api/user_preference` URL. That is **wrong** and
+> would violate CLAUDE.md invariant #4: `api.php` is the Bearer-only,
+> CSRF-exempt surface and must stay that way. The preference write endpoint is
+> instead a **dedicated session-authenticated, CSRF-required JSON endpoint file**
+> (`user_preference.php` at the web root) that supersedes `set_theme.php`. All
+> "`api.php`" / "`/api/user_preference`" references below should be read as
+> "`user_preference.php`".
+
 ---
 
 ## Context
@@ -120,7 +152,7 @@ The decision drivers tip toward B because:
 
 2. **The atomicity guarantee is preserved.** Bug V's root cause was "two paths writing to the same logical state." B's split makes that impossible by construction: the instant-save path writes to a different table, the group-form path writes to `settings`. Two writes can't race because they're not writing the same rows.
 
-3. **The user-preferences split is a real architectural improvement on its own merits.** Today, "site_theme" sits as a tenant-scoped row in `settings` even though it's conceptually a per-user view preference. Splitting it out clarifies the data model.
+3. **The user-preferences split is a real architectural improvement on its own merits.** A consolidated `user_preferences` table gives per-user view preferences one schema-defined home. *(Correction 2026-05-16: theme is **already** a per-user preference — the `users.theme` column, written by `set_theme.php` — not a `settings` row. The improvement is consolidating that ad-hoc column + bespoke endpoint into the generic `user_preferences` table + `user_preference.php`, not "splitting it out of `settings`.")*
 
 4. **B is forward-compatible with A.** If user_preferences turns out to be more trouble than the UX win is worth, we can collapse back to A in a future release by absorbing user_preferences rows back into `settings` (single migration) and re-locking. A → B → A round-tripping is straightforward; A → C → A isn't.
 
@@ -134,21 +166,22 @@ If accepted:
 
 - **GH issues to open (milestone #56 unless noted):**
   - `feat(prefs): introduce user_preferences table (key/value, user-scoped, no `type` column — schema-defined)` — schema mirrors the v3.30.0 `setting_definitions` shape but is user-scoped not global
-  - `feat(prefs): /api/user_preference endpoint — POST {key, value}, auth = current user, no admin gate, atomic single-row UPSERT`
+  - `feat(prefs): user_preference.php endpoint — dedicated session-authed + CSRF-required JSON file, POST {key, value}, auth = current user, no admin gate, atomic single-row UPSERT (NOT a resource in api.php — invariant #4)`
   - `refactor: move site_theme + future "view preferences" out of settings into user_preferences`
   - `tests(prefs): per-key instant-save round-trip; verify writes never touch settings table; CSRF + auth gate`
   - `docs(internal): security-model.md — user_preferences is user-scoped, no admin gate, distinct trust boundary from settings`
   - `docs(internal): coding-guide.md — "new settings go in settings; new per-user view preferences go in user_preferences. Adding a NEW row to the per-key allowlist requires an ADR amendment, not just a code review."`
 - **GH issues to close / scope-cut:**
   - Bug V #1121 already closed (in v3.27.2 + v3.29.0). This ADR formalises why it stays closed.
-- **Files that change:**
+- **Files that change** *(corrected 2026-05-16 — the original `settings.php` / `site_theme`-row entries were wrong; the real theme surface is `set_theme.php` + the `users.theme` column)*:
   - `Simple-PHP-IPAM/schema.sql` + .mysql + .pgsql — new `user_preferences` table
-  - `Simple-PHP-IPAM/migrations.php` — new migration closure
-  - `Simple-PHP-IPAM/lib.php` — `ipam_user_preference_get/set` helpers
-  - `Simple-PHP-IPAM/api.php` — new resource `user_preference` (POST/GET only, no admin required)
-  - `Simple-PHP-IPAM/settings.php` — `site_theme` row moves out of the group form, replaced by a JS-driven toggle that POSTs to the new endpoint
-  - `assets/app.js` — theme toggle re-wires to the new endpoint
-- **Schema migrations needed in v3.30.0:** yes — new `user_preferences` table + move existing `site_theme` rows.
+  - `Simple-PHP-IPAM/migrations.php` — new migration closure (plus a `users.theme` → `user_preferences` backfill if re-opened Q2 lands on option (a))
+  - `Simple-PHP-IPAM/lib/user_preferences.php` (new module per ADR-004 decomposition) — `ipam_user_preference_get/set` helpers
+  - `Simple-PHP-IPAM/user_preference.php` — new dedicated endpoint file (POST/GET only, session-authed, CSRF-required for POST, no admin gate). **Not** a resource in `api.php` — `api.php` is the Bearer-only, CSRF-exempt surface (CLAUDE.md invariant #4) and stays that way.
+  - `Simple-PHP-IPAM/set_theme.php` — retired / superseded by `user_preference.php` (Q2 option (a))
+  - `Simple-PHP-IPAM/assets/app.js` — `cycleTheme()` re-points from `set_theme.php` to the new endpoint
+  - `Simple-PHP-IPAM/lib/presentation.php` — `page_header()` theme read sources from `user_preferences` instead of `$_SESSION['user_theme']` / `users.theme`
+- **Schema migrations needed in v3.30.0:** new `user_preferences` table; whether existing `users.theme` data is backfilled into it depends on the re-opened Open Question 2.
 - **Docs to update:**
   - `docs/internal/data-dictionary.md` — new `user_preferences` table
   - `docs/internal/security-model.md` — user-preference trust boundary
@@ -162,7 +195,7 @@ If accepted:
 All four resolved at stamping (2026-05-15):
 
 1. ~~Initial allowlist size?~~ **Resolved:** v3.30.0 ships with `site_theme` **only**. Every future entry requires an ADR-002 amendment recorded here, not just a code-review nod.
-2. ~~Existing `site_theme` row migration?~~ **Resolved:** **No backfill.** Users with no `user_preferences` row read the tenant default from `settings` at render time and opt in by toggling. Migration is "create table + endpoint," not "create table + populate N rows per user."
+2. **Re-opened then resolved 2026-05-16 — theme migration / backfill.** The original "no backfill" answer assumed `site_theme` was an unpopulated `settings` row. It is not — theme is the `users.theme` column and holds live per-user data for every user who has set one. **Resolved (re-stamp, Sean, 2026-05-16): option (a)** — migrate `users.theme` → `user_preferences` with a one-time backfill (every existing user's theme is copied into the new table), retire `set_theme.php`, repoint `assets/app.js` `cycleTheme()` and `page_header()` at `user_preference.php`, and drop the `users.theme` column. The backfill is mandatory because live per-user data exists. Rejected: (b) build the subsystem but leave theme on `users.theme` (would ship the table with no allowlisted key, conflicting with Q1); (c) defer the subsystem entirely.
 3. ~~Schema name?~~ **Resolved:** **`user_preferences`**. Idiomatic across other CRUD apps; the scope-creep risk is mitigated by the explicit allowlist rule (open questions answer #1) — adding profile-shaped data to this table requires an ADR amendment.
 4. ~~Step-up auth for preference writes?~~ **Resolved:** **No.** Preferences are cosmetic; CSRF + session is the only gate. A future security-relevant preference (e.g. "show secret values in UI by default") would require an ADR-002 amendment that explicitly raises the auth bar for that key.
 

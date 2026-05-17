@@ -55,7 +55,7 @@ class SmtpTest extends TestCase
         unset($GLOBALS['db'], $GLOBALS['config']);
         // Flush ipam_setting() static cache so settings from one test don't
         // bleed into the next test's assertions.
-        ipam_setting_cache_storage(null, true);
+        ipam_setting_cache_bust();
     }
 
     // -----------------------------------------------------------------------
@@ -106,13 +106,13 @@ class SmtpTest extends TestCase
     public function testSmtpPathReturnsFailureOnBadHost(): void
     {
         // Force smtp.enabled on with a bogus host that cannot connect
-        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES
-            (NULL, 'smtp.enabled',  '1',       'bool'),
-            (NULL, 'smtp.host',     '127.0.0.1', 'string'),
-            (NULL, 'smtp.port',     '19999',   'int'),
-            (NULL, 'smtp.timeout_seconds', '1', 'int'),
-            (NULL, 'smtp.encryption', 'none',  'string'),
-            (NULL, 'smtp.verify_peer', '0',    'bool')
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES
+            (NULL, 'smtp.enabled',  '1'),
+            (NULL, 'smtp.host',     '127.0.0.1'),
+            (NULL, 'smtp.port',     '19999'),
+            (NULL, 'smtp.timeout_seconds', '1'),
+            (NULL, 'smtp.encryption', 'none'),
+            (NULL, 'smtp.verify_peer', '0')
         ");
 
         $result = ipam_send_mail('test@example.com', 'Subject', 'Body');
@@ -129,15 +129,15 @@ class SmtpTest extends TestCase
     public function testAuthPassNotLeakedInErrorMessage(): void
     {
         $secret = 'super-secret-password-12345';
-        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES
-            (NULL, 'smtp.enabled',   '1',          'bool'),
-            (NULL, 'smtp.host',      '127.0.0.1',  'string'),
-            (NULL, 'smtp.port',      '19999',      'int'),
-            (NULL, 'smtp.timeout_seconds', '1',    'int'),
-            (NULL, 'smtp.encryption', 'none',      'string'),
-            (NULL, 'smtp.verify_peer', '0',        'bool'),
-            (NULL, 'smtp.auth_user', 'user@example.com', 'string'),
-            (NULL, 'smtp.auth_pass', " . $this->db->quote($secret) . ", 'string')
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES
+            (NULL, 'smtp.enabled',   '1'),
+            (NULL, 'smtp.host',      '127.0.0.1'),
+            (NULL, 'smtp.port',      '19999'),
+            (NULL, 'smtp.timeout_seconds', '1'),
+            (NULL, 'smtp.encryption', 'none'),
+            (NULL, 'smtp.verify_peer', '0'),
+            (NULL, 'smtp.auth_user', 'user@example.com'),
+            (NULL, 'smtp.auth_pass', " . $this->db->quote($secret) . ")
         ");
 
         $result = ipam_send_mail('test@example.com', 'Subject', 'Body');
@@ -157,13 +157,13 @@ class SmtpTest extends TestCase
         // indirectly: a connection attempt to a bogus host completes (fails
         // with connect error, not a TLS negotiation error) — the error string
         // should not contain "STARTTLS" or "SSL".
-        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES
-            (NULL, 'smtp.enabled',   '1',         'bool'),
-            (NULL, 'smtp.host',      '127.0.0.1', 'string'),
-            (NULL, 'smtp.port',      '19999',     'int'),
-            (NULL, 'smtp.timeout_seconds', '1',   'int'),
-            (NULL, 'smtp.encryption', 'none',     'string'),
-            (NULL, 'smtp.verify_peer', '1',       'bool')
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES
+            (NULL, 'smtp.enabled',   '1'),
+            (NULL, 'smtp.host',      '127.0.0.1'),
+            (NULL, 'smtp.port',      '19999'),
+            (NULL, 'smtp.timeout_seconds', '1'),
+            (NULL, 'smtp.encryption', 'none'),
+            (NULL, 'smtp.verify_peer', '1')
         ");
 
         $result = ipam_send_mail('test@example.com', 'Subject', 'Body');

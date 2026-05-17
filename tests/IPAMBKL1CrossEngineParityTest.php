@@ -230,6 +230,18 @@ class IPAMBKL1CrossEngineParityTest extends TestCase
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
         $db->exec((string) file_get_contents(self::MYSQL_SCHEMA));
+        $prevDialect = $GLOBALS['ipam_dialect'] ?? null;
+        ipam_dialect_from_config(['db_driver' => 'mysql']);
+        try {
+            ensure_migrations_table($db);
+            apply_migrations($db);
+        } finally {
+            if ($prevDialect instanceof Dialect) {
+                $GLOBALS['ipam_dialect'] = $prevDialect;
+            } else {
+                unset($GLOBALS['ipam_dialect']);
+            }
+        }
         return $db;
     }
 
@@ -262,6 +274,18 @@ class IPAMBKL1CrossEngineParityTest extends TestCase
         require_once __DIR__ . '/../Simple-PHP-IPAM/PgsqlStatement.php';
         $db->setAttribute(PDO::ATTR_STATEMENT_CLASS, [PgsqlStatement::class]);
         $db->exec((string) file_get_contents(self::PGSQL_SCHEMA));
+        $prevDialect = $GLOBALS['ipam_dialect'] ?? null;
+        ipam_dialect_from_config(['db_driver' => 'pgsql']);
+        try {
+            ensure_migrations_table($db);
+            apply_migrations($db);
+        } finally {
+            if ($prevDialect instanceof Dialect) {
+                $GLOBALS['ipam_dialect'] = $prevDialect;
+            } else {
+                unset($GLOBALS['ipam_dialect']);
+            }
+        }
         return $db;
     }
 

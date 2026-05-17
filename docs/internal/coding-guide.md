@@ -191,6 +191,111 @@ Full testing procedure (containerized + dev-direct fallback + recurring footguns
 
 ---
 
+## Settings registry (ADR-001)
+
+The setting type system is a **PHP registry — there is no DB table for it**
+(ADR-001 was amended to Option D; the originally-designed `setting_definitions`
+table was withdrawn). The single source of truth is
+`ipam_setting_definitions_registry()` in `lib/settings.php` — a literal array,
+one entry per setting, and the place a new setting is added.
+
+- **A new setting is added by appending an entry to
+  `ipam_setting_definitions_registry()`.** No migration registers a setting;
+  the registry is plain PHP. See `adding-a-setting.md` for the recipe.
+- **Each registry entry carries a raw `type` key holding the 4-value STORAGE
+  type** (`string|int|bool|json`) plus optional `options`/`min`/`max`/
+  `multiline` and the two boolean flags below.
+- **Registry-entry visibility flags are plain PHP keys, not DB columns.**
+  `sensitive => true` masks the value in the UI and in audit details;
+  `deprecated => true` keeps a registry-only setting out of the admin UI (this
+  is the actual hide-from-UI gate). A literal `hidden` key exists on a few
+  legacy entries but nothing reads it — do not rely on it. Neither flag is
+  stored in the database.
+- **`ipam_setting_definitions()` enriches each entry with `storage_type`
+  (4-value) and `logical_type` (11-value) and strips the bare `type` key.**
+  The 11 logical types are `string, int, bool, json, enum, secret, url, email,
+  timezone, cidr, datetime`, derived by `ipam_setting_definitions_logical_type()`.
+  A contract test asserts the absence of a bare `type` key on the returned
+  arrays.
+- **`ipam_setting_storage_type()` maps a logical type to its 4-value storage
+  type; `ipam_setting_validate()` dispatches per-logical-type validation**,
+  returning `true` or a human-readable error string.
+- **The `settings.type` DB column was dropped in v3.30.0** (migration
+  `3.30.0-drop-settings-type`). The storage type is computed from the registry,
+  never read from the row.
+
+---
+
+## Settings vs preferences
+
+Two distinct stores — pick by *who owns the value*.
+
+| | `settings` table | `user_preferences` table |
+|---|---|---|
+| Scope | tenant / global | per-user |
+| Managed by | admins, on `settings.php` | the user, anywhere in the UI |
+| Type system | PHP registry (above) | key allowlist (ADR-002) |
+| Save semantics | explicit form submit | instant-save on change |
+| Auth surface | admin-gated page | `user_preference.php` (session + CSRF) |
+
+Use `settings` for anything an administrator configures for the whole
+deployment (branding, SMTP, OIDC, security policy). Use `user_preferences` for
+per-user, non-privileged choices that should persist across sessions and take
+effect immediately (currently theme). A `user_preferences` write is **not**
+admin-gated; it is constrained by a server-side **key allowlist** so a user can
+only set keys the app recognises (ADR-002). Per-user theme moved out of the old
+`users.theme` column into this table in v3.30.0.
+
+---
+
+## Reading config in extracted modules
+
+Extracted `lib/*.php` modules **must not** use `global $config;`. They read
+config through the accessors in `lib/config.php`:
+
+```php
+$timeout = ipam_config('scan_timeout', 5);          // flat key, with default
+$issuer  = ipam_config_nested(['oidc', 'issuer']);  // nested path
+```
+
+`global $db` is still permitted — it is the runtime PDO handle, not config.
+This is ADR-003. The full sweep of remaining `global $config` sites elsewhere
+in the codebase is tracked as #1207 for a later release; new code in `lib/`
+goes straight to the accessors.
+
+---
+
+## Module-membership cheat sheet
+
+When adding a function, place it in the `lib/*.php` module that owns its
+concern. The v3.30.0 ADR-004 wave-1 extraction split `lib.php` into these
+modules:
+
+| Module | Owns |
+|---|---|
+| `lib/utils.php` | generic string/array/format helpers |
+| `lib/ip.php` | IP parsing, subnet math, binary IP conversion |
+| `lib/config.php` | `ipam_config()` / `ipam_config_nested()` accessors |
+| `lib/db.php` | PDO bootstrap, `ipam_dialect()`, `ipam_bind_binary()` |
+| `lib/audit.php` | `audit()` and audit-log helpers |
+| `lib/presentation.php` | HTML/render helpers, `e()`-adjacent output |
+| `lib/settings.php` | settings registry + type dispatch |
+| `lib/user_preferences.php` | per-user preference read/write + allowlist |
+| `lib/auth.php` | login/session/role checks |
+| `lib/auth_password.php` | password hashing + reset tokens |
+| `lib/auth_rate_limit.php` | login / IP rate limiting + lockout |
+| `lib/auth_recaptcha.php` | reCAPTCHA + login protection |
+
+Pre-existing modules (NOT part of the v3.30.0 extraction) still own their
+areas: `lib/backup*.php`, `lib/restore*.php`, `lib/vault.php`,
+`lib/app_secret.php`, `lib/auth_step_up.php`, `lib/S3Client.php`,
+`lib/SftpClient.php`, `lib/LocalBackupClient.php`,
+`lib/BackupClientInterface.php`. Anything not yet extracted still lives in
+`lib.php`. The module linter (`testing/scripts/lib-module-linter.php`) enforces
+the module header, the cross-module-`require` ban, and function uniqueness.
+
+---
+
 ## PR-time gates (non-negotiable)
 
 A PR that violates any of these gets bounced.

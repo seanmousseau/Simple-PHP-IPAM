@@ -50,23 +50,32 @@ class SettingsTest extends TestCase
         $_SESSION          = [];
 
         ipam_setting_cache_bust();
+        // v3.30.0 ADR-003 — ipam_setting() / ipam_setting_deprecated_keys()
+        // now read config.php via the ipam_config() accessor, which memoises
+        // $GLOBALS['config']. Tests that mutate $GLOBALS['config'] directly
+        // must bump the generation counter so the accessor re-reads it.
+        ipam_config_invalidate_cache();
     }
 
     protected function tearDown(): void
     {
         unset($GLOBALS['db'], $GLOBALS['config']);
-        // Clear entire cache including tenant-keyed entries via the __CLEAR__ sentinel.
-        ipam_setting_cache_storage('__CLEAR__', true);
+        // Clear the entire ipam_setting() cache, including tenant-keyed entries.
+        // v3.30.0 #915 — ipam_setting_cache_storage() was split into the
+        // get/set/clear trio; ipam_setting_cache_bust() delegates to _clear().
+        ipam_setting_cache_bust();
     }
 
     // ------------------------------------------------------------------
     // Helper: seed a settings row directly (bypasses ipam_setting_set()).
     // ------------------------------------------------------------------
-    private function seed(string $key, string $value, ?int $tenantId = null, string $type = 'string'): void
+    private function seed(string $key, string $value, ?int $tenantId = null): void
     {
+        // settings.type was dropped in v3.30.0 (ADR-001): the stored type is
+        // always derived from the PHP registry, so rows carry no type.
         $this->db->prepare(
-            "INSERT INTO settings (tenant_id, key, value, type) VALUES (:t, :k, :v, :ty)"
-        )->execute([':t' => $tenantId, ':k' => $key, ':v' => $value, ':ty' => $type]);
+            "INSERT INTO settings (tenant_id, key, value) VALUES (:t, :k, :v)"
+        )->execute([':t' => $tenantId, ':k' => $key, ':v' => $value]);
     }
 
     public function testRegistryIsNonEmptyAndWellShaped(): void
@@ -75,10 +84,17 @@ class SettingsTest extends TestCase
         $this->assertNotEmpty($defs);
         foreach ($defs as $key => $def) {
             $this->assertIsString($key);
-            $this->assertArrayHasKey('type', $def);
+            // Finding 2 (architecture review 2026-05-16): the in-memory
+            // definition array exposes the 4-value STORAGE type as
+            // `storage_type` and the 11-value type as `logical_type`. A bare
+            // `type` key (the DB column name) must NOT be present — it would
+            // collide in name while meaning the opposite thing.
+            $this->assertArrayHasKey('storage_type', $def);
+            $this->assertArrayHasKey('logical_type', $def);
+            $this->assertArrayNotHasKey('type', $def);
             $this->assertArrayHasKey('group', $def);
             $this->assertArrayHasKey('default', $def);
-            $this->assertContains($def['type'], ['string', 'int', 'bool', 'json']);
+            $this->assertContains($def['storage_type'], ['string', 'int', 'bool', 'json']);
         }
     }
 
@@ -132,22 +148,28 @@ class SettingsTest extends TestCase
 
     public function testJsonTypeRoundTrip(): void
     {
-        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES (NULL, 'test.obj', '{\"a\":1,\"b\":[2,3]}', 'json')");
+        // settings.type was dropped in v3.30.0 (ADR-001): the storage type is
+        // derived from the PHP registry, so this must use a real json-typed
+        // registry key rather than an ad-hoc 'test.obj' key.
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES (NULL, 'alert.recipient_user_ids', '[2,3]')");
         ipam_setting_cache_bust();
 
-        $this->assertSame(['a' => 1, 'b' => [2, 3]], ipam_setting('test.obj'));
+        $this->assertSame([2, 3], ipam_setting('alert.recipient_user_ids'));
     }
 
     public function testInvalidJsonReturnsDefault(): void
     {
-        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES (NULL, 'test.bad', 'not valid json', 'json')");
+        // settings.type was dropped in v3.30.0 (ADR-001): the storage type is
+        // derived from the PHP registry. A json-typed registry key with an
+        // invalid stored value must fall back to the registry default ([]).
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES (NULL, 'alert.recipient_user_ids', 'not valid json')");
         ipam_setting_cache_bust();
 
         $prev = ini_set('error_log', '/dev/null');
-        $result = ipam_setting('test.bad', ['fallback' => true]);
+        $result = ipam_setting('alert.recipient_user_ids');
         if ($prev !== false) ini_set('error_log', $prev);
 
-        $this->assertSame(['fallback' => true], $result);
+        $this->assertSame([], $result);
     }
 
     public function testWriteProducesExactlyOneAuditEntryPerCall(): void
@@ -387,8 +409,9 @@ class SettingsTest extends TestCase
     {
         // v2.7.0 #376: a fresh install with empty $config and empty settings
         // table must not light up the banner for every registered key.
-        $GLOBALS['config'] = [];
+        $GLOBALS["config"] = [];
         ipam_setting_cache_bust();
+        ipam_config_invalidate_cache();
         $this->assertSame([], ipam_setting_deprecated_keys());
     }
 
@@ -414,6 +437,7 @@ class SettingsTest extends TestCase
             'oidc'                => ['enabled' => true],    // customised
         ];
         ipam_setting_cache_bust();
+        ipam_config_invalidate_cache();
 
         $deprecated = ipam_setting_deprecated_keys();
         $keys = array_column($deprecated, 'key');

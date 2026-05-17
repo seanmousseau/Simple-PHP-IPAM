@@ -69,7 +69,7 @@ So decomposition isn't starting from zero — the **backup**, **step-up auth**, 
 - **Autoloading.** Composer PSR-4 is class-based. For procedural functions, you either (a) use `composer.json` autoload-files (works but is a hot loader on every request), (b) explicit `require_once` chain in `init.php` (documents dependency order, slightly verbose), or (c) one shim file that requires everything.
 - **Test isolation.** Modular files unlock per-module unit tests with minimal autoload. This is genuine payoff.
 - **Cross-module discipline.** "Settings calls audit, audit calls `e()`, `e()` is a util" — the layer graph needs to be enforced so we don't end up with circular requires.
-- **Coupling to ADR-001 + ADR-002 + ADR-003.** The settings code path is one of the largest cohesive areas, so it's a natural module — but its shape is decided by ADR-001 (`setting_definitions`) + ADR-002 (`user_preferences` separation) + ADR-003 (`$config` resolution). The lib.php split has to consume those decisions, not pre-empt them.
+- **Coupling to ADR-001 + ADR-002 + ADR-003.** The settings code path is one of the largest cohesive areas, so it's a natural module — but its shape is decided by ADR-001 (settings type system) + ADR-002 (`user_preferences` separation) + ADR-003 (`$config` resolution). The lib.php split has to consume those decisions, not pre-empt them.
 - **Wave staging.** Doing all ~20 extractions in v3.30.0 makes v3.30.0 enormous (already inflated by ADR-001). Phasing across v3.30.0 → v3.31.0 → v3.32.0 spreads the work.
 
 ## Options considered
@@ -222,7 +222,7 @@ This ADR's implementation **spans v3.30.0 and v3.32.0**, with v3.31.0 (encrypt-a
 
 - `lib/utils.php` (no deps)
 - `lib/ip.php` (deps: utils)
-- `lib/db.php` (deps: utils — also incorporates ADR-001's new `setting_definitions` schema reads)
+- `lib/db.php` (deps: utils)
 - `lib/audit.php` (deps: db, utils)
 - `lib/settings.php` (deps: db, audit, utils — ADR-001 dispatch lives here)
 - `lib/user_preferences.php` (deps: db, utils — ADR-002 endpoint lives here)
@@ -281,7 +281,7 @@ This ADR's implementation **spans v3.30.0 and v3.32.0**, with v3.31.0 (encrypt-a
 
 - `feat(lib): extract lib/utils.php` — milestone #56
 - `feat(lib): extract lib/ip.php` — milestone #56
-- `feat(lib): extract lib/db.php (incorporates setting_definitions reads from ADR-001)` — milestone #56
+- `feat(lib): extract lib/db.php` — milestone #56
 - `feat(lib): extract lib/audit.php` — milestone #56
 - `feat(lib): extract lib/settings.php (ADR-001 dispatch home)` — milestone #56
 - `feat(lib): extract lib/user_preferences.php (ADR-002 endpoint home)` — milestone #56

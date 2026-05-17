@@ -12,17 +12,14 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.29.0
+## What's new in v3.30.0
 
-Test-infrastructure release. Closes milestone #80 (28 issues) from the v3.28.0 code-quality review — CI gate split, harder linters, broader unit-test coverage of contracts that previously had only Playwright coverage, and a phpstan-baseline triage. **No schema migration. No new pages. No operator action required.** Strictly internal hardening — a pure tooling release.
+ADR-004 wave-1 refactor release — the `lib.php` monolith is decomposed into focused `lib/*.php` modules, the settings type system moves to a PHP logical-type registry, and theme becomes a per-user preference. Closes milestone #56. **The upgrade migration backfills existing data automatically — no operator action required.**
 
-- **CI gate split into PHPStan / PHPUnit / PHPCS with `if: always()`** — a failing static-analysis step no longer hides a failing test run. Composer audit step added under the same pattern. Every push now surfaces every remaining issue instead of bailing on the first.
-- **`composer install --dry-run` lock-drift detection** — `testing/scripts/check-composer-lock-drift.sh` actually detects vendor/lock skew now (the prior `composer status` approach produced empty output). Wired into the dev gate so a stale `vendor/` fails fast instead of silently shadowing CI.
-- **Migration linter for SQLite-only patterns** — `testing/scripts/migration-linter.php` walks every migration closure and flags ungated `PRAGMA`, `INSERT OR IGNORE`, `CREATE TRIGGER … FOR EACH ROW` and similar SQLite-only SQL. Exposed as both CLI and PHPUnit. Catches engine-portability regressions before they ship.
-- **DialectValidator bare-identifier guard** — every `Dialect::upsert_or_ignore()` now rejects column names containing anything outside `[A-Za-z_][A-Za-z0-9_]*`. Defence in depth on top of the existing prepared-statement boundary.
-- **Centralised cache-buster** in `ipam_asset_buster()` — single helper for `IPAM_VERSION.<mtime>` asset URLs across `page_header()` and `demo_gate.php`, eliminates the per-call-site drift that bit v3.27.x.
-- **Unit-test coverage added for** OIDC claim mapping + auto-link, custom-fields validation, webhook signing, reCAPTCHA Enterprise verify, alert-recipient resolution, audit-log append-only triggers, `ipam_normalise_version()` pre-release strings, EmailOTP TTL boundaries, and api-spec ↔ dispatcher drift. ~120 new unit tests in total — every one of these contracts now fails noisily if a future refactor changes its shape.
-- **Phpstan-baseline triage** — full classification in `docs/internal/phpstan-baseline-triage.md`; the two specific bugs cited in the original D7 review (`backup.php` cast, `db_tools.php` sha256) had already been fixed by ambient cleanup, and the remaining 52 entries are now categorised with follow-up issues opened.
+- **Per-user theme preference** — each user's light/dark theme is now stored per account in a new `user_preferences` table instead of a shared column. Existing users' theme choices are migrated automatically on upgrade.
+- **Large internal refactor** — `lib.php` is split into 12 single-responsibility `lib/*.php` modules, with a module linter enforcing the boundaries. Lays the groundwork for refactor waves 2 and 3.
+- **Settings type system hardened** — setting validation now runs through a PHP logical-type registry with a single dispatch point, replacing a database-defined type column.
+- **No operator action needed** — one automatic schema migration set; no new pages, no config-format changes, existing `config.php` files keep working unchanged.
 
 [Full changelog →](CHANGELOG.md)
 

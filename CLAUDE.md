@@ -36,12 +36,13 @@ The single-source-of-truth doc set is `docs/internal/README.md`. Use the routing
 | Cross-release lessons | `docs/internal/lessons-learned.md` |
 | Cutting a release | `docs/internal/release-workflow.md` (or `hotfix-release.md`) |
 | Adding a migration / page / setting / endpoint / dep | `docs/internal/adding-*.md` |
+| `lib/` module layout, which module a function belongs in | `docs/internal/coding-guide.md` (cheat sheet) + `docs/internal/design-document.md` (Code organisation) |
 
 ---
 
 ## Hot-cache invariants (read every session)
 
-These are the rules a fresh agent must hold in working memory before touching code. Full table of 20 invariants — each with the protected code location and originating incident — is in `docs/internal/design-document.md`.
+These are the rules a fresh agent must hold in working memory before touching code. Full table of 21 invariants — each with the protected code location and originating incident — is in `docs/internal/design-document.md`.
 
 1. **Binary IPs are stored at native length (4B/16B) and bound via `ipam_bind_binary()` with `PARAM_LOB`.** Anything else corrupts data on at least one engine.
 2. **`apply_migrations()` brackets every migration with `PRAGMA foreign_keys = OFF`** (set before `BEGIN`). FK-on `DROP TABLE` cascades child rows — root cause of the v2.2.1 wipe.
@@ -50,6 +51,7 @@ These are the rules a fresh agent must hold in working memory before touching co
 5. **`app_secret` lives in `config.php`, never the DB.** Per-tenant keys (v4+) HKDF-derive from it; vault key likewise stays out of DB.
 6. **No `git push` or PR merge without explicit per-conversation authorisation.** Previous yes does not carry forward.
 7. **Local 3-driver gate before push.** `bash testing/bootstrap-app.sh sqlite|mysql|pgsql` + Playwright all green. CI minutes are paid; don't use CI as the test runner.
+8. **No `global $config;` in extracted `lib/*.php` modules — use the `ipam_config()` accessor (ADR-003).** `global $db` (runtime PDO handle) is still permitted. Full sweep tracked as #1207.
 
 ---
 

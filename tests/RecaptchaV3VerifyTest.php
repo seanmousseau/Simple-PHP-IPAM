@@ -59,6 +59,12 @@ final class RecaptchaV3VerifyTest extends TestCase
         } else {
             unset($GLOBALS['config']);
         }
+        // recaptcha_expected_action_resolved() now reads via ipam_config()
+        // (ADR-004 Task 6.4 / ADR-003). In-place reassignment of
+        // $GLOBALS['config'] to an array with identical count+keys does not
+        // change the auto-detect fingerprint, so the explicit cache
+        // invalidation is required between fixtures.
+        ipam_config_invalidate_cache();
     }
 
     // ---- recaptcha_enterprise_verify fail-open paths ----
@@ -101,6 +107,7 @@ final class RecaptchaV3VerifyTest extends TestCase
     public function testActionResolvedDefaultsToLoginWhenNothingSet(): void
     {
         $GLOBALS['config'] = []; // No legacy key.
+        ipam_config_invalidate_cache();
         // Production also reads ipam_setting('recaptcha_enterprise.expected_action')
         // which returns the schema default (empty) when no setting is configured.
         // Without a configured DB-backed setting, the helper must fall through
@@ -113,6 +120,7 @@ final class RecaptchaV3VerifyTest extends TestCase
         // Legacy escape hatch: $config['recaptcha_action'] wins over the
         // registry key. Documented behaviour since #289.
         $GLOBALS['config'] = ['recaptcha_action' => 'custom_legacy_action'];
+        ipam_config_invalidate_cache();
         $this->assertSame('custom_legacy_action', recaptcha_expected_action_resolved());
     }
 
@@ -123,6 +131,7 @@ final class RecaptchaV3VerifyTest extends TestCase
         // ultimately the 'login' default. Otherwise an accidental empty
         // string in config.php would silently break action matching.
         $GLOBALS['config'] = ['recaptcha_action' => ''];
+        ipam_config_invalidate_cache();
         $this->assertSame('login', recaptcha_expected_action_resolved());
     }
 }

@@ -145,7 +145,7 @@ class OverdueDetectorTest extends TestCase
     protected function tearDown(): void
     {
         unset($GLOBALS['db'], $GLOBALS['config']);
-        ipam_setting_cache_storage('__CLEAR__', true);
+        ipam_setting_cache_bust();
     }
 
     // ---------------------------------------------------------------------

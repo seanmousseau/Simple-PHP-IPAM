@@ -62,7 +62,7 @@ final class SudoOidcReauthValidatorTest extends TestCase
     {
         $_SESSION = [];
         unset($GLOBALS['db'], $GLOBALS['config']);
-        ipam_setting_cache_storage('__CLEAR__', true);
+        ipam_setting_cache_bust();
     }
 
     /**

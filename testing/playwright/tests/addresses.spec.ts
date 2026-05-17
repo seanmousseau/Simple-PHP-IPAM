@@ -58,6 +58,28 @@ test('addresses page loads for subnet', async () => {
   expect(title.toLowerCase()).toContain('address');
 });
 
+// Regression: the "Reserve Infra IPs" pill is a form-drawer (#247) trigger
+// (data-open-drawer) that also carries data-drawer-title. The IpamDrawer
+// global-drawer delegate used to claim every [data-drawer-title] element, so a
+// single click opened TWO drawers — an empty global-drawer on top of the real
+// form-drawer. The pill must open exactly one (the form-drawer).
+test('Reserve Infra IPs pill opens exactly one drawer', async () => {
+  expect(subnetId, 'need subnet from beforeAll').not.toBeNull();
+  // A freshly-created subnet has no addresses, so network/broadcast are
+  // unreserved and the pill renders.
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+
+  const pill = page.locator('[data-open-drawer="reserve-infra"]');
+  await expect(pill).toBeVisible();
+  await pill.click();
+
+  // The slide-in form-drawer opens, carrying the real reserve-infra form.
+  await expect(page.locator('#form-drawer.drawer--open')).toHaveCount(1);
+  await expect(page.locator('#form-drawer #reserve-infra')).toHaveCount(1);
+  // ...and the global-drawer must NOT have opened (empty-drawer regression).
+  await expect(page.locator('#global-drawer.is-open')).toHaveCount(0);
+});
+
 test('create address with mac and expires_at', async () => {
   expect(subnetId).not.toBeNull();
   await page.goto(`addresses.php?subnet_id=${subnetId}`);

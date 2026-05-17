@@ -56,7 +56,7 @@
 | `smtp_test.php` | yes | admin | AJAX POST (CSRF-required): sends a test email via configured SMTP/mail() to the logged-in admin's email; returns JSON `{ok, message, transport}` |
 | `index.php` | — | — | Redirects to dashboard (if logged in) or login |
 | `status.php` | — | — | Health check JSON endpoint (`{"status":"ok"}`) for load balancers/uptime monitors |
-| `set_theme.php` | yes | any | AJAX POST: persists theme preference to `users.theme` |
+| `user_preference.php` | yes | any | AJAX POST/GET (CSRF-required for POST): per-user preference store (ADR-002). Key allowlist `{theme}`; persists to the `user_preferences` table. Supersedes the former `set_theme.php`. |
 | `db_tools.php` | yes | admin | SQL export/import and manual WAL backup (SQLite only). The backup half was migrated to `backup_admin.php` in v3.21.0; this page is no longer in the sidebar but remains reachable by direct URL for the data-export half. |
 | `demo_gate.php` | — | — | Demo mode bot challenge gate (pre-login) |
 | `backup_admin.php` | yes | admin | **Unified Backup & Restore admin surface (v3.21.0).** Five tabs via `?tab=backup\|restore\|destinations\|notifications\|history`. Replaces six legacy pages (`destinations.php`, `backup_history.php`, `remote_backups.php`, `restore_web.php`, `backups.php`, and the backup half of `db_tools.php`) — those URLs still 301 here for legacy bookmarks. |

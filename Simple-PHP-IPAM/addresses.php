@@ -9,52 +9,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
 }
 
-$err = '';
-$msg = '';
-
-$st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, site_id, description FROM subnets ORDER BY ip_version ASC, cidr ASC");
-$st->execute();
-/** @var list<array<string, mixed>> $subnetList */
-$subnetList = $st->fetchAll();
-
-/** @var list<array<string, mixed>> $addrSiteList */
-$addrSiteList = ($db->query("SELECT id, name FROM sites ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
-$addrSiteIds = array_filter(array_column($subnetList, 'site_id'), fn($v) => is_int($v) || (is_string($v) && $v !== ''));
-$addrDistinctSiteCount = count(array_unique(array_map(fn($v) => (int)$v, array_values($addrSiteIds))));
-
-$selectedSubnetId = to_int($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
-$highlightId = to_int($_GET['highlight'] ?? 0);
-$page = q_int('page', 1, 1, 1000000);
-$pageSize = q_int('page_size', 254, 1, 500);
-
-$addrSortCols = ['ip' => 'ip_bin', 'hostname' => 'hostname', 'owner' => 'owner',
-                 'status' => 'status', 'updated' => 'updated_at'];
-$addrSort = parse_sort($addrSortCols, 'ip');
-
-$filterType = to_str($_GET['filter'] ?? '');
-$filterDays = max(1, min(365, to_int($_GET['days'] ?? 30)));
-$filterWhere = '';
-$filterParams = [];
-if ($filterType === 'expired') {
-    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at < :flt_today)";
-    $filterParams[':flt_today'] = date('Y-m-d');
-} elseif ($filterType === 'expiring') {
-    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at >= :flt_from AND a.expires_at < :flt_to)";
-    $filterParams[':flt_from'] = date('Y-m-d');
-    $filterParams[':flt_to']   = date('Y-m-d', (int)strtotime("+{$filterDays} days"));
+/**
+ * Collect cf_* POST keys for the 'address' entity and validate them against
+ * the address custom-field definitions. Behaviour-preserving extract of the
+ * identical inline block previously duplicated in the create/update branches:
+ * on a validation failure the returned 'err' is set but processing still
+ * continues with whatever 'values' were produced (an empty array).
+ *
+ * @return array{values: array<string, mixed>, err: string}
+ */
+function addresses_collect_custom_fields(\PDO $db): array
+{
+    $defs = custom_field_def_list($db, 'address');
+    $values = [];
+    $err = '';
+    if ($defs) {
+        $payload = [];
+        foreach ($_POST as $k => $v) {
+            if (is_string($k) && str_starts_with($k, 'cf_')) {
+                $payload[substr($k, 3)] = to_str($v);
+            }
+        }
+        try {
+            $values = validate_custom_fields_payload($defs, $payload);
+        } catch (\InvalidArgumentException $cfEx) {
+            $err = 'Custom field error: ' . $cfEx->getMessage();
+        }
+    }
+    return ['values' => $values, 'err' => $err];
 }
 
-$selectedSubnet = null;
-if ($selectedSubnetId > 0) {
-    $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, site_id, description, notes FROM subnets WHERE id = :id");
-    $st->execute([':id' => $selectedSubnetId]);
-    /** @var array<string, mixed>|false $selRow */
-    $selRow = $st->fetch();
-    $selectedSubnet = $selRow ?: null;
-}
-$preselectSiteId = to_int($selectedSubnet['site_id'] ?? 0);
+/**
+ * POST controller for addresses.php. Behaviour-preserving extract of the
+ * inline POST handling block. CSRF is verified by the caller before this
+ * runs. Several actions terminate the request directly (header+exit for
+ * create/delete/reserve_infra; JSON echo+exit for update_status/update_cell).
+ * For the inline 'update' action it returns the err/msg pair the render
+ * code displays.
+ *
+ * @param array<string, mixed> $config
+ * @return array{err: string, msg: string}
+ */
+function addresses_handle_post(\PDO $db, array $config): array
+{
+    $err = '';
+    $msg = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
     if ($action === 'create') {
@@ -94,19 +94,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $status = to_str($_POST['status'] ?? 'used');
 
         // Custom fields
-        $cfAddrDefs = custom_field_def_list($db, 'address');
-        $cfAddrValues = [];
-        if ($cfAddrDefs) {
-            $cfPayload = [];
-            foreach ($_POST as $k => $v) {
-                if (is_string($k) && str_starts_with($k, 'cf_')) $cfPayload[substr($k, 3)] = to_str($v);
-            }
-            try {
-                $cfAddrValues = validate_custom_fields_payload($cfAddrDefs, $cfPayload);
-            } catch (\InvalidArgumentException $cfEx) {
-                $err = 'Custom field error: ' . $cfEx->getMessage();
-            }
-        }
+        $cf = addresses_collect_custom_fields($db);
+        $cfAddrValues = $cf['values'];
+        if ($cf['err'] !== '') $err = $cf['err'];
 
         $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE id = :id");
         $st->execute([':id' => $subnetId]);
@@ -215,19 +205,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $status = to_str($_POST['status'] ?? 'used');
 
         // Custom fields
-        $cfAddrDefs = custom_field_def_list($db, 'address');
-        $cfAddrValues = [];
-        if ($cfAddrDefs) {
-            $cfPayload = [];
-            foreach ($_POST as $k => $v) {
-                if (is_string($k) && str_starts_with($k, 'cf_')) $cfPayload[substr($k, 3)] = to_str($v);
-            }
-            try {
-                $cfAddrValues = validate_custom_fields_payload($cfAddrDefs, $cfPayload);
-            } catch (\InvalidArgumentException $cfEx) {
-                $err = 'Custom field error: ' . $cfEx->getMessage();
-            }
-        }
+        $cf = addresses_collect_custom_fields($db);
+        $cfAddrValues = $cf['values'];
+        if ($cf['err'] !== '') $err = $cf['err'];
 
         if (!in_array($status, ['used','reserved','free'], true)) {
             $err = 'Invalid status.';
@@ -418,6 +398,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: addresses.php?subnet_id=' . $subnetId);
         exit;
     }
+
+    return ['err' => $err, 'msg' => $msg];
+}
+
+$err = '';
+$msg = '';
+
+$st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, site_id, description FROM subnets ORDER BY ip_version ASC, cidr ASC");
+$st->execute();
+/** @var list<array<string, mixed>> $subnetList */
+$subnetList = $st->fetchAll();
+
+/** @var list<array<string, mixed>> $addrSiteList */
+$addrSiteList = ($db->query("SELECT id, name FROM sites ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+$addrSiteIds = array_filter(array_column($subnetList, 'site_id'), fn($v) => is_int($v) || (is_string($v) && $v !== ''));
+$addrDistinctSiteCount = count(array_unique(array_map(fn($v) => (int)$v, array_values($addrSiteIds))));
+
+$selectedSubnetId = to_int($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
+$highlightId = to_int($_GET['highlight'] ?? 0);
+$page = q_int('page', 1, 1, 1000000);
+$pageSize = q_int('page_size', 254, 1, 500);
+
+$addrSortCols = ['ip' => 'ip_bin', 'hostname' => 'hostname', 'owner' => 'owner',
+                 'status' => 'status', 'updated' => 'updated_at'];
+$addrSort = parse_sort($addrSortCols, 'ip');
+
+$filterType = to_str($_GET['filter'] ?? '');
+$filterDays = max(1, min(365, to_int($_GET['days'] ?? 30)));
+$filterWhere = '';
+$filterParams = [];
+if ($filterType === 'expired') {
+    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at < :flt_today)";
+    $filterParams[':flt_today'] = date('Y-m-d');
+} elseif ($filterType === 'expiring') {
+    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at >= :flt_from AND a.expires_at < :flt_to)";
+    $filterParams[':flt_from'] = date('Y-m-d');
+    $filterParams[':flt_to']   = date('Y-m-d', (int)strtotime("+{$filterDays} days"));
+}
+
+$selectedSubnet = null;
+if ($selectedSubnetId > 0) {
+    $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, site_id, description, notes FROM subnets WHERE id = :id");
+    $st->execute([':id' => $selectedSubnetId]);
+    /** @var array<string, mixed>|false $selRow */
+    $selRow = $st->fetch();
+    $selectedSubnet = $selRow ?: null;
+}
+$preselectSiteId = to_int($selectedSubnet['site_id'] ?? 0);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    ['err' => $err, 'msg' => $msg] = addresses_handle_post($db, $config);
 }
 
 $addresses = [];

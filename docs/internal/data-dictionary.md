@@ -58,6 +58,7 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 - [`backup_runs`](#backup_runs)
 - [`rate_limit_dampener`](#rate_limit_dampener)
 - [`backup_state`](#backup_state)
+- [`user_preferences`](#user_preferences)
 
 ## `users`
 
@@ -73,7 +74,6 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `oidc_sub` | `TEXT` | `VARCHAR(191)` | `TEXT` | YES |  | IdP subject claim (unique when set) |
 | `last_login_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | YES |  |  |
 | `password_changed_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | YES |  | updated on every local password change; NULL for SSO-only accounts |
-| `theme` | `TEXT` | `VARCHAR(10)` | `TEXT` | NO | `'auto'` | persisted UI theme: auto\|light\|dark |
 | `timezone` | `TEXT` | `TEXT DEFAULT` | `TEXT` | YES |  | per-user display timezone; NULL = use app default |
 | `pending_email` | `TEXT` | `VARCHAR(255)` | `TEXT` | YES |  | v3.2.0: unverified email change pending confirmation |
 | `pending_email_token_hash` | `TEXT` | `VARCHAR(64)` | `TEXT` | YES |  | v3.2.0: SHA-256 hash of the email-verification token |
@@ -586,7 +586,6 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `tenant_id` | `INTEGER` | `INT` | `INTEGER` | YES |  |  |
 | `key` | `—` | `—` | `—` | NO |  |  |
 | `value` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
-| `type` | `TEXT` | `VARCHAR(16)` | `TEXT` | NO | `'string'` |  |
 | `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
 | `updated_by` | `INTEGER` | `BIGINT UNSIGNED` | `BIGINT` | YES |  |  |
 
@@ -793,4 +792,17 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `k` | `TEXT` | `VARCHAR(64)` | `VARCHAR(64)` | NO |  |  |
 | `payload_json` | `TEXT` | `TEXT` | `TEXT` | NO | `'{}'` |  |
 | `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
+
+## `user_preferences`
+
+| Column | SQLite | MySQL | PostgreSQL | Null | Default | Notes |
+|---|---|---|---|---|---|---|
+| `user_id` | `INTEGER` | `BIGINT UNSIGNED` | `BIGINT` | NO |  |  |
+| `key` | `—` | `—` | `—` | NO |  |  |
+| `value` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
+| `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
+
+**Foreign keys**
+
+- `user_id` → `users.id` ON DELETE CASCADE
 
