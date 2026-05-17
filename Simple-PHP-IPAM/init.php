@@ -165,6 +165,10 @@ require_once __DIR__ . '/lib/auth_password.php';
 // Task 6.3). Deps: auth, db, audit. v3.30.0.
 require_once __DIR__ . '/lib/auth_rate_limit.php';
 
+// reCAPTCHA + login-form protection layer (ADR-004 Phase 6 Task 6.4).
+// Deps: auth, utils, settings, config. v3.30.0.
+require_once __DIR__ . '/lib/auth_recaptcha.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run

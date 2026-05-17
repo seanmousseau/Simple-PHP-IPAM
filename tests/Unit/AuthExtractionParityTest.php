@@ -7,8 +7,8 @@ use PHPUnit\Framework\TestCase;
 use ReflectionFunction;
 
 /**
- * ADR-004 Phase 6 Task 6.1 — verifies the core session/CSRF/login extraction
- * from lib.php landed cleanly (#907). The functions must (a) still exist in the
+ * ADR-004 Phase 6 -- verifies the core session/CSRF/login extraction from
+ * lib.php landed cleanly (#907). The functions must (a) still exist in the
  * global namespace and (b) be declared in Simple-PHP-IPAM/lib/auth.php rather
  * than lib.php (proves the move was a real move, not a copy).
  *
@@ -16,10 +16,14 @@ use ReflectionFunction;
  * the 3-driver Playwright smoke. This file only enforces the physical location
  * of the code.
  *
- * Note: rate-limiting (Task 6.3) and reCAPTCHA (Task 6.4) functions are still
- * deferred and must not have moved to lib/auth.php — see the negative assertions.
- * Task 6.2 (password) is complete; validate_password_complexity now lives in
- * lib/auth_password.php.
+ * All four Phase 6 modules are now complete:
+ *  - Task 6.1: session/CSRF/login -- lib/auth.php (asserted positively below)
+ *  - Task 6.2: password policy/reset -- lib/auth_password.php
+ *  - Task 6.3: rate limiting + lockout -- lib/auth_rate_limit.php
+ *  - Task 6.4: reCAPTCHA + login-protection -- lib/auth_recaptcha.php
+ *
+ * The negative assertions below confirm that the rate-limit and reCAPTCHA
+ * functions did NOT land in lib/auth.php (they live in their own modules).
  */
 final class AuthExtractionParityTest extends TestCase
 {
@@ -66,17 +70,16 @@ final class AuthExtractionParityTest extends TestCase
         }
     }
 
-    public function testRateLimitRecaptchaStayInLibPhp(): void
+    public function testRateLimitRecaptchaNotInAuthPhp(): void
     {
-        // These belong to Tasks 6.3–6.4 and must NOT have moved with this task.
-        // Task 6.2 (validate_password_complexity) is complete — it now lives in
-        // lib/auth_password.php and is no longer asserted here.
-        $deferred = [
-            'login_rate_limited',            // Task 6.3 — rate limiting
-            'account_locked_out',            // Task 6.3 — rate limiting
-            'recaptcha_enterprise_verify',   // Task 6.4 — reCAPTCHA
+        // These functions live in their own Phase 6 modules (Tasks 6.3-6.4)
+        // and must NOT be declared in lib/auth.php.
+        $notInAuthPhp = [
+            'login_rate_limited',            // Task 6.3 -- lib/auth_rate_limit.php
+            'account_locked_out',            // Task 6.3 -- lib/auth_rate_limit.php
+            'recaptcha_enterprise_verify',   // Task 6.4 -- lib/auth_recaptcha.php
         ];
-        foreach ($deferred as $fn) {
+        foreach ($notInAuthPhp as $fn) {
             $this->assertTrue(function_exists($fn), "$fn should still be defined");
             $declarer = (new ReflectionFunction($fn))->getFileName();
             $this->assertNotFalse($declarer);
