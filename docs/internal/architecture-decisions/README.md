@@ -40,7 +40,7 @@ See `_template.md`. Every ADR follows the same shape so reviewers can scan in se
 
 | # | Title | Status | Decided | Scope |
 |---|---|---|---|---|
-| 001 | Settings table type system | **accepted** | 2026-05-15 | refactor wave 1 prerequisite |
+| 001 | Settings table type system | **accepted** — amended 2026-05-16 (reversed to Option D, no DB table) | 2026-05-15 | refactor wave 1 prerequisite |
 | 002 | Settings save semantics — per-key vs group-form | **accepted** | 2026-05-15 | refactor wave 1 prerequisite (Bug V #1121 root cause) |
 | 003 | `$config` global as the only config conduit | **accepted** | 2026-05-15 | refactor wave 2 prerequisite |
 | 004 | `lib.php` size + module shape | **accepted** | 2026-05-15 | refactor wave 1 blueprint |

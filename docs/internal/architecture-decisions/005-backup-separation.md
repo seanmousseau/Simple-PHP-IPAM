@@ -237,7 +237,7 @@ All four resolved at stamping (2026-05-15):
 
 ## References
 
-- ADR-001 (accepted) — `setting_definitions` schema; the `secret`-subtype is the only ADR-001-touched key that intersects backup (vault key, app_secret).
+- ADR-001 (accepted; amended to Option D) — settings type system; the `secret` logical type is the only ADR-001-touched concept that intersects backup (vault key, app_secret).
 - ADR-004 (accepted) — declared `lib/backup_codec.php` + `lib/backup_run.php` as v3.32.0 domain modules. ADR-005 specifies what `lib/backup_codec.php` contains.
 - `docs/internal/roadmap.md` § 10 (locked 2026-05-11) — ADR-005's source.
 - `Simple-PHP-IPAM/lib/backup.php` — current orchestrator (3,300 lines).
