@@ -135,7 +135,9 @@ function audit_export(PDO $db, string $what, string $details = ''): void
 function prune_audit_log(PDO $db, int $retentionDays): int
 {
     if ($retentionDays <= 0) return 0;
-    $cutoff = date('Y-m-d H:i:s', (int)strtotime("-{$retentionDays} days"));
+    // audit_log.created_at is stored in UTC; init.php switches PHP's default
+    // timezone to branding.timezone, so the cutoff must be built in UTC too.
+    $cutoff = gmdate('Y-m-d H:i:s', time() - ($retentionDays * 86400));
 
     try {
         return (int) ipam_dialect()->with_append_only_bypass($db, function () use ($db, $cutoff) {

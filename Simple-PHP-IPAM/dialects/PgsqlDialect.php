@@ -271,7 +271,16 @@ final class PgsqlDialect implements Dialect
                 $ownTx = true;
             }
             $db->exec("SET LOCAL ipam.bypass_append_only = '1'");
-            $result = $work();
+            try {
+                $result = $work();
+            } finally {
+                // SET LOCAL is transaction-scoped: when the caller owns the
+                // transaction ($ownTx=false), the bypass would otherwise stay
+                // open for the rest of that outer transaction. Reset it at
+                // $work() return regardless of who owns the tx — parity with
+                // MysqlDialect, which resets its session variable after $work().
+                try { $db->exec("SET LOCAL ipam.bypass_append_only = '0'"); } catch (\Throwable) {}
+            }
             if ($ownTx) {
                 $db->commit();
             }

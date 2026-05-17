@@ -144,7 +144,9 @@ function require_login(): void
                     $row = $st->fetch();
                     if ($row && $row['oidc_sub'] === null) {
                         $changedAt = to_str($row['password_changed_at'] ?? '');
-                        $cutoff    = date('Y-m-d H:i:s', time() - $maxAge * 86400);
+                        // password_changed_at is stored in UTC; build the
+                        // cutoff in UTC (gmdate) for a correct comparison.
+                        $cutoff    = gmdate('Y-m-d H:i:s', time() - $maxAge * 86400);
                         if ($changedAt === '' || $changedAt < $cutoff) {
                             header('Location: change_password.php?expired=1');
                             exit;

@@ -58,7 +58,8 @@ declare(strict_types=1);
  */
 function auth_rate_limited(PDO $db, string $action, string $ip, int $maxAttempts, int $windowSeconds): bool
 {
-    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    // login_attempts.attempted_at is UTC; build the cutoff in UTC (gmdate).
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $windowSeconds);
     $st = $db->prepare(
         "SELECT COUNT(*) AS c FROM login_attempts
           WHERE action = :a AND ip = :ip AND attempted_at >= :cutoff"
@@ -108,7 +109,8 @@ function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSe
  */
 function auth_rate_limit_unlock_at(PDO $db, string $action, string $ip, int $maxAttempts, int $windowSeconds): int
 {
-    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    // login_attempts.attempted_at is UTC; build the cutoff in UTC (gmdate).
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $windowSeconds);
     // CR PR #1141 round 2: locate the THRESHOLD-CROSSING failure (the
     // Nth-from-newest in the window). Pre-fix used MIN() of all
     // in-window failures, which is only correct when exactly N failures
@@ -261,9 +263,13 @@ function clear_login_failures(PDO $db, string $ip): void
 
 function account_locked_out(PDO $db, string $username, int $maxAttempts, int $windowSeconds): bool
 {
-    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    // login_attempts.attempted_at is UTC; build the cutoff in UTC (gmdate).
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $windowSeconds);
+    // Scope to action='login' so forgot_password / email_otp / vault_key_reveal
+    // failures (also written to login_attempts with a username) don't
+    // contaminate login lockout.
     $st = $db->prepare(
-        "SELECT COUNT(*) AS c FROM login_attempts WHERE username = :u AND attempted_at >= :cutoff"
+        "SELECT COUNT(*) AS c FROM login_attempts WHERE action = 'login' AND username = :u AND attempted_at >= :cutoff"
     );
     $st->execute([':u' => $username, ':cutoff' => $cutoff]);
     /** @var array<string, mixed>|false $row */
@@ -273,13 +279,16 @@ function account_locked_out(PDO $db, string $username, int $maxAttempts, int $wi
 
 function clear_account_lockout(PDO $db, string $username): void
 {
-    $db->prepare("DELETE FROM login_attempts WHERE username = :u")
+    // Scope to action='login' so clearing a login lockout does not wipe
+    // forgot_password / email_otp / vault_key_reveal attempt rows.
+    $db->prepare("DELETE FROM login_attempts WHERE action = 'login' AND username = :u")
        ->execute([':u' => $username]);
 }
 
 function purge_old_login_attempts(PDO $db, int $windowSeconds): void
 {
-    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    // login_attempts.attempted_at is UTC; build the cutoff in UTC (gmdate).
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $windowSeconds);
     $db->prepare("DELETE FROM login_attempts WHERE attempted_at < :cutoff")
        ->execute([':cutoff' => $cutoff]);
 }
@@ -300,9 +309,11 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
     $now              = time();
     $windowStartEpoch = (int)($now / $windowSec) * $windowSec;
     $prevWindowEpoch  = $windowStartEpoch - $windowSec;
-    $windowStart      = date('Y-m-d H:i:s', $windowStartEpoch);
-    $prevWindowStart  = date('Y-m-d H:i:s', $prevWindowEpoch);
-    $cutoff           = date('Y-m-d H:i:s', $prevWindowEpoch - $windowSec);
+    // rate_limit_buckets.window_start is UTC and these values are also used
+    // as bucket keys; build them all in UTC (gmdate) for consistency.
+    $windowStart      = gmdate('Y-m-d H:i:s', $windowStartEpoch);
+    $prevWindowStart  = gmdate('Y-m-d H:i:s', $prevWindowEpoch);
+    $cutoff           = gmdate('Y-m-d H:i:s', $prevWindowEpoch - $windowSec);
 
     // Prune buckets older than 2 windows ago
     $db->prepare("DELETE FROM rate_limit_buckets WHERE window_start < :cutoff")
