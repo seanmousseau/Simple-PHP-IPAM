@@ -61,7 +61,10 @@ adminTest.describe('CSS regression', () => {
         fd.append('csrf', csrf);
         fd.append('key', 'theme');
         fd.append('value', 'dark');
-        await fetch('user_preference.php', { method: 'POST', body: fd });
+        const res = await fetch('user_preference.php', { method: 'POST', body: fd });
+        if (!res.ok) {
+          throw new Error('user_preference.php theme=dark write failed: HTTP ' + res.status);
+        }
       }, csrfToken);
 
       // Navigate to another page and check html[data-theme]
@@ -81,7 +84,10 @@ adminTest.describe('CSS regression', () => {
         fd.append('csrf', csrf);
         fd.append('key', 'theme');
         fd.append('value', 'auto');
-        await fetch('user_preference.php', { method: 'POST', body: fd });
+        const res = await fetch('user_preference.php', { method: 'POST', body: fd });
+        if (!res.ok) {
+          throw new Error('user_preference.php theme=auto restore failed: HTTP ' + res.status);
+        }
       }, csrfToken2);
     }
   });

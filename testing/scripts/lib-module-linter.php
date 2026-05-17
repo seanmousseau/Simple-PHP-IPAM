@@ -157,17 +157,19 @@ function ipam_lml_check_header(string $path): ?string {
  * tokenizer rather than a raw regex.
  *
  * A require is flagged when its target path expression resolves to a
- * *sibling* `.php` file in the module's own `lib/` directory. The two
- * resolvable shapes are:
- *   - `__DIR__ . '/Name.php'`            — sibling in the same directory
- *   - `... '/lib/Name.php'`              — explicit lib/ segment in the path
- * For a `__DIR__`-anchored require the literal path fragment is resolved
- * against the linted file's directory (`dirname($path)`), collapsing any
- * `..`/`.` segments — so `require __DIR__ . '/../lib/sibling.php'`, which
- * climbs out and back into lib/, is correctly flagged. Targets that
- * genuinely climb out of `lib/` (`dirname(__DIR__) . '/version.php'`,
- * `__DIR__ . '/../dialects/...'`) resolve elsewhere and are NOT flagged.
- * Dynamic targets (a bare variable) cannot be resolved and are not flagged.
+ * *sibling* `.php` file in the module's own `lib/` directory.
+ *
+ * For a `__DIR__`-anchored require the base directory is `__DIR__` (the
+ * linted file's own dir) climbed up once per enclosing `dirname()` call;
+ * the string literal is appended and the result path-normalized. Every
+ * sibling-import shape therefore resolves correctly and is flagged —
+ * `__DIR__ . '/Name.php'`, `__DIR__ . '/../lib/Name.php'` (climbs out and
+ * back), and `dirname(__DIR__) . '/lib/Name.php'` (parent-then-back-in).
+ * Targets that genuinely land outside `lib/` (`dirname(__DIR__) .
+ * '/version.php'`, `__DIR__ . '/../dialects/...'`) resolve to another
+ * directory and are NOT flagged. A non-`__DIR__` path containing an
+ * explicit `/lib/Name.php` segment is also flagged. Dynamic targets (a
+ * bare variable) cannot be resolved and are not flagged.
  *
  * Returns null on pass, or a human-readable reason on violation.
  */
@@ -219,7 +221,7 @@ function ipam_lml_check_cross_module_require(string $path): ?string {
         // string-literal path fragments and the raw expression text.
         $literal = '';
         $expr = '';
-        $sawDirname = false;
+        $dirnameDepth = 0;
         for ($j = $i + 1; $j < $n; $j++) {
             $t = $tokens[$j];
             if (is_string($t)) {
@@ -234,7 +236,9 @@ function ipam_lml_check_cross_module_require(string $path): ?string {
                 // Strip the surrounding quote characters.
                 $literal .= substr($t[1], 1, -1);
             } elseif ($t[0] === T_STRING && strtolower($t[1]) === 'dirname') {
-                $sawDirname = true;
+                // Count enclosing dirname() calls so the base directory can
+                // be climbed the right number of levels (see below).
+                $dirnameDepth++;
             }
         }
 
@@ -249,21 +253,21 @@ function ipam_lml_check_cross_module_require(string $path): ?string {
             continue;
         }
 
-        // dirname(__DIR__) climbs to the parent of lib/ — not a sibling.
-        if ($sawDirname && str_contains($expr, '__DIR__')) {
-            continue;
-        }
-
         $libDir = dirname($path);
 
         $rootedInLib = false;
         if (str_contains($expr, '__DIR__')) {
-            // __DIR__-anchored: __DIR__ is the linted file's own directory.
-            // Resolve the literal fragment against it, collapsing ..  / .
-            // segments, so a require that climbs out and back into lib/
-            // (e.g. '/../lib/sibling.php') is still detected. A genuinely
-            // out-of-lib target resolves to a different directory.
-            $resolved = ipam_lml_normalize_path($libDir . '/' . $literal);
+            // __DIR__-anchored. The base directory is __DIR__ (the linted
+            // file's own dir) climbed up once per enclosing dirname() call;
+            // the string literal is then appended and the result normalized.
+            // This catches every sibling-import shape — __DIR__ . '/X.php',
+            // __DIR__ . '/../lib/X.php', dirname(__DIR__) . '/lib/X.php' —
+            // while genuine out-of-lib targets resolve to another directory.
+            $base = $libDir;
+            for ($d = 0; $d < $dirnameDepth; $d++) {
+                $base = dirname($base);
+            }
+            $resolved = ipam_lml_normalize_path($base . '/' . $literal);
             if (dirname($resolved) === $libDir
                 && basename($resolved) !== basename($path)) {
                 $rootedInLib = true;
