@@ -156,14 +156,25 @@ final class MfaDisableLockoutGuardTest extends TestCase
         $contents = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/change_password.php');
         $this->assertNotEmpty($contents);
 
+        // v3.30.0 (#920): the inline POST actions were extracted into top-of-file
+        // cp_handle_*() functions dispatched via a table. The #1122 guard must
+        // still fire inside each MFA-disable handler before any user-state
+        // mutation — assert against the function body, not a flat grep window.
         foreach (['disable_totp', 'email_otp_disable', 'passkey_delete'] as $action) {
-            $start = strpos($contents, "'{$action}'");
-            $this->assertNotFalse($start, "handler for action='{$action}' not found");
-            $branch = substr($contents, $start, 1500);
+            $fn    = "function cp_handle_{$action}(";
+            $start = strpos($contents, $fn);
+            $this->assertNotFalse($start, "handler function cp_handle_{$action}() not found");
+            // Slice from the function signature to the start of the next
+            // top-level function (or EOF) so the assertion is scoped to this
+            // handler's body alone.
+            $next   = strpos($contents, "\nfunction ", $start + strlen($fn));
+            $branch = $next === false
+                ? substr($contents, $start)
+                : substr($contents, $start, $next - $start);
             $this->assertStringContainsString(
                 'ipam_sudo_would_strand_user_after_disable',
                 $branch,
-                "#1122: '{$action}' handler must call ipam_sudo_would_strand_user_after_disable() before mutating user state"
+                "#1122: cp_handle_{$action}() must call ipam_sudo_would_strand_user_after_disable() before mutating user state"
             );
         }
     }
