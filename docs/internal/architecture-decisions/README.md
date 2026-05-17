@@ -61,7 +61,7 @@ The wording mirrors ADR-006 § Implications #2; the ADR is the authoritative sou
 
 For each `project:simple-php-ipam:bug:*` entity, verify it has at least one outgoing `affects` / `is-regression-of` / `caused-by` relation, **or** an explicit "no related bugs found" observation. Query:
 
-```
+```text
 mcp__MCP_DOCKER__search_nodes("project:simple-php-ipam:bug:")
 ```
 
