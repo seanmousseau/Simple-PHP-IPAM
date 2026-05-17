@@ -16,8 +16,10 @@ use ReflectionFunction;
  * the 3-driver Playwright smoke. This file only enforces the physical location
  * of the code.
  *
- * Note: rate-limiting (Task 6.3), password (Task 6.2), and reCAPTCHA (Task 6.4)
- * functions deliberately stay behind in lib.php — see the negative assertions.
+ * Note: rate-limiting (Task 6.3) and reCAPTCHA (Task 6.4) functions are still
+ * deferred and must not have moved to lib/auth.php — see the negative assertions.
+ * Task 6.2 (password) is complete; validate_password_complexity now lives in
+ * lib/auth_password.php.
  */
 final class AuthExtractionParityTest extends TestCase
 {
@@ -64,11 +66,12 @@ final class AuthExtractionParityTest extends TestCase
         }
     }
 
-    public function testRateLimitPasswordRecaptchaStayInLibPhp(): void
+    public function testRateLimitRecaptchaStayInLibPhp(): void
     {
-        // These belong to Tasks 6.2-6.4 and must NOT have moved with this task.
+        // These belong to Tasks 6.3–6.4 and must NOT have moved with this task.
+        // Task 6.2 (validate_password_complexity) is complete — it now lives in
+        // lib/auth_password.php and is no longer asserted here.
         $deferred = [
-            'validate_password_complexity',  // Task 6.2 — password
             'login_rate_limited',            // Task 6.3 — rate limiting
             'account_locked_out',            // Task 6.3 — rate limiting
             'recaptcha_enterprise_verify',   // Task 6.4 — reCAPTCHA

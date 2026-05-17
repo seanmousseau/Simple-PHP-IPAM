@@ -157,6 +157,10 @@ require_once __DIR__ . '/lib/user_preferences.php';
 // audit, utils, presentation, config, settings, user_preferences. v3.30.0.
 require_once __DIR__ . '/lib/auth.php';
 
+// Password policy + password-reset token/email layer (ADR-004 Phase 6
+// Task 6.2). Deps: auth, utils, db. v3.30.0.
+require_once __DIR__ . '/lib/auth_password.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run
