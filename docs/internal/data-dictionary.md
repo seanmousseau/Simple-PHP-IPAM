@@ -47,7 +47,6 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 - [`password_reset_tokens`](#password_reset_tokens)
 - [`schema_migrations`](#schema_migrations)
 - [`settings`](#settings)
-- [`setting_definitions`](#setting_definitions)
 - [`webhooks`](#webhooks)
 - [`webhook_deliveries`](#webhook_deliveries)
 - [`custom_field_defs`](#custom_field_defs)
@@ -598,26 +597,6 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 
 - (`tenant_id`, `key`)
 - (`key`)
-
-## `setting_definitions`
-
-| Column | SQLite | MySQL | PostgreSQL | Null | Default | Notes |
-|---|---|---|---|---|---|---|
-| `key` | `—` | `—` | `—` | NO |  |  |
-| `label` | `TEXT` | `VARCHAR(191)` | `TEXT` | NO |  |  |
-| `description` | `TEXT` | `TEXT` | `TEXT` | NO | `''` |  |
-| `type` | `TEXT` | `VARCHAR(32)` | `TEXT` | NO |  |  |
-| `default_value` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
-| `group_name` | `TEXT` | `VARCHAR(64)` | `TEXT` | NO |  |  |
-| `is_sensitive` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
-| `is_hidden` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
-| `min_value` | `REAL` | `DOUBLE` | `DOUBLE PRECISION` | YES |  |  |
-| `max_value` | `REAL` | `DOUBLE` | `DOUBLE PRECISION` | YES |  |  |
-| `is_multiline` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
-| `is_deprecated` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
-| `options_json` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
-| `config_key` | `TEXT` | `VARCHAR(191)` | `TEXT` | YES |  |  |
-| `ordering` | `INTEGER` | `INT` | `INTEGER` | NO | `0` |  |
 
 ## `webhooks`
 

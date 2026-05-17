@@ -72,7 +72,7 @@ class SettingsTest extends TestCase
     private function seed(string $key, string $value, ?int $tenantId = null): void
     {
         // settings.type was dropped in v3.30.0 (ADR-001): the stored type is
-        // always derived from setting_definitions, so rows carry no type.
+        // always derived from the PHP registry, so rows carry no type.
         $this->db->prepare(
             "INSERT INTO settings (tenant_id, key, value) VALUES (:t, :k, :v)"
         )->execute([':t' => $tenantId, ':k' => $key, ':v' => $value]);
@@ -149,7 +149,7 @@ class SettingsTest extends TestCase
     public function testJsonTypeRoundTrip(): void
     {
         // settings.type was dropped in v3.30.0 (ADR-001): the storage type is
-        // derived from setting_definitions, so this must use a real json-typed
+        // derived from the PHP registry, so this must use a real json-typed
         // registry key rather than an ad-hoc 'test.obj' key.
         $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES (NULL, 'alert.recipient_user_ids', '[2,3]')");
         ipam_setting_cache_bust();
@@ -160,7 +160,7 @@ class SettingsTest extends TestCase
     public function testInvalidJsonReturnsDefault(): void
     {
         // settings.type was dropped in v3.30.0 (ADR-001): the storage type is
-        // derived from setting_definitions. A json-typed registry key with an
+        // derived from the PHP registry. A json-typed registry key with an
         // invalid stored value must fall back to the registry default ([]).
         $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES (NULL, 'alert.recipient_user_ids', 'not valid json')");
         ipam_setting_cache_bust();

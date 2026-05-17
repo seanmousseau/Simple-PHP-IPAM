@@ -3155,7 +3155,6 @@ function ipam_logical_table_order(PDO $db): array
         'rate_limit_dampener',
         'aggregates',
         'custom_field_defs',
-        'setting_definitions',
         'audit_log',
         'address_history',
         'backup_destinations',

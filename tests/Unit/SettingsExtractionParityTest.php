@@ -42,8 +42,8 @@ final class SettingsExtractionParityTest extends TestCase
             'ipam_setting_source',
             'ipam_setting_deprecated_keys',
             'ipam_setting_options',
-            // New in this task — the frozen seed registry + ADR-001 dispatch.
-            'ipam_setting_definitions_seed',
+            // New in this task — the PHP setting registry + ADR-001 dispatch.
+            'ipam_setting_definitions_registry',
             'ipam_setting_storage_type',
             'ipam_setting_validate',
             // #915 — the cache trio that replaced ipam_setting_cache_storage().

@@ -141,10 +141,11 @@ require_once __DIR__ . '/lib/presentation.php';
 // cache, the config.php back-compat fallback, ipam_setting_deprecated_keys(),
 // and the ADR-001 11-value logical-type dispatch layer
 // (ipam_setting_storage_type / ipam_setting_validate). Loaded AFTER
-// lib/config.php (ipam_setting() reads config.php via ipam_config()) and —
-// critically — BEFORE ipam_db_init() runs migrations below, because the
-// `3.30.0-setting-definitions` migration seeds the setting_definitions table
-// from ipam_setting_definitions_seed() in this module. ipam_key_col() /
+// lib/config.php (ipam_setting() reads config.php via ipam_config()) and
+// BEFORE ipam_db_init() runs migrations below, because some migration closures
+// call ipam_setting_definitions() to resolve registry defaults (e.g. the
+// config-import settings seeding and the MFA-default seeding migrations).
+// ipam_key_col() /
 // ipam_dialect() / audit() resolve lazily at call time. v3.30.0.
 require_once __DIR__ . '/lib/settings.php';
 

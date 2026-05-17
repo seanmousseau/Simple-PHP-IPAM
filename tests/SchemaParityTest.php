@@ -106,50 +106,6 @@ final class SchemaParityTest extends TestCase
         $this->assertSame('binary', $canonical['subnets']['columns']['network_bin']['type_class']);
     }
 
-    /**
-     * v3.30.0 (ADR-001 § Implications): the setting_definitions table is the
-     * DB-backed registry that replaces the in-PHP $SETTING_DEFS array. This
-     * test pins the column set + PK + per-column nullability on SQLite so a
-     * rename, drop, or accidental nullability flip in any of the three
-     * schema files fails CI before the dispatch refactor lands (Task 5.2).
-     * The MySQL/Postgres convergence assertions above already enforce that
-     * the same column shape exists in schema.mysql.sql and schema.pgsql.sql.
-     */
-    public function testSettingDefinitionsTableShape(): void
-    {
-        $canonical = $this->canonicalSqlite();
-        $this->assertArrayHasKey('setting_definitions', $canonical, 'setting_definitions table missing from schema.sql');
-
-        $cols = $canonical['setting_definitions']['columns'];
-        $expected = [
-            'config_key'    => ['type_class' => 'text', 'nullable' => true],
-            'default_value' => ['type_class' => 'text', 'nullable' => true],
-            'description'   => ['type_class' => 'text', 'nullable' => false],
-            'group_name'    => ['type_class' => 'text', 'nullable' => false],
-            'is_deprecated' => ['type_class' => 'int',  'nullable' => false],
-            'is_hidden'     => ['type_class' => 'int',  'nullable' => false],
-            'is_multiline'  => ['type_class' => 'int',  'nullable' => false],
-            'is_sensitive'  => ['type_class' => 'int',  'nullable' => false],
-            'key'           => ['type_class' => 'text', 'nullable' => false],
-            'label'         => ['type_class' => 'text', 'nullable' => false],
-            'max_value'     => ['type_class' => 'real', 'nullable' => true],
-            'min_value'     => ['type_class' => 'real', 'nullable' => true],
-            'options_json'  => ['type_class' => 'text', 'nullable' => true],
-            'ordering'      => ['type_class' => 'int',  'nullable' => false],
-            'type'          => ['type_class' => 'text', 'nullable' => false],
-        ];
-        $this->assertSame(
-            array_keys($expected),
-            array_keys($cols),
-            'setting_definitions column set drifted from ADR-001 § Implications shape'
-        );
-        foreach ($expected as $name => $want) {
-            $this->assertSame($want['type_class'], $cols[$name]['type_class'], "setting_definitions.$name type_class");
-            $this->assertSame($want['nullable'],   $cols[$name]['nullable'],   "setting_definitions.$name nullability");
-        }
-        $this->assertSame(['key'], $canonical['setting_definitions']['primary_key'], 'setting_definitions PK must be (key)');
-    }
-
     // -------------------------------------------------------------------------
     // Cross-engine parity — gated on the non-SQLite environments
     // -------------------------------------------------------------------------

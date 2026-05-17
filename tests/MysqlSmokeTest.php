@@ -21,11 +21,8 @@ use PHPUnit\Framework\TestCase;
  *   2. ipam_db_init($db) loads schema.mysql.sql end-to-end through
  *      PDO::exec() (validates that every CREATE TABLE / TRIGGER is
  *      valid MySQL syntax, not just valid SqliteDialect output).
- *   3. The schema_migrations pre-seed covers every historical version
- *      EXCEPT 3.30.0-setting-definitions (a data-population migration
- *      that must run on fresh installs to populate setting_definitions).
- *      apply_migrations() runs exactly that one migration on fresh MySQL,
- *      so the post-bootstrap schema_migrations row count still equals
+ *   3. The schema_migrations pre-seed covers every historical version, so
+ *      the post-bootstrap schema_migrations row count equals
  *      ipam_migrations_count().
  *   4. Binary IP columns (ip_bin, network_bin) round-trip cleanly for
  *      the three locked #410 test vectors under VARBINARY(16).
@@ -184,11 +181,6 @@ final class MysqlSmokeTest extends TestCase
         // parity honest).
         // v3.29.0 #1102: replaced hardcoded literal with ipam_migrations_count()
         // so this assertion auto-updates when new migrations are registered.
-        // v3.30.0 Task 5.3: 3.30.0-setting-definitions is intentionally NOT pre-seeded
-        // in the schema files (it seeds ~60 setting_definitions rows that a static
-        // schema file cannot capture) — it runs during apply_migrations() on fresh
-        // mysql/pgsql installs, so the post-bootstrap schema_migrations row count
-        // still equals ipam_migrations_count().
         $this->assertSame(ipam_migrations_count(), (int)$row['c']);
     }
 

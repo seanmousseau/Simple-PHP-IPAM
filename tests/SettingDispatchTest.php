@@ -240,98 +240,49 @@ class SettingDispatchTest extends TestCase
     // before persisting. Invalid values for typed keys raise
     // \InvalidArgumentException; valid values and unknown keys pass through.
     //
-    // The seed fallback used by the round-trip tests above degrades
-    // logical_type to the storage type, so it cannot exercise the url/enum
-    // logical types. These tests populate a real setting_definitions table
-    // (the production source of logical_type) for the keys under test.
-
-    /**
-     * Create and seed a setting_definitions table so ipam_setting_definitions()
-     * returns the real 11-value logical types instead of the seed fallback.
-     *
-     * @param array<string, array<string, mixed>> $rows key => column overrides
-     */
-    private function seedDefinitions(array $rows): void
-    {
-        $this->db->exec(
-            "CREATE TABLE IF NOT EXISTS setting_definitions ("
-            . " key TEXT PRIMARY KEY, label TEXT NOT NULL,"
-            . " description TEXT NOT NULL DEFAULT '', type TEXT NOT NULL,"
-            . " default_value TEXT, group_name TEXT NOT NULL,"
-            . " is_sensitive INTEGER NOT NULL DEFAULT 0,"
-            . " is_hidden INTEGER NOT NULL DEFAULT 0,"
-            . " min_value REAL, max_value REAL,"
-            . " is_multiline INTEGER NOT NULL DEFAULT 0,"
-            . " is_deprecated INTEGER NOT NULL DEFAULT 0,"
-            . " options_json TEXT, config_key TEXT,"
-            . " ordering INTEGER NOT NULL DEFAULT 0)"
-        );
-        $stmt = $this->db->prepare(
-            "INSERT INTO setting_definitions"
-            . " (key, label, type, group_name, min_value, max_value, options_json)"
-            . " VALUES (:k, :l, :t, :g, :mn, :mx, :o)"
-        );
-        foreach ($rows as $key => $col) {
-            $stmt->execute([
-                ':k'  => $key,
-                ':l'  => $key,
-                ':t'  => (string) ($col['type'] ?? 'string'),
-                ':g'  => (string) ($col['group'] ?? 'general'),
-                ':mn' => $col['min'] ?? null,
-                ':mx' => $col['max'] ?? null,
-                ':o'  => isset($col['options']) ? (string) json_encode($col['options']) : null,
-            ]);
-        }
-        ipam_setting_cache_clear();
-    }
+    // These tests use real registry keys whose logical types are derived by
+    // ipam_setting_definitions() — `oidc.discovery_url` (url),
+    // `smtp.timeout_seconds` (int, 1..120), `backup.notify_overdue_grace_minutes`
+    // (int, 5..1440) and `oidc.default_role` (enum).
 
     public function testSetThrowsOnInvalidUrl(): void
     {
-        $this->seedDefinitions(['svc.endpoint' => ['type' => 'url']]);
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('svc.endpoint');
-        ipam_setting_set($this->db, 'svc.endpoint', 'not a url');
+        $this->expectExceptionMessage('oidc.discovery_url');
+        ipam_setting_set($this->db, 'oidc.discovery_url', 'not a url');
     }
 
     public function testSetThrowsOnNonIntegerForIntKey(): void
     {
-        $this->seedDefinitions(['svc.retries' => ['type' => 'int']]);
         $this->expectException(\InvalidArgumentException::class);
-        ipam_setting_set($this->db, 'svc.retries', '1.5');
+        ipam_setting_set($this->db, 'smtp.timeout_seconds', '1.5');
     }
 
     public function testSetThrowsOnOutOfRangeInt(): void
     {
-        $this->seedDefinitions(['svc.grace' => ['type' => 'int', 'min' => 5, 'max' => 1440]]);
         $this->expectException(\InvalidArgumentException::class);
-        ipam_setting_set($this->db, 'svc.grace', 999999);
+        ipam_setting_set($this->db, 'backup.notify_overdue_grace_minutes', 999999);
     }
 
     public function testSetThrowsOnOutOfSetEnum(): void
     {
-        $this->seedDefinitions(['svc.role' => [
-            'type'    => 'enum',
-            'options' => ['readonly' => 'R', 'netops' => 'N', 'admin' => 'A'],
-        ]]);
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('Must be one of:');
-        ipam_setting_set($this->db, 'svc.role', 'superuser');
+        ipam_setting_set($this->db, 'oidc.default_role', 'superuser');
     }
 
     public function testSetAcceptsValidTypedValue(): void
     {
-        $this->seedDefinitions(['svc.endpoint' => ['type' => 'url']]);
-        ipam_setting_set($this->db, 'svc.endpoint', 'https://idp.example.com');
-        $this->assertSame('https://idp.example.com', ipam_setting('svc.endpoint'));
+        ipam_setting_set($this->db, 'oidc.discovery_url', 'https://idp.example.com');
+        $this->assertSame('https://idp.example.com', ipam_setting('oidc.discovery_url'));
     }
 
     public function testSetAcceptsIntegerValuedStringForIntKey(): void
     {
         // The validator accepts an integer-valued string; settings.php passes
         // the raw POSTed string through to the gate.
-        $this->seedDefinitions(['svc.retries' => ['type' => 'int']]);
-        ipam_setting_set($this->db, 'svc.retries', '600');
-        $this->assertSame(600, ipam_setting('svc.retries'));
+        ipam_setting_set($this->db, 'smtp.timeout_seconds', '60');
+        $this->assertSame(60, ipam_setting('smtp.timeout_seconds'));
     }
 
     public function testSetDoesNotValidateUnknownKey(): void
@@ -346,8 +297,7 @@ class SettingDispatchTest extends TestCase
     {
         // The $validate=false opt-out (config-import migration) writes a value
         // the validator would otherwise reject.
-        $this->seedDefinitions(['svc.endpoint' => ['type' => 'url']]);
-        ipam_setting_set($this->db, 'svc.endpoint', 'not a url', null, null, false);
-        $this->assertSame('not a url', ipam_setting('svc.endpoint'));
+        ipam_setting_set($this->db, 'oidc.discovery_url', 'not a url', null, null, false);
+        $this->assertSame('not a url', ipam_setting('oidc.discovery_url'));
     }
 }

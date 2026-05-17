@@ -483,29 +483,6 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings (key) WHERE tenant_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL;
 
--- v3.30.0 (ADR-001 § Implications): DB-backed setting definitions registry.
--- Replaces the in-PHP $SETTING_DEFS array; populated by the v3.30.0 migration
--- (Task 3.2) and read by the dispatch refactor (Task 5.2). Engine-portable
--- column shape — schema.mysql.sql / schema.pgsql.sql carry the same column
--- set with engine-appropriate types (SchemaParityTest enforces lockstep).
-CREATE TABLE IF NOT EXISTS setting_definitions (
-  key            TEXT PRIMARY KEY,
-  label          TEXT NOT NULL,
-  description    TEXT NOT NULL DEFAULT '',
-  type           TEXT NOT NULL,
-  default_value  TEXT,
-  group_name     TEXT NOT NULL,
-  is_sensitive   INTEGER NOT NULL DEFAULT 0,
-  is_hidden      INTEGER NOT NULL DEFAULT 0,
-  min_value      REAL,
-  max_value      REAL,
-  is_multiline   INTEGER NOT NULL DEFAULT 0,
-  is_deprecated  INTEGER NOT NULL DEFAULT 0,
-  options_json   TEXT,
-  config_key     TEXT,
-  ordering       INTEGER NOT NULL DEFAULT 0
-);
-
 -- v3.3.0: Outbound webhooks
 CREATE TABLE IF NOT EXISTS webhooks (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,

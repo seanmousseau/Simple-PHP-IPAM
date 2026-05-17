@@ -20,11 +20,9 @@ use PHPUnit\Framework\TestCase;
  *      enforces the PG14+ version floor.
  *   2. ipam_db_init($db) loads schema.pgsql.sql end-to-end through
  *      PDO::exec() (validates every CREATE TABLE / FUNCTION / TRIGGER).
- *   3. schema_migrations pre-seed covers every historical version EXCEPT
- *      3.30.0-setting-definitions (a data-population migration that must
- *      run on fresh installs to populate setting_definitions). apply_migrations()
- *      runs exactly that one migration on fresh Postgres, so the post-bootstrap
- *      schema_migrations row count still equals ipam_migrations_count().
+ *   3. schema_migrations pre-seed covers every historical version, so the
+ *      post-bootstrap schema_migrations row count equals
+ *      ipam_migrations_count().
  *   4. Binary IP columns round-trip cleanly for the three locked #410
  *      test vectors under BYTEA with PDO::PARAM_LOB binding.
  *   5. audit_log append-only triggers raise an exception on both UPDATE
@@ -173,11 +171,6 @@ final class PgsqlSmokeTest extends TestCase
         // parity honest).
         // v3.29.0 #1102: replaced hardcoded literal with ipam_migrations_count()
         // so this assertion auto-updates when new migrations are registered.
-        // v3.30.0 Task 5.3: 3.30.0-setting-definitions is intentionally NOT pre-seeded
-        // in the schema files (it seeds ~60 setting_definitions rows that a static
-        // schema file cannot capture) — it runs during apply_migrations() on fresh
-        // mysql/pgsql installs, so the post-bootstrap schema_migrations row count
-        // still equals ipam_migrations_count().
         $this->assertSame(ipam_migrations_count(), (int)$row['c']);
     }
 

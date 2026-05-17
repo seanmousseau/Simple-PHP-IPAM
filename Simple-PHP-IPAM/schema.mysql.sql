@@ -657,34 +657,6 @@ CREATE TABLE IF NOT EXISTS settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
--- setting_definitions (v3.30.0, ADR-001 § Implications) — DB-backed registry
--- of setting definitions. Replaces the in-PHP $SETTING_DEFS array; populated
--- by the v3.30.0 migration (Task 3.2). `key` is VARCHAR(191) utf8mb4_bin to
--- satisfy the InnoDB 767-byte index prefix and match the settings.key
--- precedent (#484). Boolean flags use TINYINT(1) UNSIGNED, which folds to
--- 'int' in SchemaParityTest's type class — matching SQLite INTEGER and
--- Postgres SMALLINT.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS setting_definitions (
-  `key`         VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,
-  label         VARCHAR(191) NOT NULL,
-  description   TEXT NOT NULL DEFAULT (''),
-  type          VARCHAR(32) NOT NULL,
-  default_value TEXT NULL,
-  group_name    VARCHAR(64) NOT NULL,
-  is_sensitive  TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
-  is_hidden     TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
-  min_value     DOUBLE NULL,
-  max_value     DOUBLE NULL,
-  is_multiline  TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
-  is_deprecated TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
-  options_json  TEXT NULL,
-  config_key    VARCHAR(191) NULL,
-  ordering      INT NOT NULL DEFAULT 0,
-  PRIMARY KEY (`key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- ---------------------------------------------------------------------------
 -- custom_field_defs (v3.5.0, #313/#595) — admin-defined per-entity metadata
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS custom_field_defs (
