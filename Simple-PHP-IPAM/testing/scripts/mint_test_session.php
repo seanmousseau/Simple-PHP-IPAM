@@ -18,8 +18,8 @@
  *   role          string   admin|readonly
  *   last_active   int      unix timestamp; require_login() idle-times-out
  *                          on this so we set it to time() at mint.
- *   user_theme    string   loaded from users.theme so page_header() doesn't
- *                          re-query.
+ *   user_theme    string   loaded from user_preferences (key 'theme') so
+ *                          page_header() doesn't re-query.
  *
  * Usage:
  *   php mint_test_session.php <username>
@@ -52,7 +52,7 @@ require_once $libPath;
 
 $db = ipam_db($config);
 $st = $db->prepare(
-    "SELECT id, username, role, theme FROM users WHERE username = :u LIMIT 1"
+    "SELECT id, username, role FROM users WHERE username = :u LIMIT 1"
 );
 $st->execute([':u' => $username]);
 $row = $st->fetch();
@@ -62,7 +62,10 @@ if (!is_array($row)) {
 }
 
 $uid   = to_int($row['id'] ?? 0);
-$theme = to_str($row['theme'] ?? 'auto');
+$theme = 'auto';
+if ($uid > 0) {
+    $theme = to_str(ipam_user_preference_get($db, $uid, 'theme') ?? 'auto');
+}
 if (!in_array($theme, ['auto', 'light', 'dark'], true)) $theme = 'auto';
 
 // Resolve session.save_path the same way init.php does. If it's empty, fall

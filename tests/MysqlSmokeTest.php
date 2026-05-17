@@ -21,8 +21,9 @@ use PHPUnit\Framework\TestCase;
  *   2. ipam_db_init($db) loads schema.mysql.sql end-to-end through
  *      PDO::exec() (validates that every CREATE TABLE / TRIGGER is
  *      valid MySQL syntax, not just valid SqliteDialect output).
- *   3. The schema_migrations pre-seed covers every historical version,
- *      so apply_migrations() is a no-op on fresh MySQL.
+ *   3. The schema_migrations pre-seed covers every historical version, so
+ *      the post-bootstrap schema_migrations row count equals
+ *      ipam_migrations_count().
  *   4. Binary IP columns (ip_bin, network_bin) round-trip cleanly for
  *      the three locked #410 test vectors under VARBINARY(16).
  *   5. audit_log append-only triggers raise SQLSTATE '45000' errno 1644

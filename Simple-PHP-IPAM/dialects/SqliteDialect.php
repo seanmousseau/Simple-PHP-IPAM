@@ -148,4 +148,46 @@ final class SqliteDialect implements Dialect
     {
         return $value;
     }
+
+    /**
+     * SQLite RAISE(ABORT) triggers fire on DELETE, so the only way to prune
+     * audit_log is to drop the two triggers, run the work, and recreate them.
+     * BEGIN IMMEDIATE takes a reserved write lock for the whole window, and
+     * SQLite DDL is transactional — so no other connection can observe the
+     * table without its append-only triggers. The triggers are recreated from
+     * append_only_trigger('audit_log') rather than via the global
+     * ensure_audit_log_triggers() to keep the dialect free of any lib/ deps.
+     *
+     * On any error the transaction is rolled back (which also restores the
+     * triggers, since the DROPs are part of the same transaction).
+     *
+     * @template T
+     * @param callable():T $work
+     * @return T
+     */
+    public function with_append_only_bypass(PDO $db, callable $work): mixed
+    {
+        try {
+            $db->exec("BEGIN IMMEDIATE");
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
+
+            $result = $work();
+
+            // Recreate the append-only triggers explicitly before COMMIT.
+            // append_only_trigger('audit_log') emits exactly the two
+            // CREATE TRIGGER IF NOT EXISTS statements that
+            // ensure_audit_log_triggers() installs.
+            foreach ($this->append_only_trigger('audit_log') as $stmt) {
+                $db->exec($stmt);
+            }
+            $db->exec("COMMIT");
+
+            return $result;
+        } catch (\Throwable $e) {
+            // ROLLBACK undoes the DROPs too, so the triggers are restored.
+            try { $db->exec("ROLLBACK"); } catch (\Throwable) {}
+            throw $e;
+        }
+    }
 }

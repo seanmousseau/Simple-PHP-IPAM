@@ -85,6 +85,90 @@ set_exception_handler(static function (\Throwable $e): void {
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
+// Pure utility helpers (e(), to_int(), to_str(), q_int(), format_bytes(),
+// base64url_*, ipam_normalise_version()). Loaded before lib.php so the
+// early HTTPS-redirect / session-setup code below can call to_str() without
+// pulling in the rest of lib.php. v3.30.0 ADR-004 Phase 2.
+require_once __DIR__ . '/lib/utils.php';
+
+// Pure IP/CIDR math + ipam_bind_binary() (invariant #1 from CLAUDE.md).
+// Loaded after utils (depends on to_int/to_str) and before lib.php so any
+// extracted helper can be called from early bootstrap if ever needed.
+// v3.30.0 ADR-004 Phase 2 Task 2.2.
+require_once __DIR__ . '/lib/ip.php';
+
+// ipam_config() / ipam_config_nested() / ipam_config_invalidate_cache() —
+// ADR-003 Option D accessor. Must load AFTER config.php has populated
+// $GLOBALS['config'] (line 86 above) and BEFORE lib.php so that any module
+// extracted in v3.30.0+ (db, audit, settings, user_preferences, presentation,
+// auth ×4) can call ipam_config() at top-of-function instead of `global $config;`.
+// v3.30.0 ADR-004 Phase 2 Task 2.3.
+require_once __DIR__ . '/lib/config.php';
+
+// DB layer (#378, ADR-004 Phase 2 Task 4.1) — ipam_db() / ipam_dialect() /
+// apply_migrations() / audit_log + schema_migrations self-heal / SQLite dump
+// tooling. Loaded AFTER lib/config.php (its bootstrap-admin path reads via
+// ipam_config_nested()) and BEFORE lib.php so any lib.php function can call
+// these without a separate bootstrap step. The Dialect classes themselves are
+// required below; db.php's type hints resolve lazily at call time, which is
+// always after init.php has finished loading. v3.30.0.
+require_once __DIR__ . '/lib/db.php';
+
+// Audit layer (#912, ADR-004 Phase 4 Task 4.2) — audit() / audit_export() /
+// prune_audit_log() / audit_filter_validate_* and the AUDIT_FILTER_PREFIXES
+// const. Loaded AFTER lib/db.php (prune_audit_log() calls ipam_dialect() and
+// the new Dialect::with_append_only_bypass() helper) and BEFORE lib.php so any
+// lib.php function can call audit() without a separate bootstrap step.
+// current_user() / client_ip() are still in lib.php; they resolve lazily at
+// call time, always after init.php has finished loading. v3.30.0.
+require_once __DIR__ . '/lib/audit.php';
+
+// Presentation layer (#910, ADR-004 Phase 5 Task 5.1) — page_header() /
+// page_footer(), the ipam_render() view-partial helpers, icon(), the flash
+// store, sortable-<th> / pagination / badge / banner / custom-field-input
+// renderers. Loaded AFTER lib/config.php (page_header() reads config via
+// ipam_config()) and BEFORE lib.php so any lib.php function can call these
+// without a separate bootstrap step. The DB-backed renderers and the helpers
+// they depend on (ipam_setting(), csrf_token(), recovery_mode_enabled(),
+// ipam_update_check(), ipam_install_key_banner_handle_dismiss(), …) still
+// live in lib.php; they resolve lazily at call time, always after init.php
+// has finished loading. v3.30.0.
+require_once __DIR__ . '/lib/presentation.php';
+
+// Settings layer (#907 / #915, ADR-004 Phase 5 Task 5.2b) — the setting
+// registry (ipam_setting_definitions / _seed / _groups), the encode/decode/
+// infer codec, ipam_setting() / ipam_setting_set() with their per-request
+// cache, the config.php back-compat fallback, ipam_setting_deprecated_keys(),
+// and the ADR-001 11-value logical-type dispatch layer
+// (ipam_setting_storage_type / ipam_setting_validate). Loaded AFTER
+// lib/config.php (ipam_setting() reads config.php via ipam_config()) and
+// BEFORE ipam_db_init() runs migrations below, because some migration closures
+// call ipam_setting_definitions() to resolve registry defaults (e.g. the
+// config-import settings seeding and the MFA-default seeding migrations).
+// ipam_key_col() /
+// ipam_dialect() / audit() resolve lazily at call time. v3.30.0.
+require_once __DIR__ . '/lib/settings.php';
+
+// Per-user preference read/write layer (ADR-002, Task 5.3 Chunk 3). Loaded
+// immediately after settings.php; deps: db (ipam_dialect, ipam_key_col). v3.30.0.
+require_once __DIR__ . '/lib/user_preferences.php';
+
+// Core session + CSRF + login layer (ADR-004 Phase 6 Task 6.1). Deps: db,
+// audit, utils, presentation, config, settings, user_preferences. v3.30.0.
+require_once __DIR__ . '/lib/auth.php';
+
+// Password policy + password-reset token/email layer (ADR-004 Phase 6
+// Task 6.2). Deps: auth, utils, db. v3.30.0.
+require_once __DIR__ . '/lib/auth_password.php';
+
+// Login/IP rate-limiting + account-lockout layer (ADR-004 Phase 6
+// Task 6.3). Deps: auth, db, audit. v3.30.0.
+require_once __DIR__ . '/lib/auth_rate_limit.php';
+
+// reCAPTCHA + login-form protection layer (ADR-004 Phase 6 Task 6.4).
+// Deps: auth, utils, settings, config. v3.30.0.
+require_once __DIR__ . '/lib/auth_recaptcha.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run
@@ -147,19 +231,6 @@ unset($_ipam_db_driver, $_ipam_driver_error);
 // setup) are deterministic. The real timezone is applied from the DB settings
 // (branding.timezone) once $db is open and lib.php is loaded — see below.
 date_default_timezone_set('UTC');
-
-/**
- * Convert a mixed value to string. Defined early in init.php so it is available
- * before lib.php is loaded; lib.php guards against redefinition with function_exists().
- */
-function to_str(mixed $value): string
-{
-    if (is_string($value)) return $value;
-    if (is_int($value) || is_float($value)) return (string)$value;
-    if (is_bool($value)) return $value ? '1' : '';
-    if ($value === null) return '';
-    return '';
-}
 
 /** @param array<string, mixed> $server */
 function request_is_https(array $server, bool $trustProxyHeaders): bool

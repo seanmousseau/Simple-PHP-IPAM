@@ -195,9 +195,14 @@ done
 
 mkdir -p "$TARGET_DIR/data"
 
+# Excludes are anchored to the install root with a leading slash: a bare
+# 'config.php' would also match lib/config.php (and any other nested
+# config.php), which would drop the new lib/config.php module and break
+# init.php. Only the root-level config.php (DB credentials) and data/ dir
+# must be preserved from the existing install.
 rsync -a --delete \
-  --exclude 'config.php' \
-  --exclude 'data/' \
+  --exclude '/config.php' \
+  --exclude '/data/' \
   --exclude '*.sqlite' --exclude '*.db' \
   "$NEW_DIR/" "$TARGET_DIR/"
 

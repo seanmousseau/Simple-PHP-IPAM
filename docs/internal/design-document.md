@@ -36,6 +36,7 @@ The table below lists the rules that protect specific code locations. **Every en
 | 18 | Scanner `scan_run.php` is CLI-only: emits HTTP 403 + `exit(1)` when SAPI is not `cli`. | `Simple-PHP-IPAM/scan_run.php` | The scanner can shell out; preventing web exposure is non-negotiable |
 | 19 | Raw `$_GET` / `$_POST` IPs must pass through `normalize_ip()` before reaching `proc_open()` or `fsockopen()`. Semgrep rule `ipam-proc-open-safe` enforces. | `Simple-PHP-IPAM/lib.php` scanner helpers, `.semgrep/rules.yml` | IP-injection class of bugs (shell-quote escape into ping/scan argv) |
 | 20 | `addresses.mac` is free-form, `NOT NULL DEFAULT ''`. Never validate format server-side — users enter any notation (cisco, eui-48, vendor-specific). | `Simple-PHP-IPAM/schema.sql`; address-edit handlers | User-facing policy; format validators were tried twice and reverted both times |
+| 21 | No `global $config;` in extracted `lib/*.php` modules — they read config via the `ipam_config()` / `ipam_config_nested()` accessors. `global $db` (the runtime PDO handle) is still permitted. The full sweep of remaining `global $config` sites elsewhere is tracked as #1207. | `Simple-PHP-IPAM/lib/*.php`, `Simple-PHP-IPAM/lib/config.php` | ADR-003 (v3.30.0 ADR-004 wave-1 extraction) |
 
 Cross-release rollup of lessons that did not become invariants (because they're advice, not enforceable rules at a code location) lives in `lessons-learned.md`.
 
@@ -90,7 +91,7 @@ Simple-PHP-IPAM/          web root (deployed)
   status.php              stateless health endpoint
   assets/                 vanilla CSS + JS + SVG sprite (no build step)
   views/                  partials included by page handlers
-  lib/                    subsystem extensions (auth_step_up.php, backup.php, …)
+  lib/                    extracted shared-function modules + subsystem extensions
   data/                   runtime (gitignored): ipam.sqlite + tmp/
 
 releases/                 release-bundle output (gitignored bundles)
@@ -107,9 +108,40 @@ Dev tooling at repo root (not shipped): `composer.json`, `phpstan.neon`, `.phpcs
 
 ---
 
+## Code organisation
+
+Historically every shared function lived in a single `lib.php`. The v3.30.0
+ADR-004 wave-1 extraction began splitting it into focused, concern-scoped
+modules under `lib/`. As of v3.30.0, `lib.php` is ~7,900 lines (down from
+~12,500 at v3.29.0); the rest moved into 12 new modules:
+
+`lib/utils.php`, `lib/ip.php`, `lib/config.php`, `lib/db.php`, `lib/audit.php`,
+`lib/presentation.php`, `lib/settings.php`, `lib/user_preferences.php`,
+`lib/auth.php`, `lib/auth_password.php`, `lib/auth_rate_limit.php`,
+`lib/auth_recaptcha.php`.
+
+These join the pre-existing subsystem files already in `lib/` (`backup*.php`,
+`restore*.php`, `vault.php`, `app_secret.php`, `auth_step_up.php`,
+`S3Client.php`, `SftpClient.php`, `LocalBackupClient.php`,
+`BackupClientInterface.php`). Functions not yet extracted still live in
+`lib.php`; extraction continues in later releases. The per-module
+function-membership cheat sheet is in `coding-guide.md`.
+
+`testing/scripts/lib-module-linter.php` enforces the module shape: every
+`lib/*.php` carries a module header, no module `require`s another module
+(`lib.php` is the dual-require shim), and no function is defined twice across
+modules. `LibModuleLinterTest` runs it in CI.
+
+---
+
 ## Procedural code is the default
 
-No namespaces, no DI container, no ORM, no templating engine. Functions live in `lib.php`. The one deliberate class hierarchy is `Dialect` / `SqliteDialect` / `MysqlDialect` / `PgsqlDialect` for per-engine SQL differences — see `runtime-dependency-policy.md` → "When to use classes vs functions".
+No namespaces, no DI container, no ORM, no templating engine. Shared functions
+live in `lib.php` and the concern-scoped `lib/*.php` modules (see "Code
+organisation" above). The one deliberate class hierarchy is `Dialect` /
+`SqliteDialect` / `MysqlDialect` / `PgsqlDialect` for per-engine SQL
+differences — see `runtime-dependency-policy.md` → "When to use classes vs
+functions".
 
 Runtime dependencies are curated: each package must pass six acceptance criteria. The full policy is in `runtime-dependency-policy.md`; the procedure for proposing one is in `adding-a-runtime-dependency.md`; the current whitelist is in `coding-guide.md` (single source of truth).
 

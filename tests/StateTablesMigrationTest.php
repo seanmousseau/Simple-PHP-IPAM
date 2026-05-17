@@ -66,7 +66,7 @@ final class StateTablesMigrationTest extends TestCase
     private function seedSetting(string $key, mixed $value): void
     {
         $kc = ipam_key_col();
-        $st = $this->db->prepare("INSERT INTO settings (tenant_id, {$kc}, value, type) VALUES (NULL, :k, :v, 'string')");
+        $st = $this->db->prepare("INSERT INTO settings (tenant_id, {$kc}, value) VALUES (NULL, :k, :v)");
         $st->execute([':k' => $key, ':v' => is_string($value) ? $value : (string) json_encode($value)]);
         ipam_setting_cache_bust();
     }

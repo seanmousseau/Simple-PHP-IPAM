@@ -56,27 +56,26 @@ if ($driver === 'sqlite') {
 
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-// type column values match the settings table CHECK constraint
 $settings = [
-    'smtp.enabled'      => ['value' => '1',                'type' => 'bool'],
-    'smtp.host'         => ['value' => 'mailhog',          'type' => 'string'],
-    'smtp.port'         => ['value' => '1025',             'type' => 'int'],
-    'smtp.encryption'   => ['value' => 'none',             'type' => 'string'],
-    'smtp.from_address' => ['value' => 'ipam@test.local',  'type' => 'string'],
-    'smtp.from_name'    => ['value' => 'IPAM Test',        'type' => 'string'],
+    'smtp.enabled'      => '1',
+    'smtp.host'         => 'mailhog',
+    'smtp.port'         => '1025',
+    'smtp.encryption'   => 'none',
+    'smtp.from_address' => 'ipam@test.local',
+    'smtp.from_name'    => 'IPAM Test',
 ];
 
 $upd = $db->prepare(
-    "UPDATE settings SET value = :v, type = :t WHERE tenant_id IS NULL AND `key` = :k"
+    "UPDATE settings SET value = :v WHERE tenant_id IS NULL AND `key` = :k"
 );
 $ins = $db->prepare(
-    "INSERT INTO settings (`key`, value, type) VALUES (:k, :v, :t)"
+    "INSERT INTO settings (`key`, value) VALUES (:k, :v)"
 );
 
-foreach ($settings as $key => $row) {
-    $upd->execute([':k' => $key, ':v' => $row['value'], ':t' => $row['type']]);
+foreach ($settings as $key => $value) {
+    $upd->execute([':k' => $key, ':v' => $value]);
     if ($upd->rowCount() === 0) {
-        $ins->execute([':k' => $key, ':v' => $row['value'], ':t' => $row['type']]);
+        $ins->execute([':k' => $key, ':v' => $value]);
     }
 }
 

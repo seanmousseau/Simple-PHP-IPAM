@@ -249,19 +249,20 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 ---
 
-## 6. Refactor stream (v3.30.0 → v3.32.0)
+## 6. Refactor stream (v3.30.0 → v3.33.0)
 
-Three milestones, theme-named. Closes 50 of the 87 `archive/code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill).
+Four milestones, theme-named. Closes 50 of the 87 `archive/code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill). ADR-001 (settings type system) added a fourth slot — **v3.31.0 is dedicated to encrypt-at-rest + webhook crypto consolidation** so the refactor waves keep clean boundaries.
 
 | Suggested slot | Milestone | Theme | Issues | Closes findings |
 |---|---|---|---|---|
-| v3.30.0 | **Refactor wave 1 — lib.php decomposition** (#56) | `lib.php` (~9000 lines) split into focused modules + page-handler refactor | 19 (incl. orphan bugs U/V/Y #1120/#1121/#1122) | A11, A12, A14–A16, A23–A25, A27, A33, B7–B9, B11(re-order), C8 |
-| v3.31.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition; `import_csv` rewrite (also addresses the 38 semgrep WARNINGs from §3.6); migration helpers | 18 | A6, A13, A17–A19, A29, A32, B5, B6, B10, B13, C2, C3-policy, C5–C7, C9–C12 |
-| v3.32.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` module split + P2/P3 polish | 16 | A20, A26, A31, A.P3, B.P3, C.P3, D4-full, D5, D13–D21 |
+| v3.30.0 | **Refactor wave 1 — lib.php decomposition** (#56) | `setting_definitions` schema + dispatch refactor (ADR-001 part 1); `lib.php` (~9000 lines) split into focused modules + page-handler refactor | 19 (incl. orphan bugs U/V/Y #1120/#1121/#1122) | A11, A12, A14–A16, A23–A25, A27, A33, B7–B9, B11(re-order), C8 |
+| v3.31.0 | **Settings encrypt-at-rest + webhook crypto consolidation** (new milestone TBD) | `ipam_secret_*` libsodium pipeline (ADR-001 part 2); re-encrypt existing plaintext secrets; collapse v3.3.0 webhook crypto onto shared pipeline | TBD at kickoff | ADR-001 implications only |
+| v3.32.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition; `import_csv` rewrite (also addresses the 38 semgrep WARNINGs from §3.6); migration helpers | 18 | A6, A13, A17–A19, A29, A32, B5, B6, B10, B13, C2, C3-policy, C5–C7, C9–C12 |
+| v3.33.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` module split + P2/P3 polish | 16 | A20, A26, A31, A.P3, B.P3, C.P3, D4-full, D5, D13–D21 |
 
-**Per-milestone test umbrellas:** #1045 (wave 1), #1046 (wave 2), #1047 (wave 3). Each refactor PR must update or add the matching test in the same commit.
+**Per-milestone test umbrellas:** #1045 (wave 1 + ADR-001 work, both v3.30.0 and v3.31.0), #1046 (wave 2), #1047 (wave 3). Each refactor PR must update or add the matching test in the same commit.
 
-**Architecture-review dependency (§10):** the `lib.php size` candidate decision must land before wave 1 starts.
+**Architecture-review dependency (§10):** ADR-001 (settings type system) accepted 2026-05-15. Pre-wave-1 sprint continues with ADR-002–006 before wave 1 starts.
 
 ---
 
@@ -394,28 +395,28 @@ SELECT count(*) FROM backup_runs
 
 **Not "rewrite the app" — "look at each candidate honestly and decide."** Each candidate gets a separate decision document under `docs/internal/architecture-decisions/` with options + tradeoffs + recommendation + Sean's stamp. **No architectural decision in this list gets implemented unilaterally by Claude.**
 
-| Candidate | Why it's on the list | Gate |
+| Candidate | Why it's on the list | Gate / Status |
 |---|---|---|
-| **`lib.php` size** (~9000 lines, all functions in one namespace) | Module separation overdue; refactor wave 1 (v3.30.0) is the first surface. | Decision before refactor wave 1 starts. |
-| **Per-key vs group-form bifurcation in `settings.php`** | Bug V's root cause. | Decision before refactor wave 1. |
-| **`backup.php` orchestrator/codec/dispatcher separation** | Enabled the encrypt-write-path bug. | Decision before backup cold break (v4.0.0). |
-| **`$config` global as the only config conduit** | Hides the dependency graph. | Decision before refactor wave 2 (v3.31.0). |
-| **Settings table type system** | bool/int/string/json is impoverished; sensitive flag bolted on. | Decision before refactor wave 1. |
-| **Memory MCP discipline as the only cross-session continuity** | Useful but didn't prevent today's bugs (no observations linking v3.24 codec → v3.26 storage → v3.27 step-up). | Decision in v3.28.0→v3.29.0 sprint. |
+| **`lib.php` size** (~9000 lines, all functions in one namespace) | Module separation overdue; refactor wave 1 (v3.30.0) is the first surface. | ~~Decision before refactor wave 1 starts.~~ ✅ ADR-004 accepted; **implemented in v3.30.0** (12 modules extracted, `lib.php` ~12.5k→~7.9k lines). |
+| **Per-key vs group-form bifurcation in `settings.php`** | Bug V's root cause. | ~~Decision before refactor wave 1.~~ ✅ ADR-002 accepted (corrected + re-stamped); **implemented in v3.30.0**. |
+| **`backup.php` orchestrator/codec/dispatcher separation** | Enabled the encrypt-write-path bug. | ADR-005 **decided 2026-05-15; implementation deferred to a later release.** |
+| **`$config` global as the only config conduit** | Hides the dependency graph. | ~~Decision before refactor wave 2 (v3.31.0).~~ ✅ ADR-003 accepted; **implemented in v3.30.0** for extracted `lib/*.php` modules. Full sweep tracked as #1207. |
+| **Settings table type system** | bool/int/string/json is impoverished; sensitive flag bolted on. | ~~Decision before refactor wave 1.~~ ✅ ADR-001 accepted (**amended/reversed to Option D** — registry stays in PHP, no DB table); **implemented in v3.30.0**. |
+| **Memory MCP discipline as the only cross-session continuity** | Useful but didn't prevent today's bugs (no observations linking v3.24 codec → v3.26 storage → v3.27 step-up). | ~~Decision in v3.28.0→v3.29.0 sprint.~~ ✅ ADR-006 accepted; **implemented in v3.30.0**. |
 | **Contract-doc-as-source-of-truth model** | When `auth-model.md` "Step-up auth" section says X and code does Y, X "wins" by convention — drift produces bugs. v3.29.0 contract-doc linter is the first response. | Decided 2026-05-11: code-first, lint docs against code. |
 
 ### 10.1 Architecture-decision sprint (between v3.28.0 and v3.29.0)
 
 **Locked 2026-05-11.** A focused window between v3.28.0 ship and v3.29.0 kickoff dedicated to clearing the gating decisions for refactor wave 1.
 
-**Six decisions in order:**
+**Six decisions in order — all accepted:**
 
-1. **Settings table type system** — small surface, informs the next two
-2. **Per-key vs group-form bifurcation in `settings.php`** — Bug V root cause
-3. **`$config` global as the only config conduit** — pairs with #1 and #2
-4. **`lib.php` size + module shape** — the big one, refactor wave 1's blueprint
-5. **`backup.php` orchestrator/codec/dispatcher separation** — also gates v4.0.0 cold break
-6. **Memory MCP discipline as the only cross-session continuity** — process decision, not code
+1. ✅ **ADR-001 — Settings type system** — small surface, informs the next two. Amended/reversed to **Option D**: registry stays in PHP, no DB table. Implemented v3.30.0.
+2. ✅ **ADR-002 — Per-key vs group-form bifurcation in `settings.php`** — Bug V root cause. Corrected + re-stamped. Implemented v3.30.0.
+3. ✅ **ADR-003 — `$config` global as the only config conduit** — pairs with #1 and #2. Implemented v3.30.0 for extracted modules; full sweep tracked as #1207.
+4. ✅ **ADR-004 — `lib.php` size + module shape** — the big one, refactor wave 1's blueprint. Implemented v3.30.0.
+5. **ADR-005 — `backup.php` orchestrator/codec/dispatcher separation** — also gates v4.0.0 cold break. Decided 2026-05-15; **implementation deferred to a later release.**
+6. ✅ **ADR-006 — Memory MCP discipline as the only cross-session continuity** — process decision, not code. Implemented v3.30.0.
 
 **Output per decision:** one doc under `docs/internal/architecture-decisions/<NNN>-<slug>.md` with options + tradeoffs + recommendation + Sean's stamp + the resulting work (GH issues or scope changes).
 

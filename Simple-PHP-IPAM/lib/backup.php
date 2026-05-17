@@ -3138,6 +3138,7 @@ function ipam_logical_table_order(PDO $db): array
     //     site_contacts (→ contacts, sites)
     //     settings (→ users), password_reset_tokens (→ users),
     //     totp_backup_codes (→ users), webauthn_credentials (→ users),
+    //     user_preferences (→ users),
     //     webhook_deliveries (→ webhooks)
     unset($db); // forward-compat placeholder (tenancy filter in v4.0.0)
     return [
@@ -3187,6 +3188,7 @@ function ipam_logical_table_order(PDO $db): array
         'password_reset_tokens',
         'totp_backup_codes',
         'webauthn_credentials',
+        'user_preferences',
         'webhook_deliveries',
     ];
 }

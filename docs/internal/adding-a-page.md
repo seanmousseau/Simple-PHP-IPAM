@@ -104,7 +104,7 @@ Add the `CLI` row to `page-inventory.md` under "Auth required" and dash for "Rol
 
 ## AJAX endpoints
 
-For JSON-returning AJAX endpoints (e.g. `ping_host.php`, `set_theme.php`, `smtp_test.php`, `test_destination.php`):
+For JSON-returning AJAX endpoints (e.g. `ping_host.php`, `user_preference.php`, `smtp_test.php`, `test_destination.php`):
 
 ```php
 require __DIR__ . '/init.php';

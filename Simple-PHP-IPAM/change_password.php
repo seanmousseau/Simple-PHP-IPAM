@@ -2,24 +2,19 @@
 declare(strict_types=1);
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
+/** @var IpamConfig $config */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
-if (demo_mode_enabled()) {
-    page_header('Account');
-    echo "<h1>Account</h1>";
-    echo "<p class='warning'>Password changes are disabled in demo mode.</p>";
-    page_footer();
-    exit;
-}
-
-$errors = [];
-$msg = '';
-$cur = current_user();
-
-// Handle email verification token (?verify_email=TOKEN)
-if (isset($_GET['verify_email'])) {
+/**
+ * GET handler: email verification token (?verify_email=TOKEN). Always
+ * terminates the request (header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_verify_email(\PDO $db, array $cur): void
+{
     $verifyRaw = trim(to_str($_GET['verify_email']));
     if (preg_match('/^[0-9a-f]{64}$/i', $verifyRaw)) {
         $verHash = hash('sha256', $verifyRaw);
@@ -77,11 +72,17 @@ if (isset($_GET['verify_email'])) {
     exit;
 }
 
-// 2FA: disable TOTP. v3.27.0 (#1112) — gated by ipam_sudo_require() instead
-// of the legacy current_password verify so OIDC-only users can disable TOTP
-// via TOTP/Email OTP/passkey/OIDC re-auth under the install policy.
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'disable_totp') {
-    csrf_require();
+/**
+ * POST action: disable TOTP. v3.27.0 (#1112) — gated by ipam_sudo_require()
+ * instead of the legacy current_password verify so OIDC-only users can
+ * disable TOTP via TOTP/Email OTP/passkey/OIDC re-auth under the install
+ * policy. Always terminates the request (step-up render + exit, or
+ * header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_disable_totp(\PDO $db, array $cur): void
+{
     // Bug Y / #1122 (v3.27.2): refuse if disabling TOTP would leave the
     // user with no satisfiable step-up method under the install policy.
     // Pre-fix the user could disable their only enrolled method and be
@@ -117,127 +118,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
-// Fetch the full user row to check for SSO-only account
-$st = $db->prepare(
-    "SELECT password_hash, oidc_sub, timezone, email,
-            pending_email, pending_email_expires_at,
-            totp_enabled, totp_secret_enc
-       FROM users WHERE id = :id"
-);
-$st->execute([':id' => $cur['id']]);
-/** @var array<string, mixed>|false $userRow */
-$userRow = $st->fetch();
-
-// SSO-only: unusable hash starts with '!' (password_verify always returns false)
-$isSsoOnly = $userRow && str_starts_with(to_str($userRow['password_hash']), '!');
-
-$pwPolicy = [
-    'min_length'        => to_int(ipam_setting('password_policy.min_length', 12)),
-    'require_uppercase' => (bool)ipam_setting('password_policy.require_uppercase', false),
-    'require_lowercase' => (bool)ipam_setting('password_policy.require_lowercase', false),
-    'require_number'    => (bool)ipam_setting('password_policy.require_number', false),
-    'require_symbol'    => (bool)ipam_setting('password_policy.require_symbol', false),
-];
-$isExpired = isset($_GET['expired']);
-
-if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $old  = to_str($_POST['old_password']  ?? '');
-    $new1 = to_str($_POST['new_password']  ?? '');
-    $new2 = to_str($_POST['new_password2'] ?? '');
-
-    if ($new1 !== $new2) {
-        $errors[] = 'New passwords do not match.';
-    } else {
-        $pwErrors = validate_password_complexity($new1, $pwPolicy);
-        if ($pwErrors) {
-            $errors = $pwErrors;
-        } elseif (!$userRow || !password_verify($old, to_str($userRow['password_hash']))) {
-            $errors[] = 'Current password is incorrect.';
-        } else {
-            $hash = password_hash($new1, PASSWORD_DEFAULT);
-            $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = " . ipam_dialect()->now() . " WHERE id = :id")
-               ->execute([':h' => $hash, ':id' => $cur['id']]);
-            session_regenerate_id(true);
-            // Password change invalidates any cached sudo grant — the
-            // credential the grant might have been minted from is no
-            // longer the current credential (plan §3.5).
-            ipam_sudo_invalidate();
-            // Reset the absolute lifetime clock so the new session gets a fresh window.
-            // Only set it when the feature is enabled (lifetime > 0).
-            $absLifetimeMin = to_int($config['session']['absolute_lifetime_minutes'] ?? 480);
-            if ($absLifetimeMin > 0) {
-                $_SESSION['_abs_expires'] = time() + ($absLifetimeMin * 60);
-            }
-            audit($db, 'user.change_password', 'user', to_int($cur['id']), 'self');
-            $msg = 'Password updated.';
-            $isExpired = false;
-        }
-    }
-}
-
-// Timezone preference update (available to all users, including SSO-only)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('timezone', $_POST)) {
-    $newTz = to_str($_POST['timezone']);
-    if ($newTz === '' || in_array($newTz, timezone_identifiers_list(), true)) {
-        $db->prepare("UPDATE users SET timezone = :tz WHERE id = :id")
-           ->execute([':tz' => ($newTz === '' ? null : $newTz), ':id' => $cur['id']]);
-        audit($db, 'user.update_profile', 'user', to_int($cur['id']), 'timezone=' . ($newTz ?: 'app-default'));
-        flash_set('Timezone preference saved.');
-    } else {
-        flash_set('Invalid timezone identifier.', 'danger');
-    }
-    header('Location: change_password.php');
-    exit;
-}
-
-// Email change request (POST with new_email field)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('new_email', $_POST)) {
-    $newEmail = trim(to_str($_POST['new_email'] ?? ''));
-    if ($newEmail === '') {
-        flash_set('Email address cannot be empty.', 'danger');
-    } elseif (filter_var($newEmail, FILTER_VALIDATE_EMAIL) === false) {
-        flash_set('Invalid email address format.', 'danger');
-    } else {
-        $dupSt = $db->prepare(
-            "SELECT id FROM users WHERE (email = :email OR pending_email = :email2) AND id != :id"
-        );
-        $dupSt->execute([':email' => $newEmail, ':email2' => $newEmail, ':id' => $cur['id']]);
-        if ($dupSt->fetch()) {
-            flash_set('That email address is already in use.', 'danger');
-        } else {
-            $sent = ipam_send_email_verification($db, to_int($cur['id']), $newEmail);
-            if ($sent['success']) {
-                audit($db, 'user.email_change_initiated', 'user', to_int($cur['id']), 'new_email=' . $newEmail);
-                flash_set('Verification email sent to ' . $newEmail . '. Check your inbox and spam folder.');
-            } else {
-                flash_set('Could not send verification email: ' . $sent['error'], 'danger');
-            }
-        }
-    }
-    header('Location: change_password.php');
-    exit;
-}
-
-$minLen = max(1, $pwPolicy['min_length']);
-
-// Session activity: admins may view any user; others see only their own
-$viewUserId = $cur['id'];
-$viewUsername = to_str($cur['username']);
-if ($cur['role'] === 'admin' && to_int($_GET['user_id'] ?? 0) > 0) {
-    $targetId = to_int($_GET['user_id']);
-    $uRow = $db->prepare("SELECT id, username FROM users WHERE id = :id");
-    $uRow->execute([':id' => $targetId]);
-    /** @var array<string, mixed>|false $targetUser */
-    $targetUser = $uRow->fetch();
-    if ($targetUser) {
-        $viewUserId   = to_int($targetUser['id']);
-        $viewUsername = to_str($targetUser['username']);
-    }
-}
-
-// --- Email OTP enrollment: start (send code) ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_enable') {
-    csrf_require();
+/**
+ * POST action: Email OTP enrollment start (send code). Always terminates the
+ * request (header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_email_otp_enable(\PDO $db, array $cur): void
+{
     $emailOtpEnabled = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
     if (!$emailOtpEnabled) {
         flash_set('Email OTP is not enabled by your administrator.', 'danger');
@@ -270,9 +158,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
-// --- Email OTP enrollment: verify submitted code ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_verify_enroll') {
-    csrf_require();
+/**
+ * POST action: Email OTP enrollment verify submitted code. Always terminates
+ * the request (header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_email_otp_verify_enroll(\PDO $db, array $cur): void
+{
     $submittedCode = trim(to_str($_POST['otp_code'] ?? ''));
     if (!isset($_SESSION['email_otp_enrolling'])) {
         flash_set('Enrollment session expired. Please start again.', 'danger');
@@ -308,9 +201,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
-// --- Email OTP: disable. v3.27.0 (#1112) — gated by ipam_sudo_require(). ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_disable') {
-    csrf_require();
+/**
+ * POST action: disable Email OTP. v3.27.0 (#1112) — gated by
+ * ipam_sudo_require(). Always terminates the request (step-up render + exit,
+ * or header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_email_otp_disable(\PDO $db, array $cur): void
+{
     // Bug Y / #1122 (v3.27.2): see disable_totp comment above.
     if (ipam_sudo_would_strand_user_after_disable($db, to_int($cur['id']), 'email_otp')) {
         flash_set('Cannot disable Email OTP: it is your only available step-up method. Enroll another method first.', 'danger');
@@ -343,9 +242,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
-// --- Passkeys: delete. v3.27.0 (#1112) — gated by ipam_sudo_require(). ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'passkey_delete') {
-    csrf_require();
+/**
+ * POST action: delete a passkey. v3.27.0 (#1112) — gated by
+ * ipam_sudo_require(). Always terminates the request (step-up render + exit,
+ * or header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_passkey_delete(\PDO $db, array $cur): void
+{
     $credId = to_int($_POST['credential_id'] ?? 0);
     // Bug Y / #1122 (v3.27.2): refuse if removing the LAST passkey would
     // leave the user with no satisfiable step-up method. Multi-passkey
@@ -379,14 +284,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
-// 2FA: set preferred MFA method (#746). Accepts 'totp', 'email_otp',
-// 'passkey', or '' (clear). Server-side guards: the chosen method must be
-// currently enrolled by the user AND globally enabled. Anything else is
-// silently coerced to NULL so a stale form post (e.g. method just disabled
-// in another tab) cannot pin the user to an unusable preference.
-if ($_SERVER['REQUEST_METHOD'] === 'POST'
-    && to_str($_POST['action'] ?? '') === 'set_preferred_mfa') {
-    csrf_require();
+/**
+ * POST action: set preferred MFA method (#746). Accepts 'totp', 'email_otp',
+ * 'passkey', or '' (clear). Server-side guards: the chosen method must be
+ * currently enrolled by the user AND globally enabled. Anything else is
+ * silently coerced to NULL so a stale form post (e.g. method just disabled
+ * in another tab) cannot pin the user to an unusable preference. Always
+ * terminates the request (header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_set_preferred_mfa(\PDO $db, array $cur): void
+{
     $submitted = to_str($_POST['preferred_mfa'] ?? '');
     $available = ipam_user_available_mfa_methods($db, to_int($cur['id']));
     $newVal    = in_array($submitted, $available, true) ? $submitted : null;
@@ -405,6 +314,221 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     flash_set('Preferred sign-in method updated.');
     header('Location: change_password.php#mfa-preferred');
     exit;
+}
+
+/**
+ * POST handler: timezone preference update (available to all users, including
+ * SSO-only). Non-action-keyed — selected by the 'timezone' POST field. Always
+ * terminates the request (header + exit). Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_timezone(\PDO $db, array $cur): void
+{
+    $newTz = to_str($_POST['timezone']);
+    if ($newTz === '' || in_array($newTz, timezone_identifiers_list(), true)) {
+        $db->prepare("UPDATE users SET timezone = :tz WHERE id = :id")
+           ->execute([':tz' => ($newTz === '' ? null : $newTz), ':id' => $cur['id']]);
+        audit($db, 'user.update_profile', 'user', to_int($cur['id']), 'timezone=' . ($newTz ?: 'app-default'));
+        flash_set('Timezone preference saved.');
+    } else {
+        flash_set('Invalid timezone identifier.', 'danger');
+    }
+    header('Location: change_password.php');
+    exit;
+}
+
+/**
+ * POST handler: email change request. Non-action-keyed — selected by the
+ * 'new_email' POST field. Always terminates the request (header + exit).
+ * Behaviour-preserving extract.
+ *
+ * @param array<string, mixed> $cur current_user() row
+ */
+function cp_handle_new_email(\PDO $db, array $cur): void
+{
+    $newEmail = trim(to_str($_POST['new_email'] ?? ''));
+    if ($newEmail === '') {
+        flash_set('Email address cannot be empty.', 'danger');
+    } elseif (filter_var($newEmail, FILTER_VALIDATE_EMAIL) === false) {
+        flash_set('Invalid email address format.', 'danger');
+    } else {
+        $dupSt = $db->prepare(
+            "SELECT id FROM users WHERE (email = :email OR pending_email = :email2) AND id != :id"
+        );
+        $dupSt->execute([':email' => $newEmail, ':email2' => $newEmail, ':id' => $cur['id']]);
+        if ($dupSt->fetch()) {
+            flash_set('That email address is already in use.', 'danger');
+        } else {
+            $sent = ipam_send_email_verification($db, to_int($cur['id']), $newEmail);
+            if ($sent['success']) {
+                audit($db, 'user.email_change_initiated', 'user', to_int($cur['id']), 'new_email=' . $newEmail);
+                flash_set('Verification email sent to ' . $newEmail . '. Check your inbox and spam folder.');
+            } else {
+                flash_set('Could not send verification email: ' . $sent['error'], 'danger');
+            }
+        }
+    }
+    header('Location: change_password.php');
+    exit;
+}
+
+/**
+ * POST handler: the plain password-change form. Non-action-keyed — runs only
+ * for non-SSO accounts on any POST that did not match an action handler. It
+ * does NOT terminate the request: on success or failure it falls through to
+ * re-render, so it returns the render-facing state the page displays.
+ *
+ * @param array<string, mixed>      $cur       current_user() row
+ * @param array<string, mixed>|false $userRow  full users row, or false
+ * @param array<string, mixed>      $pwPolicy  password-policy settings
+ * @param IpamConfig                $config
+ * @param bool                      $isExpired incoming ?expired state
+ * @return array{errors: list<string>, msg: string, isExpired: bool}
+ */
+function cp_handle_password_change(
+    \PDO $db,
+    array $cur,
+    $userRow,
+    array $pwPolicy,
+    array $config,
+    bool $isExpired
+): array {
+    $errors = [];
+    $msg = '';
+
+    $old  = to_str($_POST['old_password']  ?? '');
+    $new1 = to_str($_POST['new_password']  ?? '');
+    $new2 = to_str($_POST['new_password2'] ?? '');
+
+    if ($new1 !== $new2) {
+        $errors[] = 'New passwords do not match.';
+    } else {
+        $pwErrors = validate_password_complexity($new1, $pwPolicy);
+        if ($pwErrors) {
+            $errors = $pwErrors;
+        } elseif (!$userRow || !password_verify($old, to_str($userRow['password_hash']))) {
+            $errors[] = 'Current password is incorrect.';
+        } else {
+            $hash = password_hash($new1, PASSWORD_DEFAULT);
+            $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = " . ipam_dialect()->now() . " WHERE id = :id")
+               ->execute([':h' => $hash, ':id' => $cur['id']]);
+            session_regenerate_id(true);
+            // Password change invalidates any cached sudo grant — the
+            // credential the grant might have been minted from is no
+            // longer the current credential (plan §3.5).
+            ipam_sudo_invalidate();
+            // Reset the absolute lifetime clock so the new session gets a fresh window.
+            // Only set it when the feature is enabled (lifetime > 0).
+            $absLifetimeMin = to_int($config['session']['absolute_lifetime_minutes'] ?? 480);
+            if ($absLifetimeMin > 0) {
+                $_SESSION['_abs_expires'] = time() + ($absLifetimeMin * 60);
+            }
+            audit($db, 'user.change_password', 'user', to_int($cur['id']), 'self');
+            $msg = 'Password updated.';
+            $isExpired = false;
+        }
+    }
+
+    return ['errors' => $errors, 'msg' => $msg, 'isExpired' => $isExpired];
+}
+
+if (demo_mode_enabled()) {
+    page_header('Account');
+    echo "<h1>Account</h1>";
+    echo "<p class='warning'>Password changes are disabled in demo mode.</p>";
+    page_footer();
+    exit;
+}
+
+$errors = [];
+$msg = '';
+$cur = current_user();
+
+// Handle email verification token (?verify_email=TOKEN)
+if (isset($_GET['verify_email'])) {
+    cp_handle_verify_email($db, $cur);
+}
+
+// --- POST action dispatch -------------------------------------------------
+// Action-keyed POST handlers. Each handler terminates the request (redirect
+// or step-up render). v3.27.0 (#1112): the MFA-disable actions are gated by
+// ipam_sudo_require() / ipam_sudo_would_strand_user_after_disable() inside
+// the handlers — those guards stay intact.
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    /** @var array<string, callable(\PDO, array<string, mixed>): void> $cpPostActions */
+    $cpPostActions = [
+        'disable_totp'            => 'cp_handle_disable_totp',
+        'email_otp_enable'        => 'cp_handle_email_otp_enable',
+        'email_otp_verify_enroll' => 'cp_handle_email_otp_verify_enroll',
+        'email_otp_disable'       => 'cp_handle_email_otp_disable',
+        'passkey_delete'          => 'cp_handle_passkey_delete',
+        'set_preferred_mfa'       => 'cp_handle_set_preferred_mfa',
+    ];
+    $cpAction = to_str($_POST['action'] ?? '');
+    if (isset($cpPostActions[$cpAction])) {
+        $cpPostActions[$cpAction]($db, $cur);
+        // Handlers above always exit; this point is unreachable.
+    }
+}
+
+// Fetch the full user row to check for SSO-only account
+$st = $db->prepare(
+    "SELECT password_hash, oidc_sub, timezone, email,
+            pending_email, pending_email_expires_at,
+            totp_enabled, totp_secret_enc
+       FROM users WHERE id = :id"
+);
+$st->execute([':id' => $cur['id']]);
+/** @var array<string, mixed>|false $userRow */
+$userRow = $st->fetch();
+
+// SSO-only: unusable hash starts with '!' (password_verify always returns false)
+$isSsoOnly = $userRow && str_starts_with(to_str($userRow['password_hash']), '!');
+
+$pwPolicy = [
+    'min_length'        => to_int(ipam_setting('password_policy.min_length', 12)),
+    'require_uppercase' => (bool)ipam_setting('password_policy.require_uppercase', false),
+    'require_lowercase' => (bool)ipam_setting('password_policy.require_lowercase', false),
+    'require_number'    => (bool)ipam_setting('password_policy.require_number', false),
+    'require_symbol'    => (bool)ipam_setting('password_policy.require_symbol', false),
+];
+$isExpired = isset($_GET['expired']);
+
+// Plain password-change POST (non-action-keyed): only for non-SSO accounts.
+// Falls through to re-render; the returned state drives the form below.
+if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $pwResult  = cp_handle_password_change($db, $cur, $userRow, $pwPolicy, $config, $isExpired);
+    $errors    = $pwResult['errors'];
+    $msg       = $pwResult['msg'];
+    $isExpired = $pwResult['isExpired'];
+}
+
+// Timezone preference update (non-action-keyed; available to all users)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('timezone', $_POST)) {
+    cp_handle_timezone($db, $cur);
+}
+
+// Email change request (non-action-keyed; POST with new_email field)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('new_email', $_POST)) {
+    cp_handle_new_email($db, $cur);
+}
+
+$minLen = max(1, $pwPolicy['min_length']);
+
+// Session activity: admins may view any user; others see only their own
+$viewUserId = $cur['id'];
+$viewUsername = to_str($cur['username']);
+if ($cur['role'] === 'admin' && to_int($_GET['user_id'] ?? 0) > 0) {
+    $targetId = to_int($_GET['user_id']);
+    $uRow = $db->prepare("SELECT id, username FROM users WHERE id = :id");
+    $uRow->execute([':id' => $targetId]);
+    /** @var array<string, mixed>|false $targetUser */
+    $targetUser = $uRow->fetch();
+    if ($targetUser) {
+        $viewUserId   = to_int($targetUser['id']);
+        $viewUsername = to_str($targetUser['username']);
+    }
 }
 
 $actSt = $db->prepare("

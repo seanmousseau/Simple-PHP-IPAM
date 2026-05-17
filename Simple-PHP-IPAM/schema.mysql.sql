@@ -44,7 +44,6 @@ CREATE TABLE IF NOT EXISTS users (
   oidc_sub            VARCHAR(191) COLLATE utf8mb4_bin NULL,
   last_login_at       DATETIME NULL,
   password_changed_at DATETIME NULL,
-  theme               VARCHAR(10)  NOT NULL DEFAULT 'auto',
   timezone                 TEXT         DEFAULT NULL,
   pending_email            VARCHAR(255) NULL,
   pending_email_token_hash VARCHAR(64)  COLLATE utf8mb4_bin NULL,
@@ -62,7 +61,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)
-  -- No CHECK on role or theme: schema.sql (SQLite) has none, and
+  -- No CHECK on role: schema.sql (SQLite) has none, and
   -- demo_seed_data() inserts a display-only 'netops' user. Enum
   -- enforcement lives at the application layer (settings.php,
   -- users.php) where it belongs.
@@ -651,10 +650,8 @@ CREATE TABLE IF NOT EXISTS settings (
   tenant_id  INT NULL,
   `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,
   value      TEXT NULL,
-  type       VARCHAR(16) NOT NULL DEFAULT 'string',
   updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_by BIGINT UNSIGNED NULL,
-  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json')),
   CONSTRAINT fk_settings_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
   UNIQUE KEY uq_settings_tenant_key (tenant_id, `key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -821,6 +818,24 @@ CREATE TABLE IF NOT EXISTS backup_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- user_preferences (v3.30.0, ADR-002 § user_preferences) — user-scoped
+-- preference store. Replaces the per-column approach (users.theme) for user
+-- UI preferences; keyed by (user_id, key) so each user can have an arbitrary
+-- set of named preferences. users.theme was dropped in Task 5.3 chunk 4
+-- (ADR-002). Composite PK on (user_id, key) is sufficient — both columns are NOT
+-- NULL so no partial-index workaround is needed (contrast settings, where
+-- tenant_id IS NULL for global rows).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id    BIGINT UNSIGNED NOT NULL,
+  `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,
+  value      TEXT NULL,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  PRIMARY KEY (user_id, `key`),
+  CONSTRAINT fk_user_prefs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ---------------------------------------------------------------------------
 -- Pre-seed schema_migrations with every historical version so apply_migrations
 -- is a no-op on fresh MySQL installs. New migrations added in v2.10.0+ must
 -- be idempotent and safe to run on MySQL, since they WILL execute here.
@@ -890,6 +905,9 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.26.0-vault-key-to-settings'),
   ('3.27.0-step-up-policy-settings'),
   ('3.27.7-webhook-secret-encrypt'),
-  ('3.28.0-state-tables');
+  ('3.28.0-state-tables'),
+  ('3.30.0-drop-settings-type'),
+  ('3.30.0-user-preferences'),
+  ('3.30.0-user-preferences-drop-theme');
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.30.0](#v3300) — per-user theme preference table with backfill, settings type system moved to PHP, `lib.php` decomposed into modules (no breaking changes)
   - [v3.25.0](#v3250) — IPAMBKL1 backend surfaced via picker UI, retention re-homed to destination, U-series UX polish (no breaking changes)
   - [v3.24.0](#v3240) — IPAMBKP3 three-mode encryption format, manual upload-and-restore, standalone decrypt-backup CLI (no breaking changes)
   - [v3.23.0](#v3230) — IPAMBKL1 engine-agnostic backups, per-schedule notification overrides, legacy backup config deprecation + auto-migration (no breaking changes)
@@ -115,6 +116,13 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.30.0
+
+- **No operator action required.** v3.30.0 ships one schema migration set (three migrations) that runs automatically on first load after upgrade.
+- **Per-user theme preference (new).** Theme (light/dark) is now stored per user account in a new `user_preferences` table instead of a single shared column. The `3.30.0-user-preferences` migration backfills every existing user's previous theme choice into the new table, so no one loses their setting. Nothing to do — users keep the theme they had.
+- **Settings type system moved to PHP (internal).** The `settings.type` database column has been dropped; setting validation is now driven by a PHP logical-type registry. This is an internal refactor with no operator impact — settings behave exactly as before.
+- **Large internal refactor (developers only).** `lib.php` is decomposed into 12 `lib/*.php` modules. No effect on operators; no config-format changes; existing `config.php` files keep working unchanged.
 
 ### v3.29.0
 

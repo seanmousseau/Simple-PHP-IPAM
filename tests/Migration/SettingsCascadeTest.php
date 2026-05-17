@@ -28,9 +28,13 @@ final class SettingsCascadeTest extends Base
             $db->query("PRAGMA table_info(settings)")->fetchAll(),
             'name'
         );
-        foreach (['key', 'value', 'type', 'updated_at', 'updated_by'] as $expected) {
+        foreach (['key', 'value', 'updated_at', 'updated_by'] as $expected) {
             $this->assertContains($expected, $cols, "settings column {$expected} missing");
         }
+        // v3.30.0 Task 3.3 (ADR-001): the legacy `type` column is dropped by
+        // the 3.30.0-drop-settings-type migration — apply_migrations() above
+        // replays it, so the column must be absent.
+        $this->assertNotContains('type', $cols, 'settings.type must be dropped by 3.30.0-drop-settings-type');
 
         $registryKeys = array_keys(\ipam_setting_definitions());
         $seededCount  = (int)$db->query("SELECT count(*) FROM settings")->fetchColumn();

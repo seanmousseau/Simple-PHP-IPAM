@@ -93,9 +93,9 @@ final class StepUpPolicyMigrationTest extends TestCase
 
     public function testReplayDoesNotOverwriteOperatorChanges(): void
     {
-        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES "
-            . "(NULL, 'auth.step_up.allow_email_otp', '0',    'bool'),"
-            . "(NULL, 'auth.step_up.ttl_seconds',     '1800', 'string')");
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value) VALUES "
+            . "(NULL, 'auth.step_up.allow_email_otp', '0'),"
+            . "(NULL, 'auth.step_up.ttl_seconds',     '1800')");
 
         ($this->migrationClosure())($this->db);
 
