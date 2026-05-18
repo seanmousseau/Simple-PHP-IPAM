@@ -347,7 +347,7 @@ page_header('DHCP Pools');
   <form method="post" action="dhcp_pool.php">
     <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="reserve_pool">
-    <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
+    <input type="hidden" name="subnet_id" value="<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>">
     <div class="row gap-10">
       <label>Start IP<br><input name="start_ip" placeholder="e.g. <?= e(explode('/', to_str($subnet['cidr']))[0]) ?>" required class="mw-140"></label>
       <label>End IP<br><input name="end_ip" placeholder="e.g. <?= e(explode('/', to_str($subnet['cidr']))[0]) ?>" required class="mw-140"></label>
@@ -364,7 +364,7 @@ page_header('DHCP Pools');
   <form method="post" action="dhcp_pool.php" data-confirm="Delete all reserved records in this range?">
     <input type="hidden" name="csrf"      value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action"    value="clear_pool">
-    <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
+    <input type="hidden" name="subnet_id" value="<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>">
     <div class="row gap-10">
       <label>Start IP<br><input name="start_ip" required class="mw-140"></label>
       <label>End IP<br><input name="end_ip"   required class="mw-140"></label>
@@ -422,7 +422,7 @@ page_header('DHCP Pools');
               <form method="post" action="dhcp_pool.php" class="dhcp-edit-form">
                 <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"     value="edit_address">
-                <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
+                <input type="hidden" name="subnet_id"  value="<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>">
                 <input type="hidden" name="address_id" value="<?= to_int($r['id']) ?>">
                 <span class="ip-label"><?= e(to_str($r['ip'])) ?></span>
                 <label>Hostname<br>
@@ -436,7 +436,7 @@ page_header('DHCP Pools');
                 </label>
                 <div class="btn-group">
                   <button type="submit">Save</button>
-                  <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>">Cancel</a>
+                  <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>">Cancel</a>
                 </div>
               </form>
             </td>
@@ -449,12 +449,12 @@ page_header('DHCP Pools');
             <td class="muted"><?= e(to_str($r['note'])) ?></td>
             <?php if ($isWriteUser): ?>
             <td class="nowrap">
-              <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>&edit_id=<?= to_int($r['id']) ?>">Edit</a>
+              <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>&edit_id=<?= to_int($r['id']) ?>">Edit</a>
               <form method="post" action="dhcp_pool.php" class="d-inline-form"
                     data-confirm="Delete reserved address <?= e(to_str($r['ip'])) ?>?">
                 <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"     value="delete_address">
-                <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
+                <input type="hidden" name="subnet_id"  value="<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>">
                 <input type="hidden" name="address_id" value="<?= to_int($r['id']) ?>">
                 <button type="submit" class="action-pill button-danger">Delete</button>
               </form>
@@ -469,7 +469,7 @@ page_header('DHCP Pools');
       </tbody>
     </table>
     </div>
-    <p class="mt-8"><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>">View all addresses →</a></p>
+    <p class="mt-8"><a href="addresses.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>">View all addresses →</a></p>
   <?php endif; ?>
 </div>
 <?php endif; ?>
