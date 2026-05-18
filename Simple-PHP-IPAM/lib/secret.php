@@ -39,20 +39,32 @@ class IpamSecretDecryptException extends \RuntimeException
 /**
  * Derive the 32-byte settings-secret key from app_secret.
  *
- * @throws \RuntimeException if app_secret is unreadable or malformed.
+ * `app_secret` has two valid forms: the modern auto-generated value
+ * (base64 of 32 random bytes — see lib/app_secret.php) and a legacy /
+ * operator-set plain string of arbitrary content and length. Both are
+ * accepted: if the value decodes as valid base64 the decoded bytes are
+ * used as key material, otherwise the raw string is. Either way the
+ * material is normalised to a fixed-width 32-byte digest with an
+ * unkeyed BLAKE2b, then run through a keyed BLAKE2b for domain
+ * separation. The only rejected input is a genuinely empty app_secret
+ * (which ipam_app_secret() auto-generates away — this is belt-and-braces).
+ *
+ * @throws \RuntimeException if app_secret is empty.
  */
 function ipam_secret_key(): string
 {
     $appSecret = ipam_app_secret();
-    $raw = base64_decode($appSecret, true);
-    // 16 bytes is the minimum entropy floor: app_secret is normally
-    // base64_encode(random_bytes(32)) = 32 bytes, but legacy/manually-set
-    // installs may carry a shorter operator-chosen value. The floor tolerates
-    // those while still rejecting an empty, truncated, or corrupt value.
-    if ($raw === false || strlen($raw) < 16) {
-        throw new \RuntimeException('app_secret is missing or malformed; cannot derive settings-secret key.');
+    if ($appSecret === '') {
+        throw new \RuntimeException('app_secret is empty; cannot derive the settings-secret key.');
     }
-    return sodium_crypto_generichash(IPAM_SECRET_KDF_CONTEXT, $raw, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+    // If app_secret decodes as valid base64 use the decoded bytes, else
+    // treat it as a raw operator string. The unkeyed BLAKE2b digest below
+    // accepts any input length, so a manually-set secret of any size works.
+    $decoded  = base64_decode($appSecret, true);
+    $material = ($decoded !== false && $decoded !== '') ? $decoded : $appSecret;
+    $root     = sodium_crypto_generichash($material); // 32-byte digest, any input length
+    // Domain-separated subkey: keyed BLAKE2b, context as message, 32-byte root as key.
+    return sodium_crypto_generichash(IPAM_SECRET_KDF_CONTEXT, $root, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
 }
 
 /** True if $value carries the IPAMSEC1 envelope prefix. */
