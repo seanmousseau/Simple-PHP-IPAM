@@ -2,9 +2,9 @@
 declare(strict_types=1);
 
 /**
- * Simple PHP IPAM — settings-secret encrypt-at-rest pipeline (v3.31.0 #1233).
- *
  * @module secret
+ *
+ * Simple PHP IPAM — settings-secret encrypt-at-rest pipeline (v3.31.0 #1233).
  *
  * Every `settings` row whose registry definition is flagged `sensitive`
  * (except `backup_vault_key`, which carries its own IPAMWK1 envelope —
@@ -36,6 +36,10 @@ function ipam_secret_key(): string
 {
     $appSecret = ipam_app_secret();
     $raw = base64_decode($appSecret, true);
+    // 16 bytes is the minimum entropy floor: app_secret is normally
+    // base64_encode(random_bytes(32)) = 32 bytes, but legacy/manually-set
+    // installs may carry a shorter operator-chosen value. The floor tolerates
+    // those while still rejecting an empty, truncated, or corrupt value.
     if ($raw === false || strlen($raw) < 16) {
         throw new \RuntimeException('app_secret is missing or malformed; cannot derive settings-secret key.');
     }
