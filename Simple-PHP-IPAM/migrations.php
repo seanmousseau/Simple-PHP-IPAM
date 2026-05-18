@@ -4261,6 +4261,75 @@ function ipam_migrations(): array
             }
         },
 
+        // v3.31.0 (#1234, ADR-001 pt 2) - re-encrypt every plaintext
+        // managed-secret row in the settings table into an IPAMSEC1 envelope.
+        // Pre-v3.31.0 stored these secrets (oidc.client_secret, smtp.auth_pass,
+        // login_protection.secret_key, recaptcha_enterprise.api_key) as
+        // plaintext; a DB dump exposed them. ipam_secret_managed_keys() is the
+        // single source of truth for which keys are managed - it deliberately
+        // EXCLUDES backup_vault_key, which carries its own IPAMWK1 envelope
+        // (see lib/vault.php); double-wrapping it would break ipam_vault_unwrap().
+        //
+        // Idempotent: rows already carrying the IPAMSEC1 envelope prefix are
+        // skipped (ipam_secret_is_envelope), so replaying this closure - or
+        // restoring an older backup and re-upgrading - never double-encrypts.
+        // null/empty values are left untouched.
+        //
+        // apply_migrations() has already set PRAGMA foreign_keys = OFF and
+        // wrapped this closure in a transaction (invariant #2) - the body
+        // manages neither. The `key` column is quoted via ipam_key_col() for
+        // cross-engine safety (`key` is reserved in MySQL).
+        '3.31.0-reencrypt-settings-secrets' => static function (PDO $db): void {
+            $managed = ipam_secret_managed_keys();
+            if ($managed === []) {
+                return;
+            }
+            $keyCol       = ipam_key_col();
+            $placeholders = implode(',', array_fill(0, count($managed), '?'));
+
+            $sel = $db->prepare(
+                "SELECT tenant_id, {$keyCol} AS k, value FROM settings "
+                . "WHERE {$keyCol} IN ({$placeholders})"
+            );
+            $sel->execute($managed);
+            $rows = $sel->fetchAll(PDO::FETCH_ASSOC);
+            if ($rows === []) {
+                return;
+            }
+
+            // Two distinct named placeholders bound to the same tenant_id:
+            // some PDO drivers reject reusing one named placeholder twice in
+            // a single statement when emulation is off.
+            $upd = $db->prepare(
+                "UPDATE settings SET value = :v WHERE {$keyCol} = :k "
+                . "AND ((:t1 IS NULL AND tenant_id IS NULL) OR tenant_id = :t2)"
+            );
+
+            $reencrypted = 0;
+            foreach ($rows as $row) {
+                $value = $row['value'] ?? null;
+                if (!is_string($value) || $value === '' || ipam_secret_is_envelope($value)) {
+                    continue; // null/empty or already enveloped
+                }
+                $tenantId = $row['tenant_id'];
+                $upd->execute([
+                    ':v'  => ipam_secret_encrypt($value),
+                    ':k'  => $row['k'],
+                    ':t1' => $tenantId,
+                    ':t2' => $tenantId,
+                ]);
+                $reencrypted++;
+            }
+
+            if ($reencrypted > 0 && function_exists('audit')) {
+                $details = json_encode(['count' => $reencrypted]);
+                audit($db, 'migration.applied', 'migration', null,
+                    is_string($details)
+                        ? '3.31.0-reencrypt-settings-secrets ' . $details
+                        : '3.31.0-reencrypt-settings-secrets');
+            }
+        },
+
     ];
 }
 
