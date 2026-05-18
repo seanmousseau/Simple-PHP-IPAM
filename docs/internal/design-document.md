@@ -37,8 +37,21 @@ The table below lists the rules that protect specific code locations. **Every en
 | 19 | Raw `$_GET` / `$_POST` IPs must pass through `normalize_ip()` before reaching `proc_open()` or `fsockopen()`. Semgrep rule `ipam-proc-open-safe` enforces. | `Simple-PHP-IPAM/lib.php` scanner helpers, `.semgrep/rules.yml` | IP-injection class of bugs (shell-quote escape into ping/scan argv) |
 | 20 | `addresses.mac` is free-form, `NOT NULL DEFAULT ''`. Never validate format server-side — users enter any notation (cisco, eui-48, vendor-specific). | `Simple-PHP-IPAM/schema.sql`; address-edit handlers | User-facing policy; format validators were tried twice and reverted both times |
 | 21 | No `global $config;` in extracted `lib/*.php` modules — they read config via the `ipam_config()` / `ipam_config_nested()` accessors. `global $db` (the runtime PDO handle) is still permitted. The full sweep of remaining `global $config` sites elsewhere is tracked as #1207. | `Simple-PHP-IPAM/lib/*.php`, `Simple-PHP-IPAM/lib/config.php` | ADR-003 (v3.30.0 ADR-004 wave-1 extraction) |
+| 22 | A fresh install **never runs migrations**. `ipam_db_init()` builds a new database directly from the `schema.*.sql` files, then stamps every known migration as already-applied; `apply_migrations()` runs **only** on upgrades of an existing install. **Consequence:** a migration that seeds or backfills *data* (not just DDL) will never execute on a fresh install — that data must *also* be present in the `schema.*.sql` files (or produced by PHP defaults at runtime), or fresh installs get nothing. A migration is a safe place for an *upgrade-only* data change and nowhere else. | `Simple-PHP-IPAM/lib.php` `ipam_db_init` / `apply_migrations`; `schema.*.sql` | v3.30.0 — the `setting_definitions` table was populated only by a data-seeding migration, so it was empty on every fresh install of every engine; the table was withdrawn (ADR-001 Option D) after the multi-engine gate exposed it |
 
 Cross-release rollup of lessons that did not become invariants (because they're advice, not enforceable rules at a code location) lives in `lessons-learned.md`.
+
+---
+
+## Subsystem hazards
+
+Not invariants — these are *traps*. A subsystem has **two of something**, or a name means **two things**. Misreading one of these has cost real time. Check here before assuming there is exactly one of X.
+
+- **There are two front-end drawer systems.** The slide-in *form-drawer* (`assets/app.js`, #247 — `data-open-drawer` triggers; *moves* a `.drawer-form-card` node into `#form-drawer`) and the *IpamDrawer* global-drawer (#517 — `data-drawer-tpl` / `data-drawer-url` triggers; clones a template or fetches a partial into `#global-drawer`). They coexist on the same pages and historically shared the `data-drawer-title` attribute, which let one trigger fire *both* (an empty drawer stacked on the real one). Consolidation onto one implementation is tracked as **#1243**. Until then: a drawer trigger belongs to exactly one system — never give it attributes from both.
+
+- **A settings-registry entry carries two type fields.** `ipam_setting_definitions()` enriches each entry with `storage_type` (the 4-value *storage* type — `string|int|bool|json` — how the value is encoded in the `settings` table) **and** `logical_type` (the 11-value *logical* type — `string,int,bool,json,enum,secret,url,email,timezone,cidr,datetime` — how the value is validated and rendered). They are not interchangeable: storage drives encode/decode, logical drives `ipam_setting_validate()` dispatch and the settings-form widget. The raw registry `type` key is the *storage* type. There is **no** `setting_definitions` database table — the registry is pure PHP (ADR-001 Option D).
+
+- **On the production install, the on-disk `data/ipam.sqlite` is stale and unused.** Prod runs on MySQL; the SQLite file is a leftover. Always verify migration/schema state against the live MySQL `schema_migrations`, never the disk file. (Also in `release-workflow.md` Phase 4.)
 
 ---
 
