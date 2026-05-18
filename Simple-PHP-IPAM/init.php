@@ -114,6 +114,13 @@ require_once __DIR__ . '/lib/config.php';
 // always after init.php has finished loading. v3.30.0.
 require_once __DIR__ . '/lib/db.php';
 
+// Demo-data fixture seeder (#909, ADR-004, A14) — demo_seed_data() populates
+// an empty schema with the canonical demo dataset. Loaded AFTER lib/db.php
+// (demo_seed_data() calls ipam_dialect()) and BEFORE lib.php so the fresh-
+// install / test-harness reset path can seed without a separate bootstrap
+// step. v3.31.0.
+require_once __DIR__ . '/lib/demo_seed.php';
+
 // Audit layer (#912, ADR-004 Phase 4 Task 4.2) — audit() / audit_export() /
 // prune_audit_log() / audit_filter_validate_* and the AUDIT_FILTER_PREFIXES
 // const. Loaded AFTER lib/db.php (prune_audit_log() calls ipam_dialect() and
