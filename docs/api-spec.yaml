@@ -198,29 +198,6 @@ components:
         details: { type: string }
         created_at: { type: string, format: date-time }
 
-    CustomFieldDef:
-      type: object
-      properties:
-        id: { type: integer }
-        entity_type: { type: string, enum: [subnet, address] }
-        key: { type: string, description: "Slug identifier (^[a-z][a-z0-9_]{0,62}$)", example: "cost_centre" }
-        label: { type: string, example: "Cost Centre" }
-        type: { type: string, enum: [text, number, date, boolean, select] }
-        options:
-          type: array
-          items: { type: string }
-          description: Non-empty only for select fields
-        sort_order: { type: integer }
-        is_required: { type: boolean }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
-
-    ValidationError:
-      type: object
-      description: Returned with HTTP 422 when a custom_fields value fails strict type validation
-      properties:
-        error: { type: string, example: "cost_centre: expected string, got integer" }
-
     Error:
       type: object
       properties:
@@ -647,16 +624,25 @@ paths:
           headers:
             X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  # ── Custom Field Definitions ─────────────────────────────────────────────────
-  /custom_field_defs:
-    get:
-      summary: List custom field definitions
+  # ── Tag association endpoints ────────────────────────────────────────────────
+  /subnet_tags:
+    post:
+      summary: Attach a tag to a subnet
       parameters:
-        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
-        - { in: query, name: entity_type, schema: { type: string, enum: [subnet, address] }, description: "Filter by entity type" }
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [subnet_tags] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subnet_id, tag_id]
+              properties:
+                subnet_id: { type: integer, description: "ID of the subnet to tag" }
+                tag_id: { type: integer, description: "ID of the tag to attach" }
       responses:
-        "200":
-          description: Array of definitions
+        "201":
+          description: Tag attached (new association created)
           headers:
             X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
           content:
@@ -664,71 +650,137 @@ paths:
               schema:
                 type: object
                 properties:
-                  custom_field_defs:
-                    type: array
-                    items: { $ref: "#/components/schemas/CustomFieldDef" }
-    post:
-      summary: Create a custom field definition (admin role required)
-      parameters:
-        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [entity_type, key, label, type]
-              properties:
-                entity_type: { type: string, enum: [subnet, address] }
-                key: { type: string, description: "Slug (^[a-z][a-z0-9_]{0,62}$)" }
-                label: { type: string }
-                type: { type: string, enum: [text, number, date, boolean, select] }
-                options: { type: array, items: { type: string }, description: "Required when type=select" }
-                sort_order: { type: integer, default: 0 }
-                is_required: { type: boolean, default: false }
-      responses:
-        "201":
-          description: Definition created
+                  subnet_id: { type: integer }
+                  tag_id: { type: integer }
+        "200":
+          description: Tag already attached (no-op — association already existed)
           headers:
             X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subnet_id: { type: integer }
+                  tag_id: { type: integer }
         "400":
-          description: Validation error (duplicate key, invalid slug, etc.)
+          description: Missing or invalid subnet_id / tag_id
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-    put:
-      summary: Update a custom field definition (admin role required)
+        "404":
+          description: Subnet or tag not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      summary: Detach a tag from a subnet
       parameters:
-        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
-        - { in: query, name: id, required: true, schema: { type: integer } }
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [subnet_tags] } }
+        - { in: query, name: subnet_id, required: true, schema: { type: integer } }
+        - { in: query, name: tag_id, required: true, schema: { type: integer } }
+      responses:
+        "204":
+          description: Detached (or was not attached — idempotent)
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+        "400":
+          description: Missing or invalid subnet_id / tag_id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /address_tags:
+    post:
+      summary: Attach a tag to an address
+      parameters:
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [address_tags] } }
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [address_id, tag_id]
               properties:
-                label: { type: string }
-                options: { type: array, items: { type: string } }
-                sort_order: { type: integer }
-                is_required: { type: boolean }
+                address_id: { type: integer, description: "ID of the address to tag" }
+                tag_id: { type: integer, description: "ID of the tag to attach" }
       responses:
-        "200":
-          description: Definition updated
+        "201":
+          description: Tag attached (new association created)
           headers:
             X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address_id: { type: integer }
+                  tag_id: { type: integer }
+        "200":
+          description: Tag already attached (no-op — association already existed)
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address_id: { type: integer }
+                  tag_id: { type: integer }
+        "400":
+          description: Missing or invalid address_id / tag_id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Address or tag not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
-      summary: Delete a custom field definition (admin role required; fails if values exist)
+      summary: Detach a tag from an address
       parameters:
-        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
-        - { in: query, name: id, required: true, schema: { type: integer } }
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [address_tags] } }
+        - { in: query, name: address_id, required: true, schema: { type: integer } }
+        - { in: query, name: tag_id, required: true, schema: { type: integer } }
       responses:
         "204":
-          description: Deleted
+          description: Detached (or was not attached — idempotent)
           headers:
             X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
-        "409":
-          description: Definition is in use — clear values before deleting
+        "400":
+          description: Missing or invalid address_id / tag_id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /scan_history:
+    get:
+      summary: Paginated scan history for a subnet (aggregated by minute)
+      parameters:
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [scan_history] } }
+        - { in: query, name: subnet_id, required: true, schema: { type: integer }, description: "Subnet ID to retrieve history for" }
+        - { in: query, name: limit, schema: { type: integer, default: 50 }, description: "Number of scan-minute rows to return (max 200)" }
+      responses:
+        "200":
+          description: Array of scan-run summaries, newest first
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    run_minute: { type: string, example: "2025-03-15 14:22", description: "Minute-precision truncation of scanned_at (YYYY-MM-DD HH:MM)" }
+                    total: { type: integer, description: "Total IPs probed in this scan run" }
+                    up_count: { type: integer, description: "Number of IPs that responded" }
+                    down_count: { type: integer, description: "Number of IPs that did not respond" }
+                    started_at: { type: string, format: date-time, description: "Earliest scanned_at timestamp in this run" }
+        "400":
+          description: subnet_id is missing or invalid
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

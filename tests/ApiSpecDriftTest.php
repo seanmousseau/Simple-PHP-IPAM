@@ -34,21 +34,19 @@ final class ApiSpecDriftTest extends TestCase
 {
     /**
      * Resources that exist in api.php but are intentionally absent from
-     * api-spec.yaml as of v3.29.0. See #1202 for the cleanup plan.
+     * api-spec.yaml. Drift closed in v3.32.0 / #1202 — subnet_tags,
+     * address_tags, and scan_history were added to the spec; this list
+     * must remain empty going forward.
      */
-    private const ALLOWLIST_API_ONLY = [
-        'subnet_tags',   // POST/DELETE — tag attach/detach helper, undocumented
-        'address_tags',  // POST/DELETE — same
-        'scan_history',  // GET — historical-scan reads, undocumented
-    ];
+    private const ALLOWLIST_API_ONLY = [];
 
     /**
      * Resources that exist in api-spec.yaml but are intentionally absent
-     * from api.php as of v3.29.0. See #1202.
+     * from api.php. Drift closed in v3.32.0 / #1202 — custom_field_defs
+     * was removed from the spec (feature never built, #894 deferred); this
+     * list must remain empty going forward.
      */
-    private const ALLOWLIST_SPEC_ONLY = [
-        'custom_field_defs', // documented CRUD; dispatcher arm not yet wired (#894 work)
-    ];
+    private const ALLOWLIST_SPEC_ONLY = [];
 
     /** @return list<string> */
     private function extractSpecPaths(): array
