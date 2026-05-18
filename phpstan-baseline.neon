@@ -288,38 +288,3 @@ parameters:
 			count: 14
 			path: Simple-PHP-IPAM/health.php
 
-		-
-			message: '#^Cannot access offset ''started_at'' on mixed\.$#'
-			identifier: offsetAccess.nonOffsetAccessible
-			count: 1
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Cannot cast list\<mixed\>\|string\|false to string\.$#'
-			identifier: cast.string
-			count: 1
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Parameter \#1 \$from of function copy expects string, string\|false given\.$#'
-			identifier: argument.type
-			count: 1
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Parameter \#1 \$path of function basename expects string, string\|false given\.$#'
-			identifier: argument.type
-			count: 3
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Parameter \#2 \$descriptor_spec of function proc_open expects array\<0\|1\|2, list\<string\>\|resource\>, array\{array\{''file'', non\-empty\-string\|false, ''r''\}, array\{''pipe'', ''w''\}, array\{''pipe'', ''w''\}\} given\.$#'
-			identifier: argument.type
-			count: 2
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between ''pgsql'' and ''pgsql'' will always evaluate to true\.$#'
-			identifier: identical.alwaysTrue
-			count: 1
-			path: Simple-PHP-IPAM/restore.php
