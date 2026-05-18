@@ -76,6 +76,8 @@ final class SettingsSecretIntegrationTest extends TestCase
     {
         unset($GLOBALS['db'], $GLOBALS['config']);
         ipam_setting_cache_bust();
+        ipam_config_invalidate_cache();
+        $_SESSION = [];
     }
 
     /** Read the raw, un-decoded settings.value for a global-scope key. */
