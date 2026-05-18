@@ -250,7 +250,7 @@ ipam_secret_key() = sodium_crypto_generichash('ipam-settings-secret-v1', app_sec
 
 ### `backup_vault_key` exclusion
 
-`backup_vault_key` is **not** part of this pipeline. It already has its own `IPAMWK1` envelope, wrapped under `bootstrap_key` (lib/vault.php, ADR-005). Encrypting it a second time under the settings-secret key would couple two key hierarchies that are deliberately independent.
+`backup_vault_key` is **not** part of this pipeline. It already has its own `IPAMWK1` envelope, wrapped under `bootstrap_key` (lib/vault.php, v3.26.0). Encrypting it a second time under the settings-secret key would couple two key hierarchies that are deliberately independent.
 
 ### Trust boundary
 
