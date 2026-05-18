@@ -1532,6 +1532,19 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
                     // settings.type was dropped in v3.30.0 (ADR-001): the stored
                     // type is always the definition's storage type ($storageType).
                     $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
+                    // v3.31.0 (#1233): decrypt managed settings secrets read
+                    // from the DB. config.php fallback (Step 3) is plaintext
+                    // and must NOT pass through here.
+                    if (is_string($value) && ipam_secret_is_managed_key($key) && ipam_secret_is_envelope($value)) {
+                        $decrypted = ipam_secret_decrypt($value);
+                        if ($decrypted === null) {
+                            throw new \RuntimeException(
+                                "Failed to decrypt settings secret '$key'. " .
+                                'app_secret in config.php may have changed or the row is corrupt.'
+                            );
+                        }
+                        $value = $decrypted;
+                    }
                     $decoded    = ipam_setting_decode($value, $storageType, $fallback);
                     ipam_setting_cache_set($key, $decoded, $tenantId);
                     return $decoded;
@@ -1546,6 +1559,19 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
                 // settings.type was dropped in v3.30.0 (ADR-001): the stored
                 // type is always the definition's storage type ($storageType).
                 $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
+                // v3.31.0 (#1233): decrypt managed settings secrets read from
+                // the DB. config.php fallback (Step 3) is plaintext and must
+                // NOT pass through here.
+                if (is_string($value) && ipam_secret_is_managed_key($key) && ipam_secret_is_envelope($value)) {
+                    $decrypted = ipam_secret_decrypt($value);
+                    if ($decrypted === null) {
+                        throw new \RuntimeException(
+                            "Failed to decrypt settings secret '$key'. " .
+                            'app_secret in config.php may have changed or the row is corrupt.'
+                        );
+                    }
+                    $value = $decrypted;
+                }
                 $decoded    = ipam_setting_decode($value, $storageType, $fallback);
                 ipam_setting_cache_set($key, $decoded, $tenantId);
                 return $decoded;
@@ -1577,6 +1603,13 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
             throw $e;
         }
         // Pre-migration fallback path — silently fall through.
+    } catch (\RuntimeException $e) {
+        // v3.31.0 (#1233): a decrypt failure for a managed settings secret
+        // (envelope present but undecryptable — app_secret changed or row
+        // corrupt) must fail loud, not silently fall back to a stale config
+        // or registry default. Re-throw so the caller sees it.
+        error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
+        throw $e;
     } catch (\Throwable $e) {
         // Non-PDO failure (e.g. cache helper bug). Log and fall through to the
         // config back-compat path; do not rethrow because callers that read
@@ -1658,6 +1691,14 @@ function ipam_setting_set(
     $sensitive   = is_array($def) && !empty($def['sensitive']);
 
     $encoded = ipam_setting_encode($value, $storageType);
+
+    // v3.31.0 (#1233): encrypt-at-rest for managed settings secrets.
+    // ipam_secret_is_managed_key() excludes backup_vault_key (own envelope).
+    // ipam_setting_encode() always returns a string, so no is_string() guard
+    // is needed here (PHPStan: it would be an always-true narrowed type).
+    if ($sensitive && ipam_secret_is_managed_key($key)) {
+        $encoded = ipam_secret_encrypt($encoded);
+    }
 
     $kc = ipam_key_col();
     $d  = ipam_dialect();
