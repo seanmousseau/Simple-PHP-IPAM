@@ -4298,12 +4298,18 @@ function ipam_migrations(): array
                 return;
             }
 
-            // Two distinct named placeholders bound to the same tenant_id:
-            // some PDO drivers reject reusing one named placeholder twice in
-            // a single statement when emulation is off.
-            $upd = $db->prepare(
-                "UPDATE settings SET value = :v WHERE {$keyCol} = :k "
-                . "AND ((:t1 IS NULL AND tenant_id IS NULL) OR tenant_id = :t2)"
+            // Two prepared statements branched in PHP on whether the row's
+            // tenant_id is null. A single statement with a placeholder used
+            // only inside an `:param IS NULL` test is rejected by PostgreSQL
+            // (SQLSTATE 42P18 — could not determine data type of parameter),
+            // since it cannot infer the placeholder's type from that context.
+            // The settings table has no id column; a row is keyed by
+            // (key, tenant_id).
+            $updGlobal = $db->prepare(
+                "UPDATE settings SET value = :v WHERE {$keyCol} = :k AND tenant_id IS NULL"
+            );
+            $updTenant = $db->prepare(
+                "UPDATE settings SET value = :v WHERE {$keyCol} = :k AND tenant_id = :t"
             );
 
             foreach ($rows as $row) {
@@ -4311,13 +4317,16 @@ function ipam_migrations(): array
                 if (!is_string($value) || $value === '' || ipam_secret_is_envelope($value)) {
                     continue; // null/empty or already enveloped
                 }
-                $tenantId = $row['tenant_id'];
-                $upd->execute([
-                    ':v'  => ipam_secret_encrypt($value),
-                    ':k'  => $row['k'],
-                    ':t1' => $tenantId,
-                    ':t2' => $tenantId,
-                ]);
+                $encrypted = ipam_secret_encrypt($value);
+                if ($row['tenant_id'] === null) {
+                    $updGlobal->execute([':v' => $encrypted, ':k' => $row['k']]);
+                } else {
+                    $updTenant->execute([
+                        ':v' => $encrypted,
+                        ':k' => $row['k'],
+                        ':t' => $row['tenant_id'],
+                    ]);
+                }
             }
         },
 
