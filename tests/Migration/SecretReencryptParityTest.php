@@ -9,12 +9,15 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * v3.31.0 #1234 (ADR-001 pt 2) - closure '3.31.0-reencrypt-settings-secrets'.
+ * Proves the v3.31.0 secret re-encrypt migrations (ADR-001 pt 2):
+ *   - #1234 closure '3.31.0-reencrypt-settings-secrets'
+ *   - #1235 closure '3.31.0-reencrypt-webhook-secrets'
  *
- * Proves the one-shot re-encrypt migration:
- *   - Re-encrypt: a pre-existing plaintext managed-secret row (oidc.client_secret)
- *     is rewritten in place into an IPAMSEC1 envelope; the decrypted value
- *     round-trips back to the original plaintext.
+ * Each closure is exercised for both re-encrypt and idempotence:
+ *   - Re-encrypt: a pre-existing legacy-form secret (a plaintext managed-secret
+ *     settings row, or a '$2W$' aes-256-gcm webhooks.secret row) is rewritten in
+ *     place into an IPAMSEC1 envelope; the decrypted value round-trips back to
+ *     the original.
  *   - Idempotence: a second apply_migrations() pass leaves the already-enveloped
  *     value byte-for-byte unchanged (no double-encryption).
  *
@@ -23,9 +26,9 @@ use PHPUnit\Framework\TestCase;
  *
  * Harness: the codebase has no "run a single named migration" entrypoint, so
  * each scenario builds a DB at the pre-3.31.0 state - engine schema applied,
- * every migration key EXCEPT '3.31.0-reencrypt-settings-secrets' pre-stamped
- * into schema_migrations - seeds a plaintext secret row, then runs the full
- * apply_migrations(). Only the un-stamped new closure replays. This is the
+ * every migration key EXCEPT the two v3.31.0 re-encrypt closures pre-stamped
+ * into schema_migrations - seeds a legacy-form secret row, then runs the full
+ * apply_migrations(). Only the un-stamped new closures replay. This is the
  * EngineParityTest::testAllMigrationsAreIdempotentOnFreshSchema idiom.
  */
 final class SecretReencryptParityTest extends TestCase
@@ -150,7 +153,9 @@ final class SecretReencryptParityTest extends TestCase
         [$db, $restore] = $this->buildPreMigrationDb($engine);
         try {
             $appSecret = \ipam_app_secret();
-            $this->seedWebhook($db, \ipam_webhook_encrypt_secret_legacy('whk-hmac', $appSecret));
+            $legacy    = \ipam_webhook_encrypt_secret_legacy('whk-hmac', $appSecret);
+            $this->assertStringStartsWith('$2W$', $legacy);
+            $this->seedWebhook($db, $legacy);
 
             \apply_migrations($db);
             $first = $this->fetchWebhookSecret($db);
@@ -316,6 +321,7 @@ final class SecretReencryptParityTest extends TestCase
         ]);
     }
 
+    /** Fetch the secret column of the first webhooks row. */
     private function fetchWebhookSecret(PDO $db): ?string
     {
         $sel = $db->query('SELECT secret FROM webhooks ORDER BY id LIMIT 1');
