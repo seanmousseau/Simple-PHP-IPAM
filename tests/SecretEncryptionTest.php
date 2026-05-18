@@ -55,4 +55,12 @@ final class SecretEncryptionTest extends TestCase
         self::assertTrue(ipam_secret_is_envelope(ipam_secret_encrypt('a')));
         self::assertFalse(ipam_secret_is_envelope('plain'));
     }
+
+    public function testNearMissPrefixIsTreatedAsPlaintext(): void
+    {
+        // Missing trailing dot / wrong version tag must NOT be treated as an envelope.
+        self::assertFalse(ipam_secret_is_envelope('IPAMSEC1'));
+        self::assertFalse(ipam_secret_is_envelope('IPAMSEC2.abc'));
+        self::assertSame('IPAMSEC1', ipam_secret_decrypt('IPAMSEC1'));
+    }
 }

@@ -57,8 +57,11 @@ function ipam_secret_encrypt(string $plaintext): string
 {
     $key   = ipam_secret_key();
     $nonce = random_bytes(SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
-    $cipher = sodium_crypto_secretbox($plaintext, $nonce, $key);
-    sodium_memzero($key);
+    try {
+        $cipher = sodium_crypto_secretbox($plaintext, $nonce, $key);
+    } finally {
+        sodium_memzero($key);
+    }
     return IPAM_SECRET_ENVELOPE_PREFIX . base64_encode($nonce . $cipher);
 }
 
@@ -81,7 +84,10 @@ function ipam_secret_decrypt(string $stored): ?string
     $nonce  = substr($blob, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
     $cipher = substr($blob, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
     $key    = ipam_secret_key();
-    $plain  = sodium_crypto_secretbox_open($cipher, $nonce, $key);
-    sodium_memzero($key);
+    try {
+        $plain = sodium_crypto_secretbox_open($cipher, $nonce, $key);
+    } finally {
+        sodium_memzero($key);
+    }
     return $plain === false ? null : $plain;
 }
