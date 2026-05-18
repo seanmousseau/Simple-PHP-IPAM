@@ -12,14 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.30.0
+## What's new in v3.31.0
 
-ADR-004 wave-1 refactor release — the `lib.php` monolith is decomposed into focused `lib/*.php` modules, the settings type system moves to a PHP logical-type registry, and theme becomes a per-user preference. Closes milestone #56. **The upgrade migration backfills existing data automatically — no operator action required.**
+Settings encrypt-at-rest release — sensitive settings are now stored encrypted at rest, the legacy webhook-secret encryption is consolidated onto the same crypto pipeline, and refactor wave 1 is finished off with two more `lib/*.php` extractions. **Two idempotent re-encryption migrations run automatically on upgrade — no operator action required.**
 
-- **Per-user theme preference** — each user's light/dark theme is now stored per account in a new `user_preferences` table instead of a shared column. Existing users' theme choices are migrated automatically on upgrade.
-- **Large internal refactor** — `lib.php` is split into 12 single-responsibility `lib/*.php` modules, with a module linter enforcing the boundaries. Lays the groundwork for refactor waves 2 and 3.
-- **Settings type system hardened** — setting validation now runs through a PHP logical-type registry with a single dispatch point, replacing a database-defined type column.
-- **No operator action needed** — one automatic schema migration set; no new pages, no config-format changes, existing `config.php` files keep working unchanged.
+- **Encrypt-at-rest for settings secrets** — the four sensitive settings (login-protection secret key, reCAPTCHA Enterprise API key, OIDC client secret, SMTP password) are now stored encrypted under a libsodium XSalsa20-Poly1305 envelope keyed from `app_secret`. Existing plaintext rows are re-encrypted automatically on upgrade.
+- **Webhook crypto consolidated** — webhook secrets are migrated off their standalone encryption path onto the shared secret pipeline, with an automatic migration re-encrypting legacy rows.
+- **Refactor wave 1 finished** — `lib/demo_seed.php` and `lib/dhcp.php` are extracted into their own single-responsibility modules.
+- **Add Address fix** — the "Use" next-available-IP link on the Add Address drawer now correctly fills the IP field.
+- **Back up `config.php`** — `app_secret` in `config.php` is now the encryption root for every settings-table secret; ensure `config.php` is part of your backups.
 
 [Full changelog →](CHANGELOG.md)
 

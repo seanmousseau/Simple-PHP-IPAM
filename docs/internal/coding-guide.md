@@ -159,6 +159,32 @@ Never:
 - Reference issue numbers as the only context — they rot. Reference commit SHAs and stable identifiers (RFC numbers, design-document invariants, version constants).
 - Write multi-paragraph comment blocks. If the WHY needs more than three lines, write a section in the appropriate doc and link to it.
 
+### Docblocks are not inline comments
+
+The "default to none" rule above is about *inline* comments. It does **not**
+apply to docblocks. A docblock on a function is its **contract** — and the
+`lib/*.php` decomposition created a large new cross-module surface that needs
+one.
+
+Write or update a docblock whenever you add or change a function that is:
+
+- exported from a `lib/*.php` module (called across module / file boundaries), or
+- a page-handler controller function (e.g. `*_handle_post()`), or
+- non-trivial in its inputs, return shape, side effects, or preconditions.
+
+State the *contract*, not the implementation: `@param` / `@return` with precise
+types (array shapes where they matter), side effects, and preconditions the
+caller must satisfy — e.g. "caller must have run `csrf_require()`", "`$cutoff`
+must be a UTC timestamp", "must run inside a transaction". A trivial private
+helper with a self-evident signature does not need one.
+
+This is enforced **opportunistically, on changed code, at PR time** (see
+"PR-time gates"): a new or modified function on the public / cross-module
+surface that lacks a current, accurate docblock is a review finding. It does
+**not** mandate a back-fill sweep of untouched code — touch a function, leave
+it better; that is how the surface gets covered without a doc-rot-prone mass
+edit.
+
 ---
 
 ## Frontend
@@ -223,6 +249,15 @@ one entry per setting, and the place a new setting is added.
 - **The `settings.type` DB column was dropped in v3.30.0** (migration
   `3.30.0-drop-settings-type`). The storage type is computed from the registry,
   never read from the row.
+- **`sensitive` settings are encrypted at rest (v3.31.0+, ADR-001 part 2).**
+  A `sensitive => true` registry entry has its `settings.value` stored as an
+  `IPAMSEC1` envelope (`lib/secret.php`); `ipam_setting()` / `ipam_setting_set()`
+  decrypt and encrypt it transparently. Prefer the explicit aliases
+  `ipam_secret_get()` / `ipam_secret_set()` at call sites that handle secrets —
+  same behaviour, clearer intent. **Never log a decrypted secret value**, and
+  let `IpamSecretDecryptException` propagate (fail loud) rather than catching it
+  to fall back to a default. Crypto detail: `security-model.md` →
+  "Encrypt-at-rest: settings secrets".
 
 ---
 
@@ -309,7 +344,8 @@ A PR that violates any of these gets bounced.
 7. **Migration added → run `migration-reviewer` subagent.** Confirm the FK-safe pattern from `adding-a-migration.md`. CI runs `MigrationTest` to assert no data loss.
 8. **IP/binary code touched → run `ip-binary-auditor` subagent.** Covers `ip_bin`, `network_bin`, IP parsing, subnet math, ping/scan, DB binds for binary columns.
 9. **Local three-driver gate before push.** `bash testing/bootstrap-app.sh sqlite|mysql|pgsql` then Playwright must all pass. GH Action minutes are paid; do not use CI as your test runner.
-10. **No `git push` or PR merge without explicit per-conversation authorisation.** A previous yes does not carry forward.
+10. **Public / cross-module function added or changed → it carries a current docblock.** See "Docblocks are not inline comments". A missing or stale contract docblock on changed surface code is a review finding.
+11. **No `git push` or PR merge without explicit per-conversation authorisation.** A previous yes does not carry forward.
 
 ---
 

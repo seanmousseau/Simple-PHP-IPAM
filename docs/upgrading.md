@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.31.0](#v3310) — encrypt-at-rest for settings secrets (`IPAMSEC1` envelopes), webhook-secret consolidation, `lib.php` refactor wave 1 finish (no breaking changes)
   - [v3.30.0](#v3300) — per-user theme preference table with backfill, settings type system moved to PHP, `lib.php` decomposed into modules (no breaking changes)
   - [v3.25.0](#v3250) — IPAMBKL1 backend surfaced via picker UI, retention re-homed to destination, U-series UX polish (no breaking changes)
   - [v3.24.0](#v3240) — IPAMBKP3 three-mode encryption format, manual upload-and-restore, standalone decrypt-backup CLI (no breaking changes)
@@ -116,6 +117,13 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.31.0
+
+- **No manual action required.** v3.31.0 ships two automatic, idempotent migrations that run on first load after upgrade. They re-encrypt existing plaintext settings-secret rows and legacy `$2W$` webhook-secret rows in place. Re-running them is harmless — already-encrypted rows are skipped.
+- **Encrypt-at-rest for settings secrets (new).** The four sensitive settings — `oidc.client_secret`, `smtp.auth_pass`, `recaptcha_enterprise.api_key`, and `login_protection.secret_key` — plus webhook secrets are now stored encrypted in the `settings` table as `IPAMSEC1` envelopes (libsodium XSalsa20-Poly1305) instead of plaintext. Encryption and decryption are transparent — the settings behave exactly as before in the admin UI.
+- **⚠️ Back up `config.php`.** `app_secret` (in `config.php`) is now the encryption root for *all* settings-table secrets. If `config.php` is lost or `app_secret` is regenerated, every encrypted secret becomes unrecoverable — a database backup alone is no longer sufficient. Ensure `config.php` is backed up off-site. See [Backups → Disaster recovery](backups.md#disaster-recovery--back-up-your-keys-not-just-your-data).
+- **No breaking changes.** No navigation or URL changes. Existing `config.php` files keep working unchanged.
 
 ### v3.30.0
 

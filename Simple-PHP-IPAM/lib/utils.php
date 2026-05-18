@@ -12,6 +12,15 @@ declare(strict_types=1);
  * no ipam_db() call, no IP/CIDR math, no rendering, no settings access.
  */
 
+/**
+ * HTML-escape a string for safe output in markup or attribute context.
+ * Escapes both quote styles and substitutes invalid UTF-8 sequences.
+ * Pure — no side effects. Must wrap every dynamic value echoed into HTML
+ * (CLAUDE.md invariant #4).
+ *
+ * @param string $s Raw, untrusted string.
+ * @return string   HTML-safe string.
+ */
 function e(string $s): string
 {
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -49,6 +58,14 @@ function to_str(mixed $value): string
     return '';
 }
 
+/**
+ * Format a byte count as a human-readable string (B/KB/MB/GB/TB), rounding
+ * to one decimal place above the byte unit. Returns '0 B' for non-positive
+ * input. Pure — no side effects.
+ *
+ * @param int $bytes Byte count.
+ * @return string    Formatted size, e.g. '1.5 MB'.
+ */
 function format_bytes(int $bytes): string
 {
     if ($bytes <= 0) return '0 B';
@@ -59,6 +76,17 @@ function format_bytes(int $bytes): string
     return ($i === 0 ? (string)$bytes : round($val, 1)) . ' ' . $units[$i];
 }
 
+/**
+ * Read an integer from $_GET, clamped to [$min, $max]. Returns $default when
+ * the key is absent, empty, non-scalar, or not a valid integer literal.
+ * Reads the $_GET superglobal; does not mutate it.
+ *
+ * @param string $key     $_GET key to read.
+ * @param int    $default Value returned when the key is absent or invalid.
+ * @param int    $min     Lower clamp bound.
+ * @param int    $max     Upper clamp bound.
+ * @return int            The clamped integer, or $default.
+ */
 function q_int(string $key, int $default, int $min, int $max): int
 {
     $v = $_GET[$key] ?? null;
@@ -87,11 +115,26 @@ function ipam_normalise_version(string $v): string
     return implode('.', $parts);
 }
 
+/**
+ * Encode raw bytes as unpadded base64url (RFC 4648 §5: '+/' → '-_', no '=').
+ * Pure — no side effects.
+ *
+ * @param string $bytes Raw binary input.
+ * @return string       URL-safe base64 string with no padding.
+ */
 function base64url_encode(string $bytes): string
 {
     return rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
 }
 
+/**
+ * Decode an unpadded base64url string back to raw bytes. Re-adds the '='
+ * padding and translates '-_' back to '+/'. Pure — no side effects.
+ *
+ * @param string $s base64url-encoded input.
+ * @return string   Decoded raw bytes.
+ * @throws RuntimeException When $s is not valid base64url.
+ */
 function base64url_decode(string $s): string
 {
     $s = strtr($s, '-_', '+/');

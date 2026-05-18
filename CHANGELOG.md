@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.31.0] - 2026-05-18
+
+Settings encrypt-at-rest release (ADR-001 part 2). The four sensitive `settings` rows are now stored encrypted at rest under a new shared crypto pipeline, the legacy webhook-secret encryption is consolidated onto that same pipeline, and refactor wave 1 is finished off with two more `lib/*.php` extractions. **Two idempotent re-encryption migrations run automatically on upgrade — no operator action is required.** `app_secret` in `config.php` is now the encryption root for every settings-table secret; back up `config.php`.
+
+### Added
+
+- **Encrypt-at-rest for settings secrets (#1233).** New `lib/secret.php`. The four sensitive `settings` rows — `login_protection.secret_key`, `recaptcha_enterprise.api_key`, `oidc.client_secret`, and `smtp.auth_pass` — are now stored encrypted under the `IPAMSEC1` envelope (libsodium XSalsa20-Poly1305, key = BLAKE2b subkey derived from `app_secret`). Encryption is transparent through `ipam_setting()` / `ipam_setting_set()`; `ipam_secret_get()` / `ipam_secret_set()` are provided as explicit aliases. `backup_vault_key` is excluded — it keeps its own envelope.
+- **Encrypt-at-rest test coverage (#1236).** Round-trip tests across every settings-secret subtype plus a key-rotation smoke test.
+- **`lib/demo_seed.php` extracted (#909).** Refactor wave 1 finish — demo seed-data logic lifted out of `lib.php` into its own module.
+- **`lib/dhcp.php` extracted (#914).** Refactor wave 1 finish — DHCP helpers lifted out of `lib.php` into their own module.
+
+### Changed
+
+- **Webhook crypto consolidated onto the shared secret pipeline (#1235).** Webhook secrets are migrated off the v3.3.0 standalone `aes-256-gcm` `$2W$` path onto the shared `ipam_secret_*` pipeline. An idempotent migration re-encrypts existing legacy `$2W$` rows.
+- **Re-encrypt migration for existing settings secrets (#1234).** An idempotent migration re-encrypts any existing plaintext settings-secret rows under the `IPAMSEC1` envelope on upgrade.
+
+### Fixed
+
+- **"Use" next-available-IP link on the Add Address drawer (#1247).** The `data-fill-ip` click handler did not match the drawer's `.drawer-body` container, so the "Use" link was dead. It now correctly fills the IP field.
+
+### Internal
+
+- **ADR-001 part 2 — settings encrypt-at-rest.** Builds on the v3.30.0 settings type-system work; the four sensitive settings rows and the legacy webhook-secret path now share one `lib/secret.php` crypto pipeline.
+- **Documentation updates (#1237, #1238, #1239).** Security-model, backups/DR, and upgrading guide updated for the new encryption root and the `config.php` backup requirement.
+
 ## [3.30.0] - 2026-05-17
 
 ADR-004 wave-1 refactor release. The 12 559-line `lib.php` monolith is decomposed into focused `lib/*.php` modules, the settings type system moves from a database column to a PHP logical-type registry, and theme becomes a per-user preference backed by a new table. Closes milestone #56. **One schema migration set (three migrations). No new operator-facing pages.** Per-user theme is migrated automatically from the old `users.theme` column by the upgrade migration — **no manual operator action is required.**
@@ -1921,6 +1946,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.31.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.30.0...v3.31.0
 [3.30.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.29.0...v3.30.0
 [3.29.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.3...v3.29.0
 [3.28.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.2...v3.28.3

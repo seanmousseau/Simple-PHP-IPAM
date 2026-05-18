@@ -43,12 +43,25 @@ declare(strict_types=1);
 
 /* ---------------- CSRF ---------------- */
 
+/**
+ * Return the current session's CSRF token, or '' when none is set.
+ * Reads $_SESSION['csrf']; does not generate or mutate it.
+ */
 function csrf_token(): string
 {
     $t = $_SESSION['csrf'] ?? null;
     return is_string($t) ? $t : '';
 }
 
+/**
+ * Enforce CSRF protection on POST requests. A no-op for non-POST methods.
+ * On a missing or mismatched $_POST['csrf'] token: sends a hard 403,
+ * writes a plain-text body, and exit()s — never a redirect. Must be called
+ * on every browser POST handler before mutating state (CLAUDE.md
+ * invariant #4); api.php is the only CSRF-exempt surface.
+ *
+ * Side effects: may emit a 403 header + body and terminate the request.
+ */
 function csrf_require(): void
 {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') return;
@@ -69,6 +82,7 @@ function csrf_require(): void
 
 /* ---------------- Auth / RBAC ---------------- */
 
+/** True when the session holds an authenticated user id. Reads $_SESSION['uid']. */
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
 /**
@@ -108,6 +122,18 @@ function ipam_post_login_redirect_consume(string $default = 'dashboard.php'): st
     return $uri;
 }
 
+/**
+ * Page guard: require an authenticated, non-stale session. Enforces idle
+ * timeout (security.session_idle_seconds), max password age, and pending
+ * MFA enrollment.
+ *
+ * Side effects: on any failed check, sends a `Location:` header and
+ * exit()s — to login.php (not logged in / idle timeout), to
+ * change_password.php (password expired / MFA required). On success,
+ * refreshes $_SESSION['last_active']. May stash the current REQUEST_URI
+ * for post-login redirect and may open/close a fresh session. Reads the
+ * global $db handle and ipam_setting() values.
+ */
 function require_login(): void
 {
     if (!is_logged_in()) {
@@ -178,6 +204,13 @@ function current_user(): array
     ];
 }
 
+/**
+ * Page guard: require login and an exact role match. Calls require_login()
+ * first (which may redirect + exit); then, if the session role differs
+ * from $role, sends a 403 and exit()s with 'Forbidden'.
+ *
+ * @param string $role Required role, e.g. 'admin'.
+ */
 function require_role(string $role): void
 {
     require_login();
@@ -187,6 +220,11 @@ function require_role(string $role): void
     }
 }
 
+/**
+ * Page guard: require login and a non-readonly role. Calls require_login()
+ * first (which may redirect + exit); then, if the session role is
+ * 'readonly', sends a 403 and exit()s with 'Read-only account'.
+ */
 function require_write_access(): void
 {
     require_login();
@@ -196,6 +234,21 @@ function require_write_access(): void
     }
 }
 
+/**
+ * Establish an authenticated session for a verified user.
+ *
+ * Side effects: regenerates the session id, populates $_SESSION (uid,
+ * username, role, last_active); sets $_SESSION['_abs_expires'] from
+ * session.absolute_lifetime_minutes config when that is > 0, otherwise
+ * clears it; and — when $db is supplied — loads the user's persisted theme
+ * into $_SESSION['user_theme']. The caller is responsible for verifying
+ * credentials/MFA before calling this.
+ *
+ * @param int      $uid      Authenticated user id.
+ * @param string   $username Authenticated username.
+ * @param string   $role     User role.
+ * @param PDO|null $db        Live PDO handle; when null the theme preference is skipped.
+ */
 function login_user(int $uid, string $username, string $role, ?PDO $db = null): void
 {
     session_regenerate_id(true);
@@ -218,6 +271,10 @@ function login_user(int $uid, string $username, string $role, ?PDO $db = null): 
     }
 }
 
+/**
+ * Tear down the current session. Side effects: clears $_SESSION, expires
+ * the session cookie, and calls session_destroy().
+ */
 function logout_user(): void
 {
     $_SESSION = [];
@@ -232,6 +289,18 @@ function logout_user(): void
 
 /* ---------------- Caller IP resolution ---------------- */
 
+/**
+ * Resolve the caller's IP address, honouring proxy-trust configuration.
+ *
+ * When security.proxy_trust_cidrs is set, trusts X-Forwarded-For only if
+ * REMOTE_ADDR is a listed proxy CIDR, then walks the chain right-to-left
+ * and returns the first untrusted hop (OWASP pattern). Falls back to the
+ * legacy boolean `proxy_trust` config flag (leftmost XFF, deprecated —
+ * logs a one-shot warning). Returns REMOTE_ADDR when no proxy trust is
+ * configured. Reads $_SERVER, ipam_setting() and ipam_config().
+ *
+ * @return string The resolved client IP, or '127.0.0.1' when REMOTE_ADDR is absent.
+ */
 function client_ip(): string
 {
     $remote = to_str($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');

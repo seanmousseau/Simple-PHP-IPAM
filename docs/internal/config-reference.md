@@ -103,6 +103,8 @@ A registry entry with `sensitive: true`:
 
 Reveal goes through `ipam_sudo_verify()` — see `auth-model.md` → Step-up. Add a sudo gate when introducing any new sensitive setting; the gate is per-action, not per-setting.
 
+**Encrypted at rest (v3.31.0+).** A `sensitive` setting is also stored encrypted in the `settings` table. Its `settings.value` holds an `IPAMSEC1`-prefixed envelope (libsodium `crypto_secretbox`, key derived from `app_secret`) rather than plaintext — `ipam_setting()` decrypts on read and `ipam_setting_set()` encrypts on write transparently. The four managed keys are `login_protection.secret_key`, `recaptcha_enterprise.api_key`, `oidc.client_secret`, and `smtp.auth_pass`; webhook secrets use the same pipeline. `backup_vault_key` is excluded — it has its own `IPAMWK1` envelope. Full crypto detail is in `security-model.md` → "Encrypt-at-rest: settings secrets".
+
 ---
 
 ## Override patterns
