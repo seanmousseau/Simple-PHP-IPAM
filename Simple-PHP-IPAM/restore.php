@@ -60,8 +60,8 @@ $fromAbs = realpath($from);
 if ($fromAbs === false) {
     restore_die("Could not resolve real path of: {$from}");
 }
-$fileSize = filesize($from);
-$sha256   = hash_file('sha256', $from) ?: '';
+$fileSize = filesize($fromAbs);
+$sha256   = hash_file('sha256', $fromAbs) ?: '';
 
 restore_info("Backup file : {$fromAbs}");
 restore_info("Size        : " . format_bytes((int)$fileSize));
@@ -88,7 +88,7 @@ $gConf  = $GLOBALS['config'];
 $driver = ipam_dialect()->driver_name();
 
 // Extension-based format detection
-$ext = strtolower(pathinfo($from, PATHINFO_EXTENSION));
+$ext = strtolower(pathinfo($fromAbs, PATHINFO_EXTENSION));
 if ($ext === 'sqlite' && $driver !== 'sqlite') {
     restore_die("Backup is SQLite (.sqlite) but configured driver is '{$driver}'. Cross-driver restore is not supported by this script.");
 }
