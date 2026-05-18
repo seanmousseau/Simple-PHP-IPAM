@@ -230,6 +230,9 @@ function ipam_dhcp_load_reservations(PDO $db, int $subnetId): array
 /** Convert a CIDR prefix length to a dotted-decimal netmask string. */
 function ipam_prefix_to_netmask(int $prefix): string
 {
+    if ($prefix < 0 || $prefix > 32) {
+        throw new InvalidArgumentException("IPv4 prefix out of range (0-32): {$prefix}");
+    }
     if ($prefix === 0) return '0.0.0.0';
     $mask = (int)((0xFFFFFFFF << (32 - $prefix)) & 0xFFFFFFFF);
     return (string)(inet_ntop(pack('N', $mask)) ?: '0.0.0.0');
