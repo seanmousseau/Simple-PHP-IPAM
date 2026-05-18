@@ -45,3 +45,43 @@ function ipam_secret_key(): string
     }
     return sodium_crypto_generichash(IPAM_SECRET_KDF_CONTEXT, $raw, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
 }
+
+/** True if $value carries the IPAMSEC1 envelope prefix. */
+function ipam_secret_is_envelope(string $value): bool
+{
+    return str_starts_with($value, IPAM_SECRET_ENVELOPE_PREFIX);
+}
+
+/** Encrypt $plaintext into an IPAMSEC1 envelope. */
+function ipam_secret_encrypt(string $plaintext): string
+{
+    $key   = ipam_secret_key();
+    $nonce = random_bytes(SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+    $cipher = sodium_crypto_secretbox($plaintext, $nonce, $key);
+    sodium_memzero($key);
+    return IPAM_SECRET_ENVELOPE_PREFIX . base64_encode($nonce . $cipher);
+}
+
+/**
+ * Decrypt an IPAMSEC1 envelope.
+ *
+ * - Non-envelope input is returned verbatim (legacy plaintext passthrough).
+ * - A malformed or tampered envelope returns null (no plaintext leak).
+ */
+function ipam_secret_decrypt(string $stored): ?string
+{
+    if (!ipam_secret_is_envelope($stored)) {
+        return $stored;
+    }
+    $blob = base64_decode(substr($stored, strlen(IPAM_SECRET_ENVELOPE_PREFIX)), true);
+    $minLen = SODIUM_CRYPTO_SECRETBOX_NONCEBYTES + SODIUM_CRYPTO_SECRETBOX_MACBYTES;
+    if ($blob === false || strlen($blob) < $minLen) {
+        return null;
+    }
+    $nonce  = substr($blob, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+    $cipher = substr($blob, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+    $key    = ipam_secret_key();
+    $plain  = sodium_crypto_secretbox_open($cipher, $nonce, $key);
+    sodium_memzero($key);
+    return $plain === false ? null : $plain;
+}
