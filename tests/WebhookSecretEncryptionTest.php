@@ -27,6 +27,8 @@ use PHPUnit\Framework\TestCase;
  *     have rewritten) must continue to flow through the reader as-is so
  *     the existing webhook keeps signing correctly.
  *   - A tampered IPAMSEC1 envelope must fail decrypt (returns null).
+ *   - A LEGACY '$2W$' envelope decrypted with the WRONG app_secret must
+ *     fail (AEAD tag is key-bound) and return null.
  */
 class WebhookSecretEncryptionTest extends TestCase
 {
@@ -144,6 +146,17 @@ class WebhookSecretEncryptionTest extends TestCase
         $tampered = substr_replace($enc, $replacement, $pos, 1);
         $this->assertNotSame($enc, $tampered, 'tamper must change the byte');
         $this->assertNull(ipam_webhook_decrypt_secret($tampered, $this->appSecret()));
+    }
+
+    public function testWrongAppSecretReturnsNull(): void
+    {
+        // Covers the LEGACY '$2W$' path, which still takes an explicit $key:
+        // decrypting with a DIFFERENT app_secret must fail the AEAD tag check
+        // (the tag is key-bound) and return null. Wrong-key behaviour of the
+        // new IPAMSEC1 path is covered by the G1 key-rotation test, since it
+        // requires swapping the process-wide app_secret.
+        $legacy = ipam_webhook_encrypt_secret_legacy('hmac-key', $this->appSecret());
+        $this->assertNull(ipam_webhook_decrypt_secret($legacy, $this->otherAppSecret()));
     }
 
     public function testLegacyEnvelopeWithEmptyKeyThrows(): void
