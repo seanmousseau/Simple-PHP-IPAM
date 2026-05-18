@@ -192,6 +192,21 @@ function ipam_table_exists(PDO $db, string $name): bool
 }
 
 /**
+ * Fetch one associative row; returns [] on a null statement or a false fetch
+ * (driver disconnect / exhausted result). Lets callers index the result safely.
+ *
+ * @return array<string, mixed>
+ */
+function ipam_fetch_assoc(?PDOStatement $st): array
+{
+    if ($st === null) {
+        return [];
+    }
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    return is_array($row) ? $row : [];
+}
+
+/**
  * Open a PDO connection based on $config['db_driver'].
  *
  * Dispatcher for the multi-engine support introduced in v2.10.0. Picks the

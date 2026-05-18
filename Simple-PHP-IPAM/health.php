@@ -19,9 +19,10 @@ if (!$noCache && is_file($cacheFile)) {
     $raw = @file_get_contents($cacheFile);
     if ($raw !== false) {
         $decoded = @json_decode($raw, true);
-        if (is_array($decoded) && isset($decoded['_ts']) && (time() - (int)$decoded['_ts']) < $cacheTtl) {
+        if (is_array($decoded) && isset($decoded['_ts']) && (time() - to_int($decoded['_ts'])) < $cacheTtl) {
+            /** @var array<string, mixed> $decoded */
             $data     = $decoded;
-            $cachedAt = (int)$decoded['_ts'];
+            $cachedAt = to_int($decoded['_ts']);
         }
     }
 }
@@ -45,17 +46,17 @@ if ($data === null) {
     try {
         $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
         if ($driver === 'sqlite') {
-            $vRow = $db->query("SELECT sqlite_version() AS v")?->fetch();
-            if ($vRow) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');
+            $vRow = ipam_fetch_assoc($db->query("SELECT sqlite_version() AS v") ?: null);
+            if ($vRow !== []) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');
         } elseif ($driver === 'mysql') {
-            $vRow = $db->query("SELECT VERSION() AS v")?->fetch();
-            if ($vRow) {
+            $vRow = ipam_fetch_assoc($db->query("SELECT VERSION() AS v") ?: null);
+            if ($vRow !== []) {
                 $vStr = to_str($vRow['v'] ?? '');
                 $dbVersion = (stripos($vStr, 'MariaDB') !== false ? 'MariaDB ' : 'MySQL ') . $vStr;
             }
         } elseif ($driver === 'pgsql') {
-            $vRow = $db->query("SELECT version() AS v")?->fetch();
-            if ($vRow) {
+            $vRow = ipam_fetch_assoc($db->query("SELECT version() AS v") ?: null);
+            if ($vRow !== []) {
                 $parts = explode(' ', to_str($vRow['v'] ?? ''));
                 $dbVersion = 'PostgreSQL ' . ($parts[1] ?? '');
             }
@@ -65,7 +66,7 @@ if ($data === null) {
     $counts = [];
     foreach (['subnets', 'addresses', 'audit_log', 'scan_results', 'users'] as $tbl) {
         try {
-            $r = $db->query("SELECT COUNT(*) AS c FROM {$tbl}")?->fetch();
+            $r = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c FROM {$tbl}") ?: null);
             $counts[$tbl] = $r ? to_int($r['c']) : 0;
         } catch (Throwable) { $counts[$tbl] = 0; }
     }
@@ -87,12 +88,12 @@ if ($data === null) {
     $storageUsed  = 0;
     try {
         // v3.21.0 §A1 (#799): backup_history was collapsed into backup_runs.
-        $r = $db->query(
+        $r = ipam_fetch_assoc($db->query(
             "SELECT started_at, status FROM backup_runs ORDER BY started_at DESC LIMIT 1"
-        )?->fetch();
-        if ($r) { $lastBackup = to_str($r['started_at'] ?? ''); $lastStatus = to_str($r['status'] ?? ''); }
-        $r2 = $db->query("SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes),0) AS s FROM backup_runs WHERE status='success'")?->fetch();
-        if ($r2) { $backupCount = to_int($r2['c']); $storageUsed = to_int($r2['s']); }
+        ) ?: null);
+        if ($r !== []) { $lastBackup = to_str($r['started_at'] ?? ''); $lastStatus = to_str($r['status'] ?? ''); }
+        $r2 = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes),0) AS s FROM backup_runs WHERE status='success'") ?: null);
+        if ($r2 !== []) { $backupCount = to_int($r2['c']); $storageUsed = to_int($r2['s']); }
     } catch (Throwable) {}
     // v3.26.0 (#1059): legacy single-directory disk_free + retention reads
     // are gone with the backup.* keys. The unified surface has per-destination
@@ -102,8 +103,8 @@ if ($data === null) {
     try {
         $stmt = $db->query("SELECT COUNT(*) AS c FROM backup_destinations WHERE is_active = 1");
         if ($stmt !== false) {
-            $row = $stmt->fetch();
-            if (is_array($row)) { $destinationsActive = to_int($row['c'] ?? 0); }
+            $row = ipam_fetch_assoc($stmt);
+            if ($row !== []) { $destinationsActive = to_int($row['c'] ?? 0); }
         }
     } catch (Throwable) {}
     $backupToolMissing = false;
@@ -130,10 +131,10 @@ if ($data === null) {
     $warnAlerts  = 0;
     $critAlerts  = 0;
     try {
-        $r = $db->query("SELECT COUNT(*) AS c FROM scan_schedules")?->fetch();
-        $schedules = $r ? to_int($r['c']) : 0;
-        $r2 = $db->query("SELECT COUNT(*) AS c FROM scan_schedules WHERE is_active=1")?->fetch();
-        $activeScans = $r2 ? to_int($r2['c']) : 0;
+        $r = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c FROM scan_schedules") ?: null);
+        $schedules = $r !== [] ? to_int($r['c']) : 0;
+        $r2 = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c FROM scan_schedules WHERE is_active=1") ?: null);
+        $activeScans = $r2 !== [] ? to_int($r2['c']) : 0;
         // Overdue = active, last_run_at set, and now - last_run > 2× interval (PHP-side for portability)
         $st3 = $db->query(
             "SELECT interval_minutes, last_run_at FROM scan_schedules
@@ -149,10 +150,10 @@ if ($data === null) {
                 }
             }
         }
-        $r4 = $db->query("SELECT MAX(scanned_at) AS t FROM scan_results")?->fetch();
-        if ($r4) $lastScan = to_str($r4['t'] ?? '');
-        $r5 = $db->query("SELECT COUNT(*) AS c FROM addresses WHERE is_stale=1")?->fetch();
-        $staleCount = $r5 ? to_int($r5['c']) : 0;
+        $r4 = ipam_fetch_assoc($db->query("SELECT MAX(scanned_at) AS t FROM scan_results") ?: null);
+        if ($r4 !== []) $lastScan = to_str($r4['t'] ?? '');
+        $r5 = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c FROM addresses WHERE is_stale=1") ?: null);
+        $staleCount = $r5 !== [] ? to_int($r5['c']) : 0;
         $st6 = $db->query("SELECT level, COUNT(*) AS c FROM alert_state GROUP BY level");
         if ($st6) {
             $r6 = $st6->fetchAll();
@@ -181,28 +182,28 @@ if ($data === null) {
     $whPending  = 0;
     $whLastErr  = '';
     try {
-        $r = $db->query("SELECT COUNT(*) AS c FROM webhooks WHERE is_active=1")?->fetch();
-        $whActive = $r ? to_int($r['c']) : 0;
+        $r = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c FROM webhooks WHERE is_active=1") ?: null);
+        $whActive = $r !== [] ? to_int($r['c']) : 0;
         $st2 = $db->prepare(
             "SELECT COUNT(*) AS total,
              SUM(CASE WHEN http_status >= 200 AND http_status < 300 THEN 1 ELSE 0 END) AS ok
              FROM webhook_deliveries WHERE delivered_at >= :t24h"
         );
         $st2->execute([':t24h' => gmdate('Y-m-d H:i:s', time() - 86400)]);
-        $r2 = $st2->fetch();
-        if ($r2) { $wh24hOk = to_int($r2['ok']); $wh24hTotal = to_int($r2['total']); }
-        $r3 = $db->query(
+        $r2 = ipam_fetch_assoc($st2);
+        if ($r2 !== []) { $wh24hOk = to_int($r2['ok']); $wh24hTotal = to_int($r2['total']); }
+        $r3 = ipam_fetch_assoc($db->query(
             "SELECT COUNT(*) AS c FROM webhook_deliveries
              WHERE (http_status IS NULL OR http_status < 200 OR http_status >= 300)
                AND attempt < 3"
-        )?->fetch();
-        $whPending = $r3 ? to_int($r3['c']) : 0;
-        $r4 = $db->query(
+        ) ?: null);
+        $whPending = $r3 !== [] ? to_int($r3['c']) : 0;
+        $r4 = ipam_fetch_assoc($db->query(
             "SELECT error FROM webhook_deliveries
              WHERE error IS NOT NULL AND error != ''
              ORDER BY delivered_at DESC LIMIT 1"
-        )?->fetch();
-        if ($r4) $whLastErr = to_str($r4['error'] ?? '');
+        ) ?: null);
+        if ($r4 !== []) $whLastErr = to_str($r4['error'] ?? '');
     } catch (Throwable) {}
     $data['webhook'] = [
         'active'      => $whActive,
@@ -221,18 +222,18 @@ if ($data === null) {
         // Locked = recent IPs with many failures (failed attempt threshold).
         $st2 = $db->prepare("SELECT COUNT(DISTINCT ip) AS c FROM login_attempts WHERE attempted_at >= :t15m");
         $st2->execute([':t15m' => gmdate('Y-m-d H:i:s', time() - 900)]);
-        $r2 = $st2->fetch();
-        $lockedAccounts = $r2 ? to_int($r2['c']) : 0;
-        $r3 = $db->query("SELECT COUNT(*) AS c FROM users WHERE totp_secret_enc IS NOT NULL AND totp_secret_enc != ''")?->fetch();
-        $totpEnabled = $r3 ? to_int($r3['c']) : 0;
+        $r2 = ipam_fetch_assoc($st2);
+        $lockedAccounts = $r2 !== [] ? to_int($r2['c']) : 0;
+        $r3 = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c FROM users WHERE totp_secret_enc IS NOT NULL AND totp_secret_enc != ''") ?: null);
+        $totpEnabled = $r3 !== [] ? to_int($r3['c']) : 0;
         $st4 = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE attempted_at >= :t1h");
         $st4->execute([':t1h' => gmdate('Y-m-d H:i:s', time() - 3600)]);
-        $r4 = $st4->fetch();
-        $failedLogin1h = $r4 ? to_int($r4['c']) : 0;
+        $r4 = ipam_fetch_assoc($st4);
+        $failedLogin1h = $r4 !== [] ? to_int($r4['c']) : 0;
         $st5 = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE attempted_at >= :t24h");
         $st5->execute([':t24h' => gmdate('Y-m-d H:i:s', time() - 86400)]);
-        $r5 = $st5->fetch();
-        $failedLogin24h = $r5 ? to_int($r5['c']) : 0;
+        $r5 = ipam_fetch_assoc($st5);
+        $failedLogin24h = $r5 !== [] ? to_int($r5['c']) : 0;
     } catch (Throwable) {}
     $totalUsers = to_int($data['db']['users']);
     $data['auth'] = [
@@ -284,17 +285,26 @@ function health_row(string $label, string $value, string $level = ''): void
 /* -------------------------------------------------------------------------
  * Derived status levels
  * ---------------------------------------------------------------------- */
+/* Section sub-arrays — $data may be a cache-loaded array<string,mixed>;
+ * narrow each top-level section to an array before offset access. */
+$dbSec      = is_array($data['db'] ?? null)      ? $data['db']      : [];
+$backupSec  = is_array($data['backup'] ?? null)  ? $data['backup']  : [];
+$scanSec    = is_array($data['scan'] ?? null)    ? $data['scan']    : [];
+$webhookSec = is_array($data['webhook'] ?? null) ? $data['webhook'] : [];
+$authSec    = is_array($data['auth'] ?? null)    ? $data['auth']    : [];
+$systemSec  = is_array($systemSec ?? null)  ? $systemSec  : [];
+
 $dbStatus     = 'ok';
-$backupStatus = (bool)($data['backup']['tool_missing'] ?? false) ? 'crit'
-    : ((bool)($data['backup']['enabled'] ?? false)
-        ? (($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
+$backupStatus = (bool)($backupSec['tool_missing'] ?? false) ? 'crit'
+    : ((bool)($backupSec['enabled'] ?? false)
+        ? (($backupSec['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
         : 'warn');
-$scanStatus   = to_int($data['scan']['overdue'] ?? 0) > 0 ? 'warn' : 'ok';
-if (to_int($data['scan']['crit_alerts'] ?? 0) > 0) $scanStatus = 'crit';
-elseif (to_int($data['scan']['warn_alerts'] ?? 0) > 0 && $scanStatus === 'ok') $scanStatus = 'warn';
-$webhookStatus= to_int($data['webhook']['pending_retry'] ?? 0) > 0 ? 'warn' : 'ok';
-$authStatus   = to_int($data['auth']['failed_1h'] ?? 0) > 10 ? 'warn' : 'ok';
-$authStatus   = to_int($data['auth']['failed_1h'] ?? 0) > 50 ? 'crit' : $authStatus;
+$scanStatus   = to_int($scanSec['overdue'] ?? 0) > 0 ? 'warn' : 'ok';
+if (to_int($scanSec['crit_alerts'] ?? 0) > 0) $scanStatus = 'crit';
+elseif (to_int($scanSec['warn_alerts'] ?? 0) > 0 && $scanStatus === 'ok') $scanStatus = 'warn';
+$webhookStatus= to_int($webhookSec['pending_retry'] ?? 0) > 0 ? 'warn' : 'ok';
+$authStatus   = to_int($authSec['failed_1h'] ?? 0) > 10 ? 'warn' : 'ok';
+$authStatus   = to_int($authSec['failed_1h'] ?? 0) > 50 ? 'crit' : $authStatus;
 $systemStatus = 'ok';
 
 $cacheAgeStr = $cachedAt !== null
@@ -328,16 +338,16 @@ page_header('Health Dashboard');
       Database
     </div>
     <?php
-    health_row('Driver', e(to_str($data['db']['driver'] ?? '')));
-    health_row('Version', e(to_str($data['db']['version'] ?? '')));
-    if (to_int($data['db']['size'] ?? 0) > 0) {
-        health_row('File size', e(format_bytes(to_int($data['db']['size']))));
+    health_row('Driver', e(to_str($dbSec['driver'] ?? '')));
+    health_row('Version', e(to_str($dbSec['version'] ?? '')));
+    if (to_int($dbSec['size'] ?? 0) > 0) {
+        health_row('File size', e(format_bytes(to_int($dbSec['size']))));
     }
-    health_row('Subnets', e(number_format(to_int($data['db']['subnets'] ?? 0))));
-    health_row('Addresses', e(number_format(to_int($data['db']['addresses'] ?? 0))));
-    health_row('Audit log rows', e(number_format(to_int($data['db']['audit_log'] ?? 0))));
-    health_row('Scan results', e(number_format(to_int($data['db']['scan_results'] ?? 0))));
-    health_row('Users', e(number_format(to_int($data['db']['users'] ?? 0))));
+    health_row('Subnets', e(number_format(to_int($dbSec['subnets'] ?? 0))));
+    health_row('Addresses', e(number_format(to_int($dbSec['addresses'] ?? 0))));
+    health_row('Audit log rows', e(number_format(to_int($dbSec['audit_log'] ?? 0))));
+    health_row('Scan results', e(number_format(to_int($dbSec['scan_results'] ?? 0))));
+    health_row('Users', e(number_format(to_int($dbSec['users'] ?? 0))));
     ?>
   </div>
 
@@ -348,20 +358,20 @@ page_header('Health Dashboard');
       Backups
     </div>
     <?php
-    $bEnabled = (bool)($data['backup']['enabled'] ?? false);
+    $bEnabled = (bool)($backupSec['enabled'] ?? false);
     health_row('Status', $bEnabled ? '<span style="color:var(--success)">Enabled</span>' : '<span class="muted">Disabled</span>');
-    if ((bool)($data['backup']['tool_missing'] ?? false)) {
+    if ((bool)($backupSec['tool_missing'] ?? false)) {
         health_row('Dump tool', '<span class="danger">Not found in $PATH — backups will fail</span>', 'crit');
     }
-    $lastAt = to_str($data['backup']['last_at'] ?? '');
+    $lastAt = to_str($backupSec['last_at'] ?? '');
     health_row('Last backup', $lastAt !== '' ? e(ipam_format_datetime($lastAt)) : '<span class="muted">Never</span>',
-        $lastAt === '' ? 'warn' : (to_str($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'crit'));
-    health_row('Last status', e(to_str($data['backup']['last_status'] ?? '—')));
-    health_row('Successful backups', e((string)to_int($data['backup']['count'] ?? 0)));
-    health_row('Storage used', e(format_bytes(to_int($data['backup']['storage_used'] ?? 0))));
-    $df = to_int($data['backup']['disk_free'] ?? -1);
+        $lastAt === '' ? 'warn' : (to_str($backupSec['last_status'] ?? '') === 'success' ? 'ok' : 'crit'));
+    health_row('Last status', e(to_str($backupSec['last_status'] ?? '—')));
+    health_row('Successful backups', e((string)to_int($backupSec['count'] ?? 0)));
+    health_row('Storage used', e(format_bytes(to_int($backupSec['storage_used'] ?? 0))));
+    $df = to_int($backupSec['disk_free'] ?? -1);
     health_row('Disk free', $df >= 0 ? e(format_bytes($df)) : '<span class="muted">unknown</span>');
-    health_row('Retention', e((string)to_int($data['backup']['retention'] ?? 7)) . ' backups');
+    health_row('Retention', e((string)to_int($backupSec['retention'] ?? 7)) . ' backups');
     ?>
   </div>
 
@@ -372,18 +382,18 @@ page_header('Health Dashboard');
       Scanning
     </div>
     <?php
-    health_row('Total schedules', e((string)to_int($data['scan']['schedules'] ?? 0)));
-    $active = to_int($data['scan']['active'] ?? 0);
+    health_row('Total schedules', e((string)to_int($scanSec['schedules'] ?? 0)));
+    $active = to_int($scanSec['active'] ?? 0);
     health_row('Active schedules', e((string)$active), $active === 0 ? 'warn' : 'ok');
-    $overdue = to_int($data['scan']['overdue'] ?? 0);
+    $overdue = to_int($scanSec['overdue'] ?? 0);
     health_row('Overdue schedules', e((string)$overdue), $overdue > 0 ? 'warn' : 'ok');
-    $ls = to_str($data['scan']['last_scan'] ?? '');
+    $ls = to_str($scanSec['last_scan'] ?? '');
     health_row('Last successful scan', $ls !== '' ? e(ipam_format_datetime($ls)) : '<span class="muted">Never</span>');
-    $stale = to_int($data['scan']['stale'] ?? 0);
+    $stale = to_int($scanSec['stale'] ?? 0);
     health_row('Stale addresses', e(number_format($stale)), $stale > 0 ? 'warn' : 'ok');
-    $warnA = to_int($data['scan']['warn_alerts'] ?? 0);
+    $warnA = to_int($scanSec['warn_alerts'] ?? 0);
     health_row('Warn alerts', e((string)$warnA), $warnA > 0 ? 'warn' : 'ok');
-    $critA = to_int($data['scan']['crit_alerts'] ?? 0);
+    $critA = to_int($scanSec['crit_alerts'] ?? 0);
     health_row('Crit alerts', e((string)$critA), $critA > 0 ? 'crit' : 'ok');
     ?>
   </div>
@@ -395,15 +405,15 @@ page_header('Health Dashboard');
       Webhooks
     </div>
     <?php
-    health_row('Active webhooks', e((string)to_int($data['webhook']['active'] ?? 0)));
-    $h24t = to_int($data['webhook']['h24_total'] ?? 0);
-    $h24o = to_int($data['webhook']['h24_ok'] ?? 0);
+    health_row('Active webhooks', e((string)to_int($webhookSec['active'] ?? 0)));
+    $h24t = to_int($webhookSec['h24_total'] ?? 0);
+    $h24o = to_int($webhookSec['h24_ok'] ?? 0);
     $rate  = $h24t > 0 ? round($h24o / $h24t * 100) . '%' : 'N/A';
     health_row('24h delivery rate', e($rate), $h24t > 0 && $h24o < $h24t ? 'warn' : 'ok');
     health_row('24h deliveries', e((string)$h24t));
-    $pending = to_int($data['webhook']['pending_retry'] ?? 0);
+    $pending = to_int($webhookSec['pending_retry'] ?? 0);
     health_row('Pending retry', e((string)$pending), $pending > 0 ? 'warn' : 'ok');
-    $lastErr = to_str($data['webhook']['last_error'] ?? '');
+    $lastErr = to_str($webhookSec['last_error'] ?? '');
     if ($lastErr !== '') {
         health_row('Last error',
             '<span title="' . e($lastErr) . '" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:top">'
@@ -421,14 +431,14 @@ page_header('Health Dashboard');
       Auth / Security
     </div>
     <?php
-    $locked = to_int($data['auth']['locked_ips'] ?? 0);
+    $locked = to_int($authSec['locked_ips'] ?? 0);
     health_row('IPs w/ recent failures', e((string)$locked), $locked > 0 ? 'warn' : 'ok');
-    $totp  = to_int($data['auth']['totp_enabled'] ?? 0);
-    $total = to_int($data['auth']['total_users'] ?? 0);
+    $totp  = to_int($authSec['totp_enabled'] ?? 0);
+    $total = to_int($authSec['total_users'] ?? 0);
     $totpPct = $total > 0 ? round($totp / $total * 100) . '%' : 'N/A';
     health_row('2FA enrolled', e("{$totp} / {$total} ({$totpPct})"), $totp < $total ? 'warn' : 'ok');
-    $f1  = to_int($data['auth']['failed_1h'] ?? 0);
-    $f24 = to_int($data['auth']['failed_24h'] ?? 0);
+    $f1  = to_int($authSec['failed_1h'] ?? 0);
+    $f24 = to_int($authSec['failed_24h'] ?? 0);
     health_row('Failed logins (1h)', e((string)$f1), $f1 > 10 ? ($f1 > 50 ? 'crit' : 'warn') : 'ok');
     health_row('Failed logins (24h)', e((string)$f24), $f24 > 50 ? 'warn' : 'ok');
     ?>
@@ -441,12 +451,12 @@ page_header('Health Dashboard');
       System
     </div>
     <?php
-    health_row('PHP version', e(to_str($data['system']['php_version'] ?? '')));
-    health_row('IPAM version', e(to_str($data['system']['ipam_version'] ?? '')));
-    $df2 = to_int($data['system']['disk_free'] ?? -1);
+    health_row('PHP version', e(to_str($systemSec['php_version'] ?? '')));
+    health_row('IPAM version', e(to_str($systemSec['ipam_version'] ?? '')));
+    $df2 = to_int($systemSec['disk_free'] ?? -1);
     health_row('Disk free (data/)', $df2 >= 0 ? e(format_bytes($df2)) : '<span class="muted">unknown</span>',
         $df2 >= 0 && $df2 < 100 * 1024 * 1024 ? 'warn' : 'ok');
-    health_row('Tmp dir size', e(format_bytes(to_int($data['system']['tmp_size'] ?? 0))));
+    health_row('Tmp dir size', e(format_bytes(to_int($systemSec['tmp_size'] ?? 0))));
     ?>
   </div>
 
