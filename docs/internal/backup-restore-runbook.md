@@ -222,6 +222,8 @@ xxd -l 8 /path/to/backup.enc
 
 **Future-proofing (v3.24's IPAMBKP3):** v3.24 introduces an envelope where the data-encryption key is wrapped, so rotating `app_secret` no longer invalidates old files. Until then, **do not rotate `app_secret` without first decrypting all backups you might need to restore.**
 
+**At-rest-encrypted settings secrets (v3.31.0+).** Since v3.31.0 the `sensitive` `settings`-table rows (`oidc.client_secret`, `smtp.auth_pass`, `recaptcha_enterprise.api_key`, `login_protection.secret_key`) and webhook secrets are stored as `IPAMSEC1` envelopes encrypted under an `app_secret`-derived subkey — see `security-model.md` → "Encrypt-at-rest: settings secrets". A *database* backup therefore carries only ciphertext for these values: restoring it into an install with a different (or missing) `app_secret` makes those secrets undecryptable, and `ipam_setting()` will throw `IpamSecretDecryptException` rather than return a wrong value. The long-standing "back up your keys, not just your data" rule now also covers settings secrets — `config.php` must be backed up alongside the database, or these secrets are unrecoverable.
+
 ---
 
 ### Stale staging files filling `data/tmp/`

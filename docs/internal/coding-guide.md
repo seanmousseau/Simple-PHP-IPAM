@@ -249,6 +249,15 @@ one entry per setting, and the place a new setting is added.
 - **The `settings.type` DB column was dropped in v3.30.0** (migration
   `3.30.0-drop-settings-type`). The storage type is computed from the registry,
   never read from the row.
+- **`sensitive` settings are encrypted at rest (v3.31.0+, ADR-001 part 2).**
+  A `sensitive => true` registry entry has its `settings.value` stored as an
+  `IPAMSEC1` envelope (`lib/secret.php`); `ipam_setting()` / `ipam_setting_set()`
+  decrypt and encrypt it transparently. Prefer the explicit aliases
+  `ipam_secret_get()` / `ipam_secret_set()` at call sites that handle secrets —
+  same behaviour, clearer intent. **Never log a decrypted secret value**, and
+  let `IpamSecretDecryptException` propagate (fail loud) rather than catching it
+  to fall back to a default. Crypto detail: `security-model.md` →
+  "Encrypt-at-rest: settings secrets".
 
 ---
 
