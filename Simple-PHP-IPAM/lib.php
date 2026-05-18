@@ -21,6 +21,7 @@ require_once __DIR__ . '/lib/SftpClient.php';
 require_once __DIR__ . '/lib/LocalBackupClient.php';
 require_once __DIR__ . '/lib/vault.php';
 require_once __DIR__ . '/lib/app_secret.php';
+require_once __DIR__ . '/lib/secret.php'; // settings-secret encrypt-at-rest crypto core (v3.31.0, #1233)
 require_once __DIR__ . '/lib/backup.php';
 require_once __DIR__ . '/lib/auth_step_up.php';
 
