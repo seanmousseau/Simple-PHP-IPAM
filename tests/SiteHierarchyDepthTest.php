@@ -5,36 +5,29 @@ use PHPUnit\Framework\TestCase;
 use Tests\Helpers\InMemoryDb;
 
 /**
- * v3.30.0 #891 — coverage for the site hierarchy and subnet→site
+ * v3.32.0 #891 — coverage for the site hierarchy and subnet→site
  * inheritance resolver.
  *
- * STALE-PREMISE NOTE (#891). The issue states: "Depth-limit (max 2:
- * region→site) enforced at app layer." That is NOT accurate for the
- * code as it exists at v3.29.0:
+ * As of v3.32.0 the enforcement gap described in earlier versions of
+ * this file is CLOSED. `ipam_site_validate_parent()` (lib.php) now
+ * provides a complete app-layer guard wired into both the `create` and
+ * `update` branches of sites.php:
  *
- *   - sites.php `create` writes parent_id with ZERO server-side
- *     validation — no depth check, no self-parent check, no cycle
- *     check.
- *   - sites.php `update` has exactly ONE guard: `parentId === $id`
- *     rejects DIRECT self-parenting ("A site cannot be its own
- *     parent"). It does NOT reject transitive cycles (A→B→A) and does
- *     NOT enforce a depth limit.
- *   - The "depth limit = 2" is a UI-only affordance: the parent-picker
- *     <select> is populated solely from root sites (parent_id IS
- *     NULL), so the form never *offers* a non-root site as a parent.
- *     The server accepts any integer parent_id.
- *   - The only structural guarantee is the schema FK
- *     `parent_id INTEGER REFERENCES sites(id) ON DELETE SET NULL`.
+ *   - Self-parent on update is rejected ("A site cannot be its own
+ *     parent.").
+ *   - A non-existent parent is rejected ("Selected parent site does
+ *     not exist.").
+ *   - A parent that itself has a parent is rejected ("Parent site must
+ *     be a top-level site (hierarchy is limited to 2 levels).").
+ *   - A site that already has sub-sites cannot be given a parent
+ *     ("A site that has sub-sites cannot itself become a sub-site.").
+ *   - A null parent (root site) is always allowed.
  *
- * There is therefore no app-layer function that rejects too-deep
- * nesting or transitive circular references. Writing tests against
- * such a function would be testing imaginary behaviour. Instead this
- * file pins what is REAL:
- *
+ * This file covers:
  *   1. `find_parent_site_id()` (lib.php) — the subnet→site inheritance
- *      resolver. Genuine, untested, and the function #891 names.
- *   2. The `sites.parent_id` self-referential FK contract and the
- *      one real direct-self-parent guard condition.
+ *      resolver (#891 original scope).
+ *   2. `ipam_site_validate_parent()` (lib.php) — the new hierarchy
+ *      guard added in v3.32.0 (#891 closure).
  */
 final class SiteHierarchyDepthTest extends TestCase
 {
@@ -193,71 +186,73 @@ final class SiteHierarchyDepthTest extends TestCase
     }
 
     // ----------------------------------------------------------------
-    // (b) circular-reference handling on the sites self-referential FK
+    // (b) ipam_site_validate_parent() — cycle and self-parent rejection
     //
-    // No app-layer cycle rejector exists (see class docblock). What we
-    // CAN pin: the schema permits a site to point at itself or form a
-    // 2-cycle at the storage layer — proving the absence of a DB-level
-    // guard and documenting that any cycle protection must come from
-    // the app layer (which #891 should add, but has not yet).
+    // As of v3.32.0 #891, ipam_site_validate_parent() is the sole
+    // app-layer guard for parent assignments. These tests verify it
+    // rejects invalid assignments and permits valid ones.
     // ----------------------------------------------------------------
 
-    public function testDirectSelfParentGuardConditionMatchesSitesPhp(): void
+    public function testValidateParentRejectsSelfParentOnUpdate(): void
     {
-        // Source-pin the ONE real guard in sites.php update: a site set as
-        // its own parent is rejected with this exact error message. Pinning
-        // the literal string ensures the guard cannot be silently removed
-        // without this test failing.
-        $sitesPhp = file_get_contents(dirname(__DIR__) . '/Simple-PHP-IPAM/sites.php');
-        $this->assertNotFalse($sitesPhp, 'sites.php must be readable');
-        $this->assertStringContainsString(
-            'A site cannot be its own parent',
-            $sitesPhp,
-            'sites.php must reject a site set as its own parent'
+        $id  = $this->makeSite('Loop');
+        $err = ipam_site_validate_parent($this->db, $id, $id);
+        $this->assertNotNull($err, 'self-parent must be rejected');
+        $this->assertStringContainsString('its own parent', $err);
+    }
+
+    public function testValidateParentRejectsNonExistentParent(): void
+    {
+        $err = ipam_site_validate_parent($this->db, 99999, null);
+        $this->assertNotNull($err, 'non-existent parent must be rejected');
+        $this->assertStringContainsString('does not exist', $err);
+    }
+
+    public function testValidateParentRejectsDepthThreeParent(): void
+    {
+        // `$site` already has `$region` as its parent — making $site a
+        // parent would create a 3rd level.
+        $region = $this->makeSite('Region');
+        $site   = $this->makeSite('Site', $region);
+        $err    = ipam_site_validate_parent($this->db, $site, null);
+        $this->assertNotNull($err, 'non-root parent must be rejected (depth > 2)');
+        $this->assertStringContainsString('top-level', $err);
+    }
+
+    public function testValidateParentRejectsSiteWithSubSitesBeingReparented(): void
+    {
+        // `$region` has a child; trying to give it a parent is rejected.
+        $region = $this->makeSite('Region');
+        $this->makeSite('Child', $region);
+        $other  = $this->makeSite('Other');
+        $err    = ipam_site_validate_parent($this->db, $other, $region);
+        $this->assertNotNull($err, 'a site with sub-sites cannot become a sub-site');
+        $this->assertStringContainsString('sub-sites', $err);
+    }
+
+    public function testValidateParentAllowsNullParent(): void
+    {
+        $this->assertNull(
+            ipam_site_validate_parent($this->db, null, null),
+            'null parent (root site) is always valid'
         );
     }
 
-    public function testSchemaDoesNotByItselfRejectACycle(): void
+    public function testValidateParentAllowsValidRootParentForChildlessSite(): void
     {
-        // Documents that the FK alone provides NO cycle protection:
-        // a self-referential parent_id is accepted by the database.
-        $id = $this->makeSite('Loop');
-        $upd = $this->db->prepare("UPDATE sites SET parent_id = :p WHERE id = :id");
-        $upd->execute([':p' => $id, ':id' => $id]);
-
-        $row = $this->db->query("SELECT parent_id FROM sites WHERE id = $id")->fetch();
-        $this->assertSame(
-            $id,
-            (int)$row['parent_id'],
-            'the sites FK does not prevent a self-cycle — app-layer guard is the only defence'
+        $region = $this->makeSite('Region');
+        $site   = $this->makeSite('Orphan');
+        $this->assertNull(
+            ipam_site_validate_parent($this->db, $region, $site),
+            'assigning a root site as parent to a childless site is valid'
         );
     }
 
-    public function testSchemaDoesNotRejectATwoNodeCycle(): void
-    {
-        // A→B then B→A: a transitive 2-cycle the update guard does NOT
-        // catch (it only blocks parentId === id). Pinning this records
-        // the real gap #891 describes.
-        $a = $this->makeSite('A');
-        $b = $this->makeSite('B', $a);                       // B's parent is A
-        $this->db->prepare("UPDATE sites SET parent_id = :p WHERE id = :id")
-                 ->execute([':p' => $b, ':id' => $a]);        // A's parent is now B
-
-        $rows = $this->db->query("SELECT id, parent_id FROM sites ORDER BY id")->fetchAll();
-        $map = [];
-        foreach ($rows as $r) {
-            $map[(int)$r['id']] = (int)$r['parent_id'];
-        }
-        $this->assertSame($b, $map[$a], 'A→B accepted');
-        $this->assertSame($a, $map[$b], 'B→A accepted — a 2-cycle exists with no rejection');
-    }
-
     // ----------------------------------------------------------------
-    // (c) boundary depth — depth limit is UI-only, NOT app-enforced
+    // (c) boundary depth — enforced by ipam_site_validate_parent()
     //
-    // region→site (2 levels) is allowed; a grandchild (3 levels) is the
-    // "beyond limit" case. The storage layer accepts the grandchild —
-    // pinning this documents that no server-side depth check exists.
+    // region→site (2 levels) is allowed; a grandchild (3 levels) is
+    // rejected by the app-layer guard added in v3.32.0 #891.
     // ----------------------------------------------------------------
 
     public function testTwoLevelHierarchyAtTheLimitIsStorable(): void
@@ -266,23 +261,6 @@ final class SiteHierarchyDepthTest extends TestCase
         $site   = $this->makeSite('Site', $region);          // depth 1 — at the limit
         $row = $this->db->query("SELECT parent_id FROM sites WHERE id = $site")->fetch();
         $this->assertSame($region, (int)$row['parent_id'], 'region→site (2 levels) is valid');
-    }
-
-    public function testThreeLevelHierarchyBeyondTheLimitIsNotRejectedByStorage(): void
-    {
-        // The UI parent-picker would never offer `$site` (a non-root) as
-        // a parent, but the server has no depth guard — so a grandchild
-        // is accepted at the storage layer. This is the documented gap.
-        $region = $this->makeSite('Region');                 // depth 0
-        $site   = $this->makeSite('Site', $region);          // depth 1
-        $rack   = $this->makeSite('Rack', $site);            // depth 2 — beyond the "max 2"
-
-        $row = $this->db->query("SELECT parent_id FROM sites WHERE id = $rack")->fetch();
-        $this->assertSame(
-            $site,
-            (int)$row['parent_id'],
-            'no app-layer depth limit: a 3rd level is stored without rejection'
-        );
     }
 
     public function testRootSiteDetectionMatchesParentPickerSource(): void

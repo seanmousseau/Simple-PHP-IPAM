@@ -21,6 +21,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($name === '') {
             $err = 'Site name is required.';
+        } elseif (($parentErr = ipam_site_validate_parent($db, $parentId, null)) !== null) {
+            $err = $parentErr;
         } else {
             try {
                 $st = $db->prepare("INSERT INTO sites (name, description, parent_id) VALUES (:n, :d, :pid)");
@@ -43,8 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($id <= 0 || $name === '') {
             $err = 'Valid site id and name are required.';
-        } elseif ($parentId === $id) {
-            $err = 'A site cannot be its own parent.';
+        } elseif (($parentErr = ipam_site_validate_parent($db, $parentId, $id)) !== null) {
+            $err = $parentErr;
         } else {
             try {
                 $st = $db->prepare("UPDATE sites SET name = :n, description = :d, parent_id = :pid WHERE id = :id");

@@ -5380,6 +5380,48 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int
     return $row ? to_int($row['site_id']) : null;
 }
 
+/**
+ * Validate a proposed sites.parent_id assignment against the 2-level
+ * (region → site) hierarchy model. Returns null if the assignment is
+ * allowed, or a human-readable error string if it must be rejected.
+ *
+ * @param int|null $parentId The proposed parent. null = make/keep a root site.
+ * @param int|null $siteId   The site being updated; null when creating a new site.
+ */
+function ipam_site_validate_parent(PDO $db, ?int $parentId, ?int $siteId): ?string
+{
+    if ($parentId === null) {
+        return null; // root site — always valid
+    }
+    if ($siteId !== null && $parentId === $siteId) {
+        return 'A site cannot be its own parent.';
+    }
+    // Parent must exist.
+    $st = $db->prepare("SELECT parent_id FROM sites WHERE id = :p");
+    $st->execute([':p' => $parentId]);
+    $parentRow = ipam_fetch_assoc($st);
+    if ($parentRow === []) {
+        return 'Selected parent site does not exist.';
+    }
+    // Depth limit: the parent must itself be a root (parent_id IS NULL).
+    // A parent that already has a parent would make this a 3rd level.
+    if ($parentRow['parent_id'] !== null) {
+        return 'Parent site must be a top-level site (hierarchy is limited to 2 levels).';
+    }
+    // On update: a site that already has sub-sites cannot itself become a
+    // sub-site (that would push its children to a 3rd level). This also
+    // structurally prevents transitive cycles in the 2-level model.
+    if ($siteId !== null) {
+        $cs = $db->prepare("SELECT COUNT(*) AS c FROM sites WHERE parent_id = :s");
+        $cs->execute([':s' => $siteId]);
+        $childRow = ipam_fetch_assoc($cs);
+        if (to_int($childRow['c'] ?? 0) > 0) {
+            return 'A site that has sub-sites cannot itself become a sub-site.';
+        }
+    }
+    return null;
+}
+
 /* ============================================================
  * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
  * ============================================================ */
