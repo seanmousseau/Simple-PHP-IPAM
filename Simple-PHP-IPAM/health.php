@@ -67,7 +67,7 @@ if ($data === null) {
     foreach (['subnets', 'addresses', 'audit_log', 'scan_results', 'users'] as $tbl) {
         try {
             $r = ipam_fetch_assoc($db->query("SELECT COUNT(*) AS c FROM {$tbl}") ?: null);
-            $counts[$tbl] = $r ? to_int($r['c']) : 0;
+            $counts[$tbl] = $r !== [] ? to_int($r['c']) : 0;
         } catch (Throwable) { $counts[$tbl] = 0; }
     }
     $data['db'] = [
