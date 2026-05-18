@@ -92,7 +92,11 @@ final class SettingsSecretIntegrationTest extends TestCase
 
     public function testSetEncryptsAtRestAndGetDecrypts(): void
     {
-        ipam_secret_set($this->db, 'smtp.auth_pass', 'p@ssw0rd!');
+        // Write via ipam_setting_set() directly (not the ipam_secret_set
+        // alias): the transparent encrypt-at-rest routing lives in
+        // ipam_setting_set(), and it is the entry point most call sites use —
+        // so a regression there must fail this test.
+        ipam_setting_set($this->db, 'smtp.auth_pass', 'p@ssw0rd!');
 
         $raw = $this->rawValue('smtp.auth_pass');
         self::assertIsString($raw);
