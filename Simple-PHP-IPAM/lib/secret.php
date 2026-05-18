@@ -151,9 +151,22 @@ function ipam_secret_is_managed_key(string $key): bool
 /**
  * Read a managed settings secret, decrypted. Thin alias over ipam_setting()
  * (which already auto-decrypts) — exists for call-site clarity.
+ *
+ * Contract: $key MUST be one of the managed settings secrets returned by
+ * ipam_secret_managed_keys(). Passing a non-managed key throws
+ * \InvalidArgumentException — reading a non-sensitive key through this API
+ * would silently bypass the encrypt-at-rest pipeline.
+ *
+ * @throws \InvalidArgumentException if $key is not a managed settings secret.
  */
 function ipam_secret_get(string $key, ?string $default = null): ?string
 {
+    if (!ipam_secret_is_managed_key($key)) {
+        throw new \InvalidArgumentException(
+            "ipam_secret_get(): '{$key}' is not a managed settings secret. "
+            . 'Managed keys: ' . implode(', ', ipam_secret_managed_keys()) . '.'
+        );
+    }
     $value = ipam_setting($key, $default);
     if ($value === null) {
         return null;
@@ -166,8 +179,21 @@ function ipam_secret_get(string $key, ?string $default = null): ?string
 /**
  * Write a managed settings secret. Thin alias over ipam_setting_set()
  * (which already auto-encrypts sensitive keys).
+ *
+ * Contract: $key MUST be one of the managed settings secrets returned by
+ * ipam_secret_managed_keys(). Passing a non-managed key throws
+ * \InvalidArgumentException — writing a non-sensitive key through this API
+ * would silently store it as plaintext, bypassing encrypt-at-rest.
+ *
+ * @throws \InvalidArgumentException if $key is not a managed settings secret.
  */
 function ipam_secret_set(PDO $db, string $key, string $value, ?int $userId = null): void
 {
+    if (!ipam_secret_is_managed_key($key)) {
+        throw new \InvalidArgumentException(
+            "ipam_secret_set(): '{$key}' is not a managed settings secret. "
+            . 'Managed keys: ' . implode(', ', ipam_secret_managed_keys()) . '.'
+        );
+    }
     ipam_setting_set($db, $key, $value, $userId);
 }

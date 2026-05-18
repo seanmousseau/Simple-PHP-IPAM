@@ -12,7 +12,7 @@ Settings encrypt-at-rest release (ADR-001 part 2). The four sensitive `settings`
 
 ### Added
 
-- **Encrypt-at-rest for settings secrets (#1233).** New `lib/secret.php`. The four sensitive `settings` rows — `login_protection.secret_key`, `recaptcha_enterprise.api_key`, `oidc.client_secret`, and `smtp.auth_pass` — are now stored encrypted under the `IPAMSEC1` envelope (libsodium XChaCha20-Poly1305, key = BLAKE2b subkey derived from `app_secret`). Encryption is transparent through `ipam_setting()` / `ipam_setting_set()`; `ipam_secret_get()` / `ipam_secret_set()` are provided as explicit aliases. `backup_vault_key` is excluded — it keeps its own envelope.
+- **Encrypt-at-rest for settings secrets (#1233).** New `lib/secret.php`. The four sensitive `settings` rows — `login_protection.secret_key`, `recaptcha_enterprise.api_key`, `oidc.client_secret`, and `smtp.auth_pass` — are now stored encrypted under the `IPAMSEC1` envelope (libsodium XSalsa20-Poly1305, key = BLAKE2b subkey derived from `app_secret`). Encryption is transparent through `ipam_setting()` / `ipam_setting_set()`; `ipam_secret_get()` / `ipam_secret_set()` are provided as explicit aliases. `backup_vault_key` is excluded — it keeps its own envelope.
 - **Encrypt-at-rest test coverage (#1236).** Round-trip tests across every settings-secret subtype plus a key-rotation smoke test.
 - **`lib/demo_seed.php` extracted (#909).** Refactor wave 1 finish — demo seed-data logic lifted out of `lib.php` into its own module.
 - **`lib/dhcp.php` extracted (#914).** Refactor wave 1 finish — DHCP helpers lifted out of `lib.php` into their own module.

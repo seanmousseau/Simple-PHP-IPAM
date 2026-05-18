@@ -16,7 +16,7 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 Settings encrypt-at-rest release — sensitive settings are now stored encrypted at rest, the legacy webhook-secret encryption is consolidated onto the same crypto pipeline, and refactor wave 1 is finished off with two more `lib/*.php` extractions. **Two idempotent re-encryption migrations run automatically on upgrade — no operator action required.**
 
-- **Encrypt-at-rest for settings secrets** — the four sensitive settings (login-protection secret key, reCAPTCHA Enterprise API key, OIDC client secret, SMTP password) are now stored encrypted under a libsodium XChaCha20-Poly1305 envelope keyed from `app_secret`. Existing plaintext rows are re-encrypted automatically on upgrade.
+- **Encrypt-at-rest for settings secrets** — the four sensitive settings (login-protection secret key, reCAPTCHA Enterprise API key, OIDC client secret, SMTP password) are now stored encrypted under a libsodium XSalsa20-Poly1305 envelope keyed from `app_secret`. Existing plaintext rows are re-encrypted automatically on upgrade.
 - **Webhook crypto consolidated** — webhook secrets are migrated off their standalone encryption path onto the shared secret pipeline, with an automatic migration re-encrypting legacy rows.
 - **Refactor wave 1 finished** — `lib/demo_seed.php` and `lib/dhcp.php` are extracted into their own single-responsibility modules.
 - **Add Address fix** — the "Use" next-available-IP link on the Add Address drawer now correctly fills the IP field.

@@ -143,6 +143,22 @@ final class SettingsSecretIntegrationTest extends TestCase
         }
     }
 
+    public function testSecretGetRejectsNonManagedKey(): void
+    {
+        // branding.site_name is a non-sensitive registry key — reading it via
+        // the managed-secret API must throw, not silently bypass encrypt-at-rest.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('branding.site_name');
+        ipam_secret_get('branding.site_name');
+    }
+
+    public function testSecretSetRejectsNonManagedKey(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('branding.site_name');
+        ipam_secret_set($this->db, 'branding.site_name', 'My IPAM');
+    }
+
     public function testCorruptEnvelopeForManagedKeyFailsLoud(): void
     {
         // A well-formed IPAMSEC1 envelope (valid base64, long enough to clear
