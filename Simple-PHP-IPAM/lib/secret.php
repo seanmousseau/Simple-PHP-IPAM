@@ -37,34 +37,44 @@ class IpamSecretDecryptException extends \RuntimeException
 }
 
 /**
- * Derive the 32-byte settings-secret key from app_secret.
+ * Derive the 32-byte settings-secret key from a given app_secret value.
  *
- * `app_secret` has two valid forms: the modern auto-generated value
- * (base64 of 32 random bytes — see lib/app_secret.php) and a legacy /
- * operator-set plain string of arbitrary content and length. Both are
- * accepted: if the value decodes as valid base64 the decoded bytes are
- * used as key material, otherwise the raw string is. Either way the
- * material is normalised to a fixed-width 32-byte digest with an
- * unkeyed BLAKE2b, then run through a keyed BLAKE2b for domain
- * separation. The only rejected input is a genuinely empty app_secret
- * (which ipam_app_secret() auto-generates away — this is belt-and-braces).
+ * Pure function (no I/O) — exposed separately from ipam_secret_key() so the
+ * derivation can be exercised directly in tests with any app_secret form.
+ *
+ * app_secret has two valid forms: the modern auto-generated value (base64 of
+ * 32 random bytes) and a legacy operator-set plain string. If the value
+ * decodes as non-empty valid base64 the decoded bytes are used as key
+ * material; otherwise the raw string bytes are used (so a value like `"="`,
+ * which decodes to an empty string, falls through to the raw branch). The
+ * material is normalised to a 32-byte root via unkeyed BLAKE2b (which accepts
+ * any input length), then a domain-separated subkey is derived via keyed
+ * BLAKE2b.
+ *
+ * @throws \RuntimeException if $appSecret is empty.
+ */
+function ipam_secret_derive_key(string $appSecret): string
+{
+    if ($appSecret === '') {
+        throw new \RuntimeException('app_secret is empty; cannot derive the settings-secret key.');
+    }
+    $decoded  = base64_decode($appSecret, true);
+    $material = ($decoded !== false && $decoded !== '') ? $decoded : $appSecret;
+    $root     = sodium_crypto_generichash($material); // 32-byte digest, any input length
+    return sodium_crypto_generichash(IPAM_SECRET_KDF_CONTEXT, $root, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+}
+
+/**
+ * Derive the 32-byte settings-secret key from the process app_secret.
+ *
+ * Thin wrapper over ipam_secret_derive_key() — reads app_secret from
+ * config.php (never the DB) and delegates the pure derivation.
  *
  * @throws \RuntimeException if app_secret is empty.
  */
 function ipam_secret_key(): string
 {
-    $appSecret = ipam_app_secret();
-    if ($appSecret === '') {
-        throw new \RuntimeException('app_secret is empty; cannot derive the settings-secret key.');
-    }
-    // If app_secret decodes as valid base64 use the decoded bytes, else
-    // treat it as a raw operator string. The unkeyed BLAKE2b digest below
-    // accepts any input length, so a manually-set secret of any size works.
-    $decoded  = base64_decode($appSecret, true);
-    $material = ($decoded !== false && $decoded !== '') ? $decoded : $appSecret;
-    $root     = sodium_crypto_generichash($material); // 32-byte digest, any input length
-    // Domain-separated subkey: keyed BLAKE2b, context as message, 32-byte root as key.
-    return sodium_crypto_generichash(IPAM_SECRET_KDF_CONTEXT, $root, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+    return ipam_secret_derive_key(ipam_app_secret());
 }
 
 /** True if $value carries the IPAMSEC1 envelope prefix. */

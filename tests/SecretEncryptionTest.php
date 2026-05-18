@@ -106,15 +106,8 @@ final class SecretEncryptionTest extends TestCase
      * legacy operator-set plain-string passphrase) before reaching its
      * documented length floor — breaking encrypt-at-rest for those installs.
      *
-     * ipam_secret_key() reads the process app_secret via ipam_app_secret()
-     * with no override seam, so we cannot drive it from a plain-string
-     * config without a signature change (which is out of scope). Instead we
-     * pin the derivation contract directly: replicate the exact normalise
-     * step (base64-or-raw → unkeyed BLAKE2b → keyed BLAKE2b) for a NON-base64
-     * secret and assert it yields a sound 32-byte key without throwing. This
-     * is the precise input that used to throw; the end-to-end behavioural
-     * guard is the 3-driver Playwright gate (its fixture app_secret is a
-     * plain string).
+     * These are the precise input forms ipam_app_secret() can legitimately
+     * return — including the inputs the old strict-base64 code threw on.
      *
      * @return iterable<string,array{string}>
      */
@@ -122,51 +115,70 @@ final class SecretEncryptionTest extends TestCase
     {
         yield 'modern base64 (32 random bytes)' => [base64_encode(random_bytes(32))];
         yield 'legacy plain-string passphrase'  => ['playwright-test-app-secret-for-totp'];
-        yield 'plain string with non-b64 chars' => ['operator set: a !@#$ passphrase'];
+        yield 'plain string with non-b64 chars' => ['a !@#$ passphrase'];
         yield 'short operator value'            => ['x'];
         yield 'hex-looking operator value'      => ['deadbeefcafe'];
     }
 
     /**
+     * Drives the REAL ipam_secret_derive_key() against every app_secret
+     * form: each must yield a secretbox-length key without throwing.
+     *
      * @dataProvider appSecretForms
      */
     public function testDerivationAcceptsAnyAppSecretForm(string $appSecret): void
     {
-        // Mirror of ipam_secret_key()'s derivation, exercised against the
-        // input forms ipam_app_secret() can legitimately return.
-        $decoded  = base64_decode($appSecret, true);
-        $material = ($decoded !== false && $decoded !== '') ? $decoded : $appSecret;
-        $root     = sodium_crypto_generichash($material);
-        $key      = sodium_crypto_generichash(IPAM_SECRET_KDF_CONTEXT, $root, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
-
+        $key = ipam_secret_derive_key($appSecret);
         self::assertSame(SODIUM_CRYPTO_SECRETBOX_KEYBYTES, strlen($key));
     }
 
     /**
      * Distinct app_secret values must derive distinct keys — the
      * normalisation step must not collapse different secrets together.
+     * Includes a case proving the base64-vs-raw branch is load-bearing:
+     * 'YWJj' (valid base64 for "abc") must not derive the same key as the
+     * raw string 'abc'.
      */
     public function testDerivationIsDistinctPerAppSecret(): void
     {
-        $derive = static function (string $appSecret): string {
-            $decoded  = base64_decode($appSecret, true);
-            $material = ($decoded !== false && $decoded !== '') ? $decoded : $appSecret;
-            $root     = sodium_crypto_generichash($material);
-            return sodium_crypto_generichash(IPAM_SECRET_KDF_CONTEXT, $root, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
-        };
+        self::assertNotSame(
+            ipam_secret_derive_key('operator-passphrase-one'),
+            ipam_secret_derive_key('operator-passphrase-two')
+        );
+        self::assertNotSame(
+            ipam_secret_derive_key('YWJj'),
+            ipam_secret_derive_key('abc'),
+            'base64-decoded material must derive a different key than the raw string'
+        );
+    }
 
-        self::assertNotSame($derive('operator-passphrase-one'), $derive('operator-passphrase-two'));
+    /** The derivation is a pure function — same input, same key. */
+    public function testDerivationIsDeterministic(): void
+    {
+        $appSecret = 'operator-passphrase-deterministic';
+        self::assertSame(
+            ipam_secret_derive_key($appSecret),
+            ipam_secret_derive_key($appSecret)
+        );
+    }
+
+    /** An empty app_secret cannot derive a key — belt-and-braces guard. */
+    public function testDerivationThrowsForEmptyAppSecret(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        ipam_secret_derive_key('');
     }
 
     /**
      * ipam_secret_key() itself must not throw for the running harness's
-     * app_secret and must yield a secretbox-length key. Pairs with the
-     * derivation tests above to pin the contract end-to-end for whatever
-     * form ipam_app_secret() resolved.
+     * app_secret and must yield a secretbox-length key. Also pins the
+     * wrapper to the helper: ipam_secret_key() is exactly
+     * ipam_secret_derive_key(ipam_app_secret()).
      */
     public function testSecretKeyDoesNotThrowForProcessAppSecret(): void
     {
         $key = ipam_secret_key();
         self::assertSame(SODIUM_CRYPTO_SECRETBOX_KEYBYTES, strlen($key));
+        self::assertSame(ipam_secret_derive_key(ipam_app_secret()), ipam_secret_key());
     }
 }
