@@ -292,7 +292,7 @@ $backupSec  = is_array($data['backup'] ?? null)  ? $data['backup']  : [];
 $scanSec    = is_array($data['scan'] ?? null)    ? $data['scan']    : [];
 $webhookSec = is_array($data['webhook'] ?? null) ? $data['webhook'] : [];
 $authSec    = is_array($data['auth'] ?? null)    ? $data['auth']    : [];
-$systemSec  = is_array($systemSec ?? null)  ? $systemSec  : [];
+$systemSec  = is_array($data['system'] ?? null)  ? $data['system']  : [];
 
 $dbStatus     = 'ok';
 $backupStatus = (bool)($backupSec['tool_missing'] ?? false) ? 'crit'
