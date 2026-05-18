@@ -4804,29 +4804,86 @@ function ipam_webhook_sign(string $payload, string $secret): string
 /**
  * v3.27.7 (F-S3-01): encrypt a webhook signing secret for at-rest storage.
  *
+ * v3.31.0 (F1, #1235): consolidated onto the shared ipam_secret_* pipeline
+ * (lib/secret.php). New writes now produce an IPAMSEC1 envelope —
+ * libsodium secretbox keyed by a domain-separated subkey of app_secret.
+ * The v3.3.0 AES-256-GCM '$2W$' path is retained read-only as
+ * ipam_webhook_encrypt_secret_legacy() / ipam_webhook_decrypt_legacy()
+ * for pre-v3.31.0 rows and the F2 re-encrypt migration.
+ *
  * Pre-v3.27.7, webhooks.secret was stored as plaintext. A DB dump (legitimate
  * backup, replication snapshot, db_tools export) leaked every outbound webhook
- * URL and its HMAC signing key, enabling forged deliveries. Mirrors the TOTP
- * envelope shape (ipam_totp_encrypt_secret) — AES-256-GCM with 12-byte IV +
- * 16-byte tag, '$2W$' prefix to namespace from TOTP's '$2$'.
+ * URL and its HMAC signing key, enabling forged deliveries.
  *
- * Key derived via SHA-256 of app_secret (same derivation as TOTP). Webhook
- * signing is HMAC-SHA256 (not AES), so the encrypted secret is only ever
- * unwrapped in memory at delivery time and re-encrypted on any save.
+ * @param string $secret  Plaintext HMAC signing secret. An empty string still
+ *                         produces a valid envelope; the reader round-trips it
+ *                         back to '' so the "unsigned webhook" contract holds.
+ * @param string $key     Retained for signature/call-site stability. Ignored —
+ *                         the shared pipeline derives its key from app_secret
+ *                         via ipam_secret_key().
+ * @return string         'IPAMSEC1.' + base64(nonce || ciphertext).
+ */
+function ipam_webhook_encrypt_secret(string $secret, string $key): string
+{
+    unset($key); // shared pipeline derives the key from app_secret itself
+    return ipam_secret_encrypt($secret);
+}
+
+/**
+ * v3.31.0 (F1): decrypt a webhook signing secret.
+ *
+ * Return contract:
+ *   - '' (empty string)        — stored row was empty (intentionally unsigned).
+ *   - string (non-empty)       — successful decrypt (IPAMSEC1 or legacy '$2W$')
+ *                                 or pre-v3.27.7 plaintext passthrough.
+ *   - null                     — decrypt FAILURE: malformed/tampered envelope
+ *                                 or wrong key. Caller MUST treat this as a
+ *                                 delivery failure (do NOT sign with an empty
+ *                                 key — that produces a verifiably-wrong HMAC
+ *                                 at the receiver).
+ *   - throws \RuntimeException — $stored is a legacy '$2W$' envelope but $key
+ *                                 is empty (app_secret missing); surface the
+ *                                 config-time misconfig to the operator.
+ *
+ * @param string $stored  Stored webhooks.secret value.
+ * @param string $key     app_secret string — used only by the legacy '$2W$'
+ *                         reader. The IPAMSEC1 path ignores it.
+ */
+function ipam_webhook_decrypt_secret(string $stored, string $key): ?string
+{
+    if ($stored === '') {
+        return ''; // intentionally unsigned
+    }
+    if (ipam_secret_is_envelope($stored)) {
+        return ipam_secret_decrypt($stored);              // new shared pipeline
+    }
+    if (str_starts_with($stored, '$2W$')) {
+        return ipam_webhook_decrypt_legacy($stored, $key); // legacy v3.3.0 rows
+    }
+    return $stored; // pre-v3.27.7 plaintext passthrough
+}
+
+/**
+ * v3.3.0 webhook-secret encryption — RETAINED read-path only (legacy '$2W$'
+ * envelopes, the F2 re-encrypt migration, and tests). New writes go through
+ * ipam_webhook_encrypt_secret() / the shared ipam_secret_* pipeline instead.
+ *
+ * AES-256-GCM with 12-byte IV + 16-byte tag, '$2W$' prefix; key derived via
+ * SHA-256 of app_secret.
  *
  * @param string $secret  Plaintext HMAC signing secret. Empty string returns
- *                        empty (unsigned webhook).
+ *                         empty (unsigned webhook).
  * @param string $key     app_secret string from config.php.
  * @return string         '$2W$' + base64(iv || tag || ciphertext), or empty.
  */
-function ipam_webhook_encrypt_secret(string $secret, string $key): string
+function ipam_webhook_encrypt_secret_legacy(string $secret, string $key): string
 {
     if ($secret === '') {
         // Empty signing secret means the webhook is unsigned. Store empty
         // verbatim so the reader can distinguish "no secret" from "encrypted
-        // blob that fails to decrypt". CR review (PR #1148): this fast path
-        // runs BEFORE the $key check so save/migration of an intentionally-
-        // unsigned webhook works on installs without app_secret configured.
+        // blob that fails to decrypt". This fast path runs BEFORE the $key
+        // check so save/migration of an intentionally-unsigned webhook works
+        // on installs without app_secret configured.
         return '';
     }
     if ($key === '') {
@@ -4842,38 +4899,21 @@ function ipam_webhook_encrypt_secret(string $secret, string $key): string
 }
 
 /**
- * v3.27.7: decrypt a webhook signing secret previously written by
- * ipam_webhook_encrypt_secret(). Returns empty string on decrypt failure so
- * callers signing an HMAC always get a usable string (the HMAC will fail
- * receiver-side verification, surfacing the misconfig there).
+ * v3.3.0 webhook-secret decryption — RETAINED read-path only. Decrypts a
+ * legacy '$2W$' AES-256-GCM envelope. Callers that may encounter mixed
+ * formats should use ipam_webhook_decrypt_secret(), which dispatches to this
+ * for '$2W$' rows and to the shared pipeline for IPAMSEC1 rows.
  *
- * Accepts both encrypted ('$2W$...') and plaintext values; the plaintext
- * branch exists because the 3.27.7-webhook-secret-encrypt migration is
- * defensive — an install upgrading from pre-v3.27.7 with existing rows must
- * keep delivering until the migration completes. (All deployed targets at
- * v3.27.6 had webhooks count = 0 so the migration is no-op in practice, but
- * the branch keeps the code safe for any future install restoring an older
- * backup and then upgrading.)
+ *   - '' (empty string)        — stored row was empty.
+ *   - string (non-empty)       — successful decrypt.
+ *   - null                     — malformed/tampered envelope or wrong key.
+ *   - throws \RuntimeException — $stored is a real '$2W$' envelope but $key
+ *                                 is empty (app_secret missing).
+ *
+ * @param string $stored  A legacy '$2W$' envelope (or empty / plaintext).
+ * @param string $key     app_secret string from config.php.
  */
-/**
- * Return contract (CR review PR #1148):
- *   - '' (empty string)        — stored row was empty (intentionally unsigned)
- *                                 OR a legacy plaintext row that just happened
- *                                 to be empty. Caller may sign with empty key.
- *   - string (non-empty)       — successful decrypt (or legacy plaintext pass-
- *                                 through). Caller signs with this secret.
- *   - null                     — decrypt FAILURE: malformed envelope, wrong
- *                                 app_secret, or GCM tag mismatch. Caller
- *                                 MUST treat this as a delivery failure
- *                                 (persist an error row, do NOT sign with an
- *                                 empty key — that would silently produce a
- *                                 verifiably-wrong HMAC at the receiver).
- *   - throws \RuntimeException — caller passed an empty $key but the stored
- *                                 value is a real '$2W$' envelope. This is a
- *                                 config-time misconfig (app_secret missing);
- *                                 surface it to the operator.
- */
-function ipam_webhook_decrypt_secret(string $stored, string $key): ?string
+function ipam_webhook_decrypt_legacy(string $stored, string $key): ?string
 {
     if ($stored === '') {
         return '';
