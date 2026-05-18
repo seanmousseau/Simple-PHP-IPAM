@@ -91,3 +91,52 @@ function ipam_secret_decrypt(string $stored): ?string
     }
     return $plain === false ? null : $plain;
 }
+
+/**
+ * Setting keys the encrypt-at-rest pipeline manages: every registry
+ * entry flagged `sensitive`, MINUS `backup_vault_key` (which carries
+ * its own IPAMWK1 envelope under the bootstrap key — see lib/vault.php;
+ * double-wrapping it would break ipam_vault_unwrap()).
+ *
+ * @return list<string>
+ */
+function ipam_secret_managed_keys(): array
+{
+    $keys = [];
+    foreach (ipam_setting_definitions() as $key => $def) {
+        if (!empty($def['sensitive']) && $key !== 'backup_vault_key') {
+            $keys[] = (string) $key;
+        }
+    }
+    return $keys;
+}
+
+/** True if $key is a settings secret managed by the encrypt-at-rest pipeline. */
+function ipam_secret_is_managed_key(string $key): bool
+{
+    return in_array($key, ipam_secret_managed_keys(), true);
+}
+
+/**
+ * Read a managed settings secret, decrypted. Thin alias over ipam_setting()
+ * (which already auto-decrypts) — exists for call-site clarity.
+ */
+function ipam_secret_get(string $key, ?string $default = null): ?string
+{
+    $value = ipam_setting($key, $default);
+    if ($value === null) {
+        return null;
+    }
+    // Managed settings secrets are always scalar strings; a non-scalar
+    // here means a misconfigured registry entry, not a usable secret.
+    return is_scalar($value) ? (string) $value : null;
+}
+
+/**
+ * Write a managed settings secret. Thin alias over ipam_setting_set()
+ * (which already auto-encrypts sensitive keys).
+ */
+function ipam_secret_set(PDO $db, string $key, string $value, ?int $userId = null): void
+{
+    ipam_setting_set($db, $key, $value, $userId);
+}
