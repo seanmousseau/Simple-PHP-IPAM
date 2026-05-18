@@ -121,6 +121,12 @@ require_once __DIR__ . '/lib/db.php';
 // step. v3.31.0.
 require_once __DIR__ . '/lib/demo_seed.php';
 
+// DHCP config renderers (#914, ADR-004, A25) — ipam_render_dhcpd_conf() /
+// ipam_render_kea_json() and their subnet/reservation loaders and MAC/
+// hostname normalisers. Loaded AFTER lib/db.php and BEFORE lib.php; depends
+// only on lib/utils.php and version.php (required inline). v3.31.0.
+require_once __DIR__ . '/lib/dhcp.php';
+
 // Audit layer (#912, ADR-004 Phase 4 Task 4.2) — audit() / audit_export() /
 // prune_audit_log() / audit_filter_validate_* and the AUDIT_FILTER_PREFIXES
 // const. Loaded AFTER lib/db.php (prune_audit_log() calls ipam_dialect() and
