@@ -116,6 +116,33 @@ final class SettingsSecretIntegrationTest extends TestCase
         self::assertStringStartsNotWith(IPAM_SECRET_ENVELOPE_PREFIX, (string) $raw);
     }
 
+    /**
+     * Cross-subtype coverage: every managed secret key must round-trip
+     * through the encrypt-at-rest pipeline. Catches a registry entry that
+     * is flagged sensitive but mishandled by a subtype-specific setter/getter
+     * path. Also asserts the raw row is a ciphertext envelope, not plaintext.
+     */
+    public function testRoundTripForEveryManagedKey(): void
+    {
+        $managed = ipam_secret_managed_keys();
+        self::assertCount(4, $managed, 'expected exactly 4 managed secret keys');
+
+        foreach ($managed as $i => $key) {
+            $value = "secret-value-$i";
+            ipam_secret_set($this->db, $key, $value);
+            self::assertSame($value, ipam_secret_get($key), "round-trip failed for $key");
+
+            $raw = $this->rawValue($key);
+            self::assertIsString($raw, "no row stored for $key");
+            self::assertStringStartsWith(
+                IPAM_SECRET_ENVELOPE_PREFIX,
+                $raw,
+                "$key must be ciphertext at rest"
+            );
+            self::assertNotSame($value, $raw, "$key raw row must not be plaintext");
+        }
+    }
+
     public function testCorruptEnvelopeForManagedKeyFailsLoud(): void
     {
         // A well-formed IPAMSEC1 envelope (valid base64, long enough to clear

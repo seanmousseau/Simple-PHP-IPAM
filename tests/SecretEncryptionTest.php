@@ -63,4 +63,40 @@ final class SecretEncryptionTest extends TestCase
         self::assertFalse(ipam_secret_is_envelope('IPAMSEC2.abc'));
         self::assertSame('IPAMSEC1', ipam_secret_decrypt('IPAMSEC1'));
     }
+
+    /**
+     * Key-rotation smoke test. Models the operator rotating `app_secret`:
+     * a `settings` row encrypted under the OLD key must become unreadable
+     * (decrypts to null), NOT silently decrypt to wrong plaintext — the
+     * IPAMSEC1 envelope's Poly1305 MAC is key-bound, so a mismatched key
+     * fails the authenticator. We construct the "foreign" envelope with the
+     * exact byte layout of ipam_secret_encrypt() (prefix + base64(nonce ‖
+     * ciphertext)) but under an unrelated random 32-byte key, so the test is
+     * fully deterministic and needs no config.php manipulation.
+     */
+    public function testForeignKeyEnvelopeDecryptsToNull(): void
+    {
+        $foreignKey = random_bytes(SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+        $nonce      = random_bytes(SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+        $cipher     = sodium_crypto_secretbox('rotated-out-secret', $nonce, $foreignKey);
+        $foreignEnv = IPAM_SECRET_ENVELOPE_PREFIX . base64_encode($nonce . $cipher);
+
+        // Well-formed envelope, but the current key cannot open it.
+        self::assertTrue(ipam_secret_is_envelope($foreignEnv));
+        self::assertNull(
+            ipam_secret_decrypt($foreignEnv),
+            'envelope from a different app_secret must be unreadable, never wrong plaintext'
+        );
+    }
+
+    /**
+     * The "no-op" half of key rotation: with the SAME (current) key in
+     * place, encryption/decryption is unaffected — a normally-encrypted
+     * value still round-trips. Pairs with testForeignKeyEnvelopeDecryptsToNull.
+     */
+    public function testKeyRotationIsNoOpForCurrentKey(): void
+    {
+        $value = 'still-valid-secret';
+        self::assertSame($value, ipam_secret_decrypt(ipam_secret_encrypt($value)));
+    }
 }
