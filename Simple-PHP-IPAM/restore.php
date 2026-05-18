@@ -29,7 +29,8 @@ require_once __DIR__ . '/lib/restore_dsn.php';
  * Parse arguments
  * ---------------------------------------------------------------------- */
 $opts   = getopt('', ['from:', 'dry-run', 'force']);
-$from   = isset($opts['from'])    ? (string)$opts['from'] : '';
+$fromOpt = $opts['from'] ?? '';
+$from    = is_string($fromOpt) ? $fromOpt : '';
 $dryRun = array_key_exists('dry-run', $opts);
 $force  = array_key_exists('force', $opts);
 
@@ -55,9 +56,12 @@ if (!is_file($from)) {
     restore_die("File not found: {$from}");
 }
 
-$fromAbs  = realpath($from);
-$fileSize = filesize($from);
-$sha256   = hash_file('sha256', $from) ?: '';
+$fromAbs = realpath($from);
+if ($fromAbs === false) {
+    restore_die("Could not resolve real path of: {$from}");
+}
+$fileSize = filesize($fromAbs);
+$sha256   = hash_file('sha256', $fromAbs) ?: '';
 
 restore_info("Backup file : {$fromAbs}");
 restore_info("Size        : " . format_bytes((int)$fileSize));
@@ -73,7 +77,7 @@ try {
     $histRow = $st->fetch();
 } catch (Throwable) {}
 
-if ($histRow) {
+if (is_array($histRow)) {
     restore_info("History     : found — recorded on " . to_str($histRow['started_at'] ?? ''));
 } else {
     restore_info("History     : not found in backup_runs (untracked or different install)");
@@ -84,7 +88,7 @@ $gConf  = $GLOBALS['config'];
 $driver = ipam_dialect()->driver_name();
 
 // Extension-based format detection
-$ext = strtolower(pathinfo($from, PATHINFO_EXTENSION));
+$ext = strtolower(pathinfo($fromAbs, PATHINFO_EXTENSION));
 if ($ext === 'sqlite' && $driver !== 'sqlite') {
     restore_die("Backup is SQLite (.sqlite) but configured driver is '{$driver}'. Cross-driver restore is not supported by this script.");
 }
@@ -337,7 +341,7 @@ if ($driver === 'sqlite') {
     audit($db, 'restore.run', 'system', null,
         "MySQL restore from: " . basename($fromAbs) . " sha256={$sha256} ({$check['verdict']})");
 
-} elseif ($driver === 'pgsql') {
+} else {
     // #1177: honour db_dsn (PDO-style host/port/dbname) with fallback to
     // discrete db_host/db_port/db_name keys for legacy installs. Pass the
     // engine hint so port/user defaults are correct when db_dsn is absent.
@@ -448,9 +452,6 @@ if ($driver === 'sqlite') {
 
     audit($db, 'restore.run', 'system', null,
         "PostgreSQL restore from: " . basename($fromAbs) . " sha256={$sha256} ({$check['verdict']})");
-
-} else {
-    restore_die("Unsupported driver: {$driver}");
 }
 
 restore_info('');

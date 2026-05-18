@@ -32,16 +32,15 @@ interface VRPage {
 // restore coverage with a mutation-isolated capture path. Until then,
 // dashboard rendering changes are a manual smoke-test item during release prep.
 //
-// `subnets` and `search` re-added in v3.26.0 (#1091) after bisecting the
-// 200–470 px PostgreSQL drift reported in #1073. Root-cause investigation
-// in v3.26.0 D3 found the rendered HTML byte-identical (modulo CSRF +
-// timestamps) and the api.php?resource=subnet_stats payload byte-identical
-// across drivers, so the historical drift no longer reproduces. The most
-// likely root cause was a transient JS-fill timing race between the
-// page-load `networkidle` waiter and the async subnet-stats fetch, which
-// has since become deterministic enough on both drivers to pass the
-// 1%-pixel threshold. If drift returns, restore the exclusion comment
-// here and file a fresh issue with the new diff.
+// `subnets` was VR-covered v3.26.0–v3.31.0 but is excluded again as of
+// v3.32.0 (#1251). When #1206 re-enabled the vr-* projects in CI it surfaced
+// that the CI job runs the vr-* step AFTER the main E2E suite, in the same
+// job, against a DB the suite has mutated. `subnets.php` lists every subnet,
+// so the suite-created rows make the page ~600 px taller than a clean-seed
+// baseline (`Expected 1440x3024, received 1440x3626`) — a structural height
+// mismatch, not a rendering drift. Restoring coverage needs the same
+// mutation-isolated capture path tracked for the dashboard (#1251).
+// `search` stays covered — its default view does not grow with suite rows.
 //
 // Backup & Restore tabs (#1040, v3.21.0):
 //   - Notifications + Restore (Step 1) are captured below — both are
@@ -52,7 +51,6 @@ interface VRPage {
 //     mutation-isolation work lands.
 const PAGES: VRPage[] = [
   { name: 'addresses', path: 'addresses.php' },
-  { name: 'subnets',   path: 'subnets.php' },
   { name: 'search',    path: 'search.php' },
   { name: 'login', path: 'login.php', skipAuth: true },
   { name: 'backup-admin-notifications', path: 'backup_admin.php?tab=notifications' },

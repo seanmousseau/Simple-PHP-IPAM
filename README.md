@@ -12,15 +12,18 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.31.0
+## What's new in v3.32.0
 
-Settings encrypt-at-rest release — sensitive settings are now stored encrypted at rest, the legacy webhook-secret encryption is consolidated onto the same crypto pipeline, and refactor wave 1 is finished off with two more `lib/*.php` extractions. **Two idempotent re-encryption migrations run automatically on upgrade — no operator action required.**
+Code-quality, hardening, and dependency-maintenance release — no schema migrations, no new pages, no operator action required. Closes milestone #84.
 
-- **Encrypt-at-rest for settings secrets** — the four sensitive settings (login-protection secret key, reCAPTCHA Enterprise API key, OIDC client secret, SMTP password) are now stored encrypted under a libsodium XSalsa20-Poly1305 envelope keyed from `app_secret`. Existing plaintext rows are re-encrypted automatically on upgrade.
-- **Webhook crypto consolidated** — webhook secrets are migrated off their standalone encryption path onto the shared secret pipeline, with an automatic migration re-encrypting legacy rows.
-- **Refactor wave 1 finished** — `lib/demo_seed.php` and `lib/dhcp.php` are extracted into their own single-responsibility modules.
-- **Add Address fix** — the "Use" next-available-IP link on the Add Address drawer now correctly fills the IP field.
-- **Back up `config.php`** — `app_secret` in `config.php` is now the encryption root for every settings-table secret; ensure `config.php` is part of your backups.
+- **Server-side site-hierarchy enforcement** — the 2-level depth limit and cycle rejection for site parent assignments are now enforced at the API layer (`ipam_site_validate_parent()`), not just in the UI.
+- **PHPMailer 7.x** — upgraded from 6.12.0 to 7.1.1; no configuration changes required.
+- **`ipam_prefix_to_netmask()` hardened** — throws `InvalidArgumentException` on an IPv4 prefix outside 0–32 instead of silently corrupting bitmask math.
+- **`restore.php` latent bugs fixed** — six PHPStan-surfaced masked bugs resolved: `getopt()` cast, `realpath()` unchecked `string|false`, and a dead `pgsql` branch.
+- **Semgrep sweep complete** — 18 `p/php`/`p/security-audit` false-positives annotated in `dhcp_pool.php` and `unassigned.php`, finishing the full admin-surface triage pass.
+- **47 PHPStan baseline entries pruned** — via new `ipam_fetch_assoc()` helper routing all `health.php` DB fetches through a typed wrapper.
+- **API spec drift closed** — `docs/api-spec.yaml` now matches `api.php` exactly; `ApiSpecDriftTest` allowlist cleared.
+- **Visual-regression CI re-enabled** — Linux `vr-*` baselines generated; VR step no longer skips in CI.
 
 [Full changelog →](CHANGELOG.md)
 

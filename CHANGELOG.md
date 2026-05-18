@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.32.0] - 2026-05-18
+
+Code-quality, hardening, and dependency-maintenance release. Closes milestone #84. No schema migrations and no new operator-facing pages — every change is a bug fix, server-side enforcement of a guard that was previously UI-only, a dependency upgrade, or internal tooling work. Operators who upgrade will see no visible change beyond tighter validation on the site-hierarchy form.
+
+### Added
+
+- **Server-side site-hierarchy depth limit and cycle rejection (#891).** `ipam_site_validate_parent()` in `lib.php` now enforces a maximum 2-level hierarchy depth and rejects cycles at the API layer, wired into `sites.php`. Previously only the UI enforced these constraints; a direct POST or API call could bypass them and corrupt the hierarchy tree.
+
+### Changed
+
+- **PHPMailer upgraded to 7.x (#1199).** `phpmailer/phpmailer` 6.12.0 → 7.1.1. The 7.0 release is functionally equivalent to 6.11.1 for standard SMTP delivery; the only backwards-incompatible change affects classes that subclass `PHPMailer` directly. No configuration changes are required.
+
+### Fixed
+
+- **`ipam_prefix_to_netmask()` throws on out-of-range IPv4 prefix (#1249).** A prefix value outside 0–32 now throws `InvalidArgumentException` instead of silently producing a corrupt bitmask. Previously, a bad prefix propagated through subnet math without error.
+- **Six masked PHPStan bugs in `restore.php` (#1204).** Resolved: `getopt()` return cast to array, `realpath()` `string|false` flowing unchecked into `copy()`, `basename()`, and `proc_open()`, and a dead `=== 'pgsql'` branch that was never reachable. These were real latent bugs surfaced by the v3.29.0 baseline triage.
+- **Health dashboard Backups card showed stale state (PR #1250 review).** The card read `enabled`/`disk_free`/`retention` keys that the data layer stopped populating in v3.26.0 when backups moved to a per-destination model, so it always reported "Disabled" with an "unknown" disk-free figure. Status now derives from the active-destination count, an "Active destinations" row was added, and the obsolete Disk-free and Retention rows were removed.
+
+### Security
+
+- **Semgrep false-positive sweep on `dhcp_pool.php` and `unassigned.php` (#1201).** Annotated 18 `p/php` and `p/security-audit` findings with `nosemgrep` comments and rationale where output is already escaped via `e()` or a safe content-type. Completes the cloud-platform semgrep triage pass started in v3.29.0.
+
+### Internal
+
+- **`ipam_fetch_assoc()` helper + health.php DB-fetch cleanup (#1203).** New `ipam_fetch_assoc()` helper routes all `health.php` DB fetches through a typed wrapper, eliminating the mixed-type fetch-on-mixed cluster. 47 entries pruned from `phpstan-baseline.neon`.
+- **`docs/api-spec.yaml` drift closed (#1202).** `subnet_tags`, `address_tags`, and `scan_history` documented; the never-built `custom_field_defs` resource removed. `ApiSpecDriftTest` allowlist cleared.
+- **Linux visual-regression baselines generated; VR step re-enabled in CI (#1206).** `vr-*` baselines generated on Linux so the visual-regression Playwright step no longer skips in CI. The `subnets` page is excluded from VR coverage (its row count grows under the preceding E2E suite); restoring it with a mutation-isolated capture path is tracked in #1251.
+
 ## [3.31.0] - 2026-05-18
 
 Settings encrypt-at-rest release (ADR-001 part 2). The four sensitive `settings` rows are now stored encrypted at rest under a new shared crypto pipeline, the legacy webhook-secret encryption is consolidated onto that same pipeline, and refactor wave 1 is finished off with two more `lib/*.php` extractions. **Two idempotent re-encryption migrations run automatically on upgrade — no operator action is required.** `app_secret` in `config.php` is now the encryption root for every settings-table secret; back up `config.php`.
@@ -1946,6 +1974,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.32.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.31.0...v3.32.0
 [3.31.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.30.0...v3.31.0
 [3.30.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.29.0...v3.30.0
 [3.29.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.3...v3.29.0
