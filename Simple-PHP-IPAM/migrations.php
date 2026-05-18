@@ -3826,7 +3826,8 @@ function ipam_migrations(): array
                     );
                 }
                 $upd->execute([
-                    ':s'  => ipam_webhook_encrypt_secret($stored, $appSecret),
+                    // v3.31.0: pinned to _legacy so this shipped migration keeps producing $2W$.
+                    ':s'  => ipam_webhook_encrypt_secret_legacy($stored, $appSecret),
                     ':id' => to_int($row['id']),
                 ]);
                 $reencrypted++;
@@ -4317,6 +4318,33 @@ function ipam_migrations(): array
                     ':t1' => $tenantId,
                     ':t2' => $tenantId,
                 ]);
+            }
+        },
+
+        '3.31.0-reencrypt-webhook-secrets' => static function (PDO $db): void {
+            // v3.31.0 (#1235): migrate legacy $2W$ (aes-256-gcm) webhook secrets
+            // onto the shared IPAMSEC1 pipeline. Idempotent — IPAMSEC1 rows and
+            // empty/plaintext rows are skipped.
+            $appSecret = ipam_app_secret();
+            $sel = $db->query('SELECT id, secret FROM webhooks');
+            if ($sel === false) {
+                return;
+            }
+            $rows = $sel->fetchAll(PDO::FETCH_ASSOC);
+            $upd = $db->prepare('UPDATE webhooks SET secret = :s WHERE id = :id');
+            foreach ($rows as $row) {
+                $secret = $row['secret'];
+                if (!is_string($secret) || $secret === '' || ipam_secret_is_envelope($secret)) {
+                    continue;
+                }
+                if (!str_starts_with($secret, '$2W$')) {
+                    continue; // pre-v3.27.7 plaintext: leave for a normal write to upgrade
+                }
+                $plain = ipam_webhook_decrypt_legacy($secret, $appSecret);
+                if ($plain === null) {
+                    continue; // unreadable legacy row — do not destroy it
+                }
+                $upd->execute([':s' => ipam_secret_encrypt($plain), ':id' => $row['id']]);
             }
         },
 

@@ -31,6 +31,7 @@ use PHPUnit\Framework\TestCase;
 final class SecretReencryptParityTest extends TestCase
 {
     private const MIGRATION_KEY = '3.31.0-reencrypt-settings-secrets';
+    private const WEBHOOK_MIGRATION_KEY = '3.31.0-reencrypt-webhook-secrets';
 
     public static function setUpBeforeClass(): void
     {
@@ -90,7 +91,7 @@ final class SecretReencryptParityTest extends TestCase
 
             // Clear only the new closure's stamp so apply_migrations() replays
             // it (and nothing else); the row is already enveloped.
-            $this->unstampMigration($db);
+            $this->unstampMigration($db, self::MIGRATION_KEY);
             \apply_migrations($db);
             $second = $this->fetchSecret($db, 'oidc.client_secret');
 
@@ -100,6 +101,75 @@ final class SecretReencryptParityTest extends TestCase
                 "On $engine a second run must not re-encrypt an already-enveloped value (no double-encryption)"
             );
             $this->assertSame('plaintext-secret', \ipam_secret_decrypt((string) $second));
+        } finally {
+            $restore();
+        }
+    }
+
+    /**
+     * v3.31.0 #1235 (ADR-001 pt 2) - closure '3.31.0-reencrypt-webhook-secrets'.
+     * A legacy '$2W$' (aes-256-gcm) webhooks.secret row is migrated onto the
+     * shared IPAMSEC1 pipeline; the decrypted value round-trips.
+     */
+    #[DataProvider('engineProvider')]
+    public function testReencryptsLegacyWebhookSecret(string $engine): void
+    {
+        [$db, $restore] = $this->buildPreMigrationDb($engine);
+        try {
+            $appSecret = \ipam_app_secret();
+            $legacy    = \ipam_webhook_encrypt_secret_legacy('whk-hmac', $appSecret);
+            $this->assertStringStartsWith('$2W$', $legacy);
+            $this->seedWebhook($db, $legacy);
+
+            \apply_migrations($db);
+
+            $stored = $this->fetchWebhookSecret($db);
+            $this->assertIsString($stored);
+            $this->assertStringStartsWith(
+                IPAM_SECRET_ENVELOPE_PREFIX,
+                $stored,
+                "On $engine the legacy \$2W\$ webhook secret must be re-encrypted into an IPAMSEC1 envelope"
+            );
+            $this->assertSame(
+                'whk-hmac',
+                \ipam_webhook_decrypt_secret($stored, $appSecret),
+                "On $engine the re-encrypted webhook envelope must decrypt back to the original secret"
+            );
+        } finally {
+            $restore();
+        }
+    }
+
+    /**
+     * A second run of '3.31.0-reencrypt-webhook-secrets' must leave an
+     * already-IPAMSEC1 webhooks.secret byte-for-byte unchanged.
+     */
+    #[DataProvider('engineProvider')]
+    public function testWebhookReencryptIsIdempotent(string $engine): void
+    {
+        [$db, $restore] = $this->buildPreMigrationDb($engine);
+        try {
+            $appSecret = \ipam_app_secret();
+            $this->seedWebhook($db, \ipam_webhook_encrypt_secret_legacy('whk-hmac', $appSecret));
+
+            \apply_migrations($db);
+            $first = $this->fetchWebhookSecret($db);
+            $this->assertIsString($first);
+            $this->assertStringStartsWith(IPAM_SECRET_ENVELOPE_PREFIX, $first);
+
+            $this->unstampMigration($db, self::WEBHOOK_MIGRATION_KEY);
+            \apply_migrations($db);
+            $second = $this->fetchWebhookSecret($db);
+
+            $this->assertSame(
+                $first,
+                $second,
+                "On $engine a second run must not re-encrypt an already-enveloped webhook secret"
+            );
+            $this->assertSame(
+                'whk-hmac',
+                \ipam_webhook_decrypt_secret((string) $second, $appSecret)
+            );
         } finally {
             $restore();
         }
@@ -197,33 +267,61 @@ final class SecretReencryptParityTest extends TestCase
     }
 
     /**
-     * Pre-stamp every migration version EXCEPT the new closure into
-     * schema_migrations, so apply_migrations() replays only that one.
+     * Pre-stamp every migration version EXCEPT the v3.31.0 re-encrypt closures
+     * into schema_migrations, so apply_migrations() replays only those.
      */
     private function stampAllExceptNew(PDO $db): void
     {
+        $keys = array_keys(\ipam_migrations());
         $this->assertContains(
             self::MIGRATION_KEY,
-            array_keys(\ipam_migrations()),
+            $keys,
             'The 3.31.0-reencrypt-settings-secrets migration key must exist in ipam_migrations()'
+        );
+        $this->assertContains(
+            self::WEBHOOK_MIGRATION_KEY,
+            $keys,
+            'The 3.31.0-reencrypt-webhook-secrets migration key must exist in ipam_migrations()'
         );
 
         $db->exec('DELETE FROM schema_migrations');
         $ignore = \ipam_dialect()->upsert_or_ignore('schema_migrations', ['version']);
         $stamp  = $db->prepare("INSERT INTO schema_migrations (version) VALUES (:v) $ignore");
-        foreach (array_keys(\ipam_migrations()) as $ver) {
-            if ($ver === self::MIGRATION_KEY) {
+        foreach ($keys as $ver) {
+            if ($ver === self::MIGRATION_KEY || $ver === self::WEBHOOK_MIGRATION_KEY) {
                 continue;
             }
             $stamp->execute([':v' => $ver]);
         }
     }
 
-    /** Remove just the new closure's stamp so apply_migrations() replays it. */
-    private function unstampMigration(PDO $db): void
+    /** Remove just one closure's stamp so apply_migrations() replays it. */
+    private function unstampMigration(PDO $db, string $key): void
     {
         $del = $db->prepare('DELETE FROM schema_migrations WHERE version = :v');
-        $del->execute([':v' => self::MIGRATION_KEY]);
+        $del->execute([':v' => $key]);
+    }
+
+    /** Insert a minimal valid webhooks row carrying $secret in webhooks.secret. */
+    private function seedWebhook(PDO $db, string $secret): void
+    {
+        $ins = $db->prepare(
+            'INSERT INTO webhooks (name, url, secret, events, is_active) '
+            . "VALUES (:n, :u, :s, '[]', 1)"
+        );
+        $ins->execute([
+            ':n' => 'test-hook',
+            ':u' => 'https://example.test/hook',
+            ':s' => $secret,
+        ]);
+    }
+
+    private function fetchWebhookSecret(PDO $db): ?string
+    {
+        $sel = $db->query('SELECT secret FROM webhooks ORDER BY id LIMIT 1');
+        self::assertNotFalse($sel);
+        $value = $sel->fetchColumn();
+        return $value === false ? null : (string) $value;
     }
 
     /** Insert a plaintext (non-enveloped) global settings row. */
