@@ -125,6 +125,14 @@ function icon(string $name, string $cls = ''): string
          . '</svg>';
 }
 
+/**
+ * Store a one-shot flash message in the session. Displayed and cleared by
+ * the next flash_get() call (page_header() does this). Side effect: writes
+ * $_SESSION['ipam_flash'].
+ *
+ * @param string $message Message text (rendered HTML-escaped by the consumer).
+ * @param string $type    Severity: 'success' | 'warning' | 'error' | 'danger'.
+ */
 function flash_set(string $message, string $type = 'success'): void
 {
     $_SESSION['ipam_flash'] = ['msg' => $message, 'type' => $type];
@@ -319,7 +327,23 @@ function render_install_key_banner(PDO $db, string $role): void
     }
 }
 
-/** @param array<string, mixed> $opts */
+/**
+ * Emit the full top-of-page chrome: security headers, <head>, the SVG
+ * sprite, sidebar/topbar nav, and any active admin/flash/update banners.
+ *
+ * Side effects: sends Content-Security-Policy / X-Frame-Options /
+ * X-Content-Type-Options / Referrer-Policy headers (so call before any
+ * output), echoes HTML, consumes the session flash via flash_get(), sets
+ * $GLOBALS['__ipam_no_sidebar'], and may handle the install-key dismiss
+ * POST (which can redirect + exit). Reads the global $db PDO handle and
+ * the session. Must be paired with page_footer().
+ *
+ * @param string               $title Page title (rendered after the app name).
+ * @param array<string, mixed> $opts  Optional keys: 'no_sidebar' (bool),
+ *                                     'page' (string, data-page attr),
+ *                                     'extra_script_src' / 'extra_style_src' /
+ *                                     'extra_frame_src' (string, CSP additions).
+ */
 function page_header(string $title, array $opts = []): void
 {
     // $db is the runtime PDO handle opened by init.php — not config — so it
@@ -571,6 +595,14 @@ function page_header(string $title, array $opts = []): void
     }
 }
 
+/**
+ * Emit the bottom-of-page chrome: closing layout tags, the footer with
+ * version/docs links and update badge, and the form-drawer container.
+ *
+ * Side effect: echoes HTML. Reads $GLOBALS['__ipam_no_sidebar'] (set by
+ * page_header()) to balance the layout-wrapper tags. Must follow a
+ * matching page_header() call.
+ */
 function page_footer(): void
 {
     // ADR-003: the former `global $config;` read used only by

@@ -115,6 +115,16 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
     }
 }
 
+/**
+ * Convenience wrapper that records an 'export.<what>' audit_log row against
+ * the 'system' entity. Side effect: appends a row to audit_log via audit()
+ * — inherits its rethrow-inside-transaction behaviour. Return value of the
+ * underlying audit() is discarded.
+ *
+ * @param PDO    $db      Live PDO handle.
+ * @param string $what    Export verb (becomes the 'export.<what>' action).
+ * @param string $details Optional free-form detail string.
+ */
 function audit_export(PDO $db, string $what, string $details = ''): void
 {
     audit($db, "export.$what", 'system', null, $details);

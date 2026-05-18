@@ -552,6 +552,22 @@ function ipam_db_init_bootstrap_admin(PDO $db): void
     $ins->execute([':u' => to_str($u), ':h' => $hash]);
 }
 
+/**
+ * Bootstrap or self-heal the database schema on $db.
+ *
+ * On a fresh database (no users table): executes the engine-appropriate
+ * schema.*.sql file, inserts the bootstrap admin, and stamps every
+ * registered migration as applied. On an existing database: ensures the
+ * migrations table, runs pending migrations via apply_migrations(),
+ * self-heals the audit_log table, and re-seeds the bootstrap admin if the
+ * users table is empty. On SQLite, writes/honours a `.db_initialized`
+ * sentinel next to the DB file to skip the probe/migration churn on
+ * subsequent requests.
+ *
+ * Side effects: executes DDL, INSERTs, runs migrations, touches a sentinel
+ * file (SQLite). Reads $config['db_path'] via ipam_config(). The active
+ * dialect must already be selected (call after ipam_db()).
+ */
 function ipam_db_init(PDO $db): void
 {
     $driver = ipam_dialect()->driver_name();
@@ -663,6 +679,13 @@ function ipam_db_init(PDO $db): void
     }
 }
 
+/**
+ * Create the schema_migrations table if it does not exist (idempotent).
+ * Routes the autoincrement, indexed-text, and now() expressions through
+ * the active dialect so the DDL is engine-valid on every driver.
+ *
+ * Side effect: executes CREATE TABLE IF NOT EXISTS.
+ */
 function ensure_migrations_table(PDO $db): void
 {
     $d = ipam_dialect();
