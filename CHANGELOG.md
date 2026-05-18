@@ -22,6 +22,7 @@ Code-quality, hardening, and dependency-maintenance release. Closes milestone #8
 
 - **`ipam_prefix_to_netmask()` throws on out-of-range IPv4 prefix (#1249).** A prefix value outside 0–32 now throws `InvalidArgumentException` instead of silently producing a corrupt bitmask. Previously, a bad prefix propagated through subnet math without error.
 - **Six masked PHPStan bugs in `restore.php` (#1204).** Resolved: `getopt()` return cast to array, `realpath()` `string|false` flowing unchecked into `copy()`, `basename()`, and `proc_open()`, and a dead `=== 'pgsql'` branch that was never reachable. These were real latent bugs surfaced by the v3.29.0 baseline triage.
+- **Health dashboard Backups card showed stale state (PR #1250 review).** The card read `enabled`/`disk_free`/`retention` keys that the data layer stopped populating in v3.26.0 when backups moved to a per-destination model, so it always reported "Disabled" with an "unknown" disk-free figure. Status now derives from the active-destination count, an "Active destinations" row was added, and the obsolete Disk-free and Retention rows were removed.
 
 ### Security
 
