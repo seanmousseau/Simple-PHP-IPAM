@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.32.0](#v3320) — code-quality, hardening, and dependency-maintenance release; PHPMailer 7.x, server-side site-hierarchy enforcement (no breaking changes)
   - [v3.31.0](#v3310) — encrypt-at-rest for settings secrets (`IPAMSEC1` envelopes), webhook-secret consolidation, `lib.php` refactor wave 1 finish (no breaking changes)
   - [v3.30.0](#v3300) — per-user theme preference table with backfill, settings type system moved to PHP, `lib.php` decomposed into modules (no breaking changes)
   - [v3.25.0](#v3250) — IPAMBKL1 backend surfaced via picker UI, retention re-homed to destination, U-series UX polish (no breaking changes)
@@ -117,6 +118,13 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.32.0
+
+- **No breaking changes. No schema migrations. No operator action required.** v3.32.0 is a code-quality, hardening, and dependency-maintenance release that closes milestone #84. Upgrade with `upgrade.sh` as normal.
+- **PHPMailer upgraded to 7.x (transparent).** `phpmailer/phpmailer` was updated from 6.12.0 to 7.1.1. The 7.0 release is functionally equivalent to 6.11.1 for standard SMTP delivery. No configuration changes are required — existing SMTP settings keep working unchanged.
+- **Site-hierarchy depth and cycle enforcement is now server-side.** The 2-level maximum depth and cycle rejection for site parent assignments are now enforced at the API layer (`ipam_site_validate_parent()`) in addition to the UI. Operators are not affected; no configuration change is needed.
+- **No config-format changes.** Existing `config.php` files keep working unchanged.
 
 ### v3.31.0
 
