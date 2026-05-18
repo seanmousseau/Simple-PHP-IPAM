@@ -3826,7 +3826,8 @@ function ipam_migrations(): array
                     );
                 }
                 $upd->execute([
-                    ':s'  => ipam_webhook_encrypt_secret($stored, $appSecret),
+                    // v3.31.0: pinned to _legacy so this shipped migration keeps producing $2W$.
+                    ':s'  => ipam_webhook_encrypt_secret_legacy($stored, $appSecret),
                     ':id' => to_int($row['id']),
                 ]);
                 $reencrypted++;
@@ -4258,6 +4259,92 @@ function ipam_migrations(): array
                     return;
                 }
                 $db->exec("ALTER TABLE users DROP COLUMN theme");
+            }
+        },
+
+        // v3.31.0 (#1234, ADR-001 pt 2) - re-encrypt every plaintext
+        // managed-secret row in the settings table into an IPAMSEC1 envelope.
+        // Pre-v3.31.0 stored these secrets (oidc.client_secret, smtp.auth_pass,
+        // login_protection.secret_key, recaptcha_enterprise.api_key) as
+        // plaintext; a DB dump exposed them. ipam_secret_managed_keys() is the
+        // single source of truth for which keys are managed - it deliberately
+        // EXCLUDES backup_vault_key, which carries its own IPAMWK1 envelope
+        // (see lib/vault.php); double-wrapping it would break ipam_vault_unwrap().
+        //
+        // Idempotent: rows already carrying the IPAMSEC1 envelope prefix are
+        // skipped (ipam_secret_is_envelope), so replaying this closure - or
+        // restoring an older backup and re-upgrading - never double-encrypts.
+        // null/empty values are left untouched.
+        //
+        // apply_migrations() has already set PRAGMA foreign_keys = OFF and
+        // wrapped this closure in a transaction (invariant #2) - the body
+        // manages neither. The `key` column is quoted via ipam_key_col() for
+        // cross-engine safety (`key` is reserved in MySQL).
+        '3.31.0-reencrypt-settings-secrets' => static function (PDO $db): void {
+            $managed = ipam_secret_managed_keys();
+            if ($managed === []) {
+                return;
+            }
+            $keyCol       = ipam_key_col();
+            $placeholders = implode(',', array_fill(0, count($managed), '?'));
+
+            $sel = $db->prepare(
+                "SELECT tenant_id, {$keyCol} AS k, value FROM settings "
+                . "WHERE {$keyCol} IN ({$placeholders})"
+            );
+            $sel->execute($managed);
+            $rows = $sel->fetchAll(PDO::FETCH_ASSOC);
+            if ($rows === []) {
+                return;
+            }
+
+            // Two distinct named placeholders bound to the same tenant_id:
+            // some PDO drivers reject reusing one named placeholder twice in
+            // a single statement when emulation is off.
+            $upd = $db->prepare(
+                "UPDATE settings SET value = :v WHERE {$keyCol} = :k "
+                . "AND ((:t1 IS NULL AND tenant_id IS NULL) OR tenant_id = :t2)"
+            );
+
+            foreach ($rows as $row) {
+                $value = $row['value'] ?? null;
+                if (!is_string($value) || $value === '' || ipam_secret_is_envelope($value)) {
+                    continue; // null/empty or already enveloped
+                }
+                $tenantId = $row['tenant_id'];
+                $upd->execute([
+                    ':v'  => ipam_secret_encrypt($value),
+                    ':k'  => $row['k'],
+                    ':t1' => $tenantId,
+                    ':t2' => $tenantId,
+                ]);
+            }
+        },
+
+        '3.31.0-reencrypt-webhook-secrets' => static function (PDO $db): void {
+            // v3.31.0 (#1235): migrate legacy $2W$ (aes-256-gcm) webhook secrets
+            // onto the shared IPAMSEC1 pipeline. Idempotent — IPAMSEC1 rows and
+            // empty/plaintext rows are skipped.
+            $appSecret = ipam_app_secret();
+            $sel = $db->query('SELECT id, secret FROM webhooks');
+            if ($sel === false) {
+                return;
+            }
+            $rows = $sel->fetchAll(PDO::FETCH_ASSOC);
+            $upd = $db->prepare('UPDATE webhooks SET secret = :s WHERE id = :id');
+            foreach ($rows as $row) {
+                $secret = $row['secret'];
+                if (!is_string($secret) || $secret === '' || ipam_secret_is_envelope($secret)) {
+                    continue;
+                }
+                if (!str_starts_with($secret, '$2W$')) {
+                    continue; // pre-v3.27.7 plaintext: leave for a normal write to upgrade
+                }
+                $plain = ipam_webhook_decrypt_legacy($secret, $appSecret);
+                if ($plain === null) {
+                    continue; // unreadable legacy row — do not destroy it
+                }
+                $upd->execute([':s' => ipam_secret_encrypt($plain), ':id' => $row['id']]);
             }
         },
 

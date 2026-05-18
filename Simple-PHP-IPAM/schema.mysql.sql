@@ -908,6 +908,8 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.28.0-state-tables'),
   ('3.30.0-drop-settings-type'),
   ('3.30.0-user-preferences'),
-  ('3.30.0-user-preferences-drop-theme');
+  ('3.30.0-user-preferences-drop-theme'),
+  ('3.31.0-reencrypt-settings-secrets'),
+  ('3.31.0-reencrypt-webhook-secrets');
 
 SET FOREIGN_KEY_CHECKS = 1;
