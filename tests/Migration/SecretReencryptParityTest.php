@@ -254,9 +254,11 @@ final class SecretReencryptParityTest extends TestCase
     {
         if ($engine === 'mysql') {
             $db->exec('SET FOREIGN_KEY_CHECKS=0');
-            $rows = $db->query(
+            $stmt = $db->query(
                 'SELECT table_name AS n FROM information_schema.tables WHERE table_schema = DATABASE()'
-            )->fetchAll();
+            );
+            self::assertNotFalse($stmt);
+            $rows = $stmt->fetchAll();
             foreach ($rows as $r) {
                 $db->exec('DROP TABLE IF EXISTS `' . str_replace('`', '', (string) $r['n']) . '`');
             }

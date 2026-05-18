@@ -4305,7 +4305,6 @@ function ipam_migrations(): array
                 . "AND ((:t1 IS NULL AND tenant_id IS NULL) OR tenant_id = :t2)"
             );
 
-            $reencrypted = 0;
             foreach ($rows as $row) {
                 $value = $row['value'] ?? null;
                 if (!is_string($value) || $value === '' || ipam_secret_is_envelope($value)) {
@@ -4318,15 +4317,6 @@ function ipam_migrations(): array
                     ':t1' => $tenantId,
                     ':t2' => $tenantId,
                 ]);
-                $reencrypted++;
-            }
-
-            if ($reencrypted > 0 && function_exists('audit')) {
-                $details = json_encode(['count' => $reencrypted]);
-                audit($db, 'migration.applied', 'migration', null,
-                    is_string($details)
-                        ? '3.31.0-reencrypt-settings-secrets ' . $details
-                        : '3.31.0-reencrypt-settings-secrets');
             }
         },
 
