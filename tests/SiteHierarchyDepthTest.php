@@ -203,7 +203,8 @@ final class SiteHierarchyDepthTest extends TestCase
 
     public function testValidateParentRejectsNonExistentParent(): void
     {
-        $err = ipam_site_validate_parent($this->db, 99999, null);
+        $nonExistentParentId = PHP_INT_MAX;
+        $err = ipam_site_validate_parent($this->db, $nonExistentParentId, null);
         $this->assertNotNull($err, 'non-existent parent must be rejected');
         $this->assertStringContainsString('does not exist', $err);
     }

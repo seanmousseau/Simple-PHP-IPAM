@@ -5385,6 +5385,7 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int
  * (region → site) hierarchy model. Returns null if the assignment is
  * allowed, or a human-readable error string if it must be rejected.
  *
+ * @param PDO      $db       Live database handle.
  * @param int|null $parentId The proposed parent. null = make/keep a root site.
  * @param int|null $siteId   The site being updated; null when creating a new site.
  */
