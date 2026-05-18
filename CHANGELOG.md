@@ -32,7 +32,7 @@ Code-quality, hardening, and dependency-maintenance release. Closes milestone #8
 
 - **`ipam_fetch_assoc()` helper + health.php DB-fetch cleanup (#1203).** New `ipam_fetch_assoc()` helper routes all `health.php` DB fetches through a typed wrapper, eliminating the mixed-type fetch-on-mixed cluster. 47 entries pruned from `phpstan-baseline.neon`.
 - **`docs/api-spec.yaml` drift closed (#1202).** `subnet_tags`, `address_tags`, and `scan_history` documented; the never-built `custom_field_defs` resource removed. `ApiSpecDriftTest` allowlist cleared.
-- **Linux visual-regression baselines generated; VR step re-enabled in CI (#1206).** `vr-*` baselines generated on Linux so the visual-regression Playwright step no longer skips in CI.
+- **Linux visual-regression baselines generated; VR step re-enabled in CI (#1206).** `vr-*` baselines generated on Linux so the visual-regression Playwright step no longer skips in CI. The `subnets` page is excluded from VR coverage (its row count grows under the preceding E2E suite); restoring it with a mutation-isolated capture path is tracked in #1251.
 
 ## [3.31.0] - 2026-05-18
 
