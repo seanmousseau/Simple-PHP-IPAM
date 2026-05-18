@@ -136,6 +136,15 @@ function parse_cidr(string $cidr): ?array
     ];
 }
 
+/**
+ * Zero out the host bits of a binary IP address, returning the network
+ * address at the same byte length. Works on 4-byte (IPv4) and 16-byte
+ * (IPv6) inputs; $prefix is clamped to [0, bit-width]. Pure — no side effects.
+ *
+ * @param string $ipBin Raw binary IP (4 or 16 bytes, output of inet_pton()).
+ * @param int    $prefix CIDR prefix length.
+ * @return string        Binary network address, same length as $ipBin.
+ */
 function apply_prefix_mask(string $ipBin, int $prefix): string
 {
     $len = strlen($ipBin);
@@ -190,6 +199,16 @@ function ipam_compute_broadcast_bin(string $netBin, int $prefix): ?string
     return $out;
 }
 
+/**
+ * Compute the conventional first-usable-host gateway address (network + 1)
+ * for an IPv4 network. Returns null when $netBin is not 4 bytes (e.g. an
+ * IPv6 network) or when $prefix is outside 0..30 (no usable host range).
+ * Pure — no side effects.
+ *
+ * @param string $netBin 4-byte IPv4 network address.
+ * @param int    $prefix CIDR prefix length.
+ * @return string|null   4-byte gateway address, or null when not applicable.
+ */
 function ipam_compute_gateway_bin(string $netBin, int $prefix): ?string
 {
     if (strlen($netBin) !== 4) return null;
@@ -198,6 +217,15 @@ function ipam_compute_gateway_bin(string $netBin, int $prefix): ?string
     return ipv4_int_to_bin($int + 1);
 }
 
+/**
+ * True when $ip falls inside the network defined by $network/$prefix.
+ * Accepts IPv4 or IPv6 strings; returns false on parse error or when the
+ * IP and network are different families. Pure — no side effects.
+ *
+ * @param string $ip      IP address string to test.
+ * @param string $network Network address string.
+ * @param int    $prefix  CIDR prefix length.
+ */
 function ip_in_cidr(string $ip, string $network, int $prefix): bool
 {
     $ipBin = @inet_pton(trim($ip));
@@ -219,6 +247,13 @@ function normalize_ip(string $ip): ?array
 
 /* ---------------- IPv4 helpers ---------------- */
 
+/**
+ * Convert a 4-byte big-endian IPv4 binary address to an unsigned 32-bit
+ * integer. Pure — no side effects.
+ *
+ * @param string $bin 4-byte IPv4 address (output of inet_pton()).
+ * @return int        Unsigned 32-bit integer in the range [0, 0xFFFFFFFF].
+ */
 function ipv4_bin_to_int(string $bin): int
 {
     $unpacked = unpack('N', $bin);
@@ -226,17 +261,39 @@ function ipv4_bin_to_int(string $bin): int
     return to_int($n & 0xFFFFFFFF);
 }
 
+/**
+ * Convert a 32-bit integer to a 4-byte big-endian IPv4 binary address.
+ * The value is masked to 32 bits. Pure — no side effects.
+ *
+ * @param int $n IPv4 address as an integer.
+ * @return string 4-byte binary IPv4 address.
+ */
 function ipv4_int_to_bin(int $n): string
 {
     $n = $n & 0xFFFFFFFF;
     return pack('N', $n);
 }
 
+/**
+ * Convert a 32-bit integer IPv4 address to dotted-quad text. Returns ''
+ * if conversion fails. Pure — no side effects.
+ *
+ * @param int $n IPv4 address as an integer.
+ * @return string Dotted-quad string, e.g. '10.0.0.1', or '' on failure.
+ */
 function ipv4_int_to_text(int $n): string
 {
     return inet_ntop(ipv4_int_to_bin($n)) ?: '';
 }
 
+/**
+ * Number of assignable host addresses in an IPv4 network of the given
+ * prefix. Returns 1 for /32, 2 for /31 (RFC 3021), and total minus the
+ * network+broadcast pair otherwise. Pure — no side effects.
+ *
+ * @param int $prefix CIDR prefix length (0–32).
+ * @return int        Count of assignable hosts.
+ */
 function ipv4_assignable_count(int $prefix): int
 {
     if ($prefix >= 32) return 1;
@@ -247,12 +304,30 @@ function ipv4_assignable_count(int $prefix): int
     return ($assignable > 0) ? (int)$assignable : 0;
 }
 
+/**
+ * True when the child network is contained within the parent network at the
+ * parent's prefix length. Both binary addresses must be the same family/length.
+ * Pure — no side effects.
+ *
+ * @param string $parentNetBin Parent network binary address.
+ * @param int    $parentPrefix Parent CIDR prefix length.
+ * @param string $childNetBin  Child network binary address.
+ */
 function subnet_contains_bin(string $parentNetBin, int $parentPrefix, string $childNetBin): bool
 {
     $masked = apply_prefix_mask($childNetBin, $parentPrefix);
     return hash_equals($masked, $parentNetBin);
 }
 
+/**
+ * Compute the IPv4 broadcast address (binary) by setting all host bits.
+ * Unlike ipam_compute_broadcast_bin(), this returns a value for every
+ * prefix (e.g. the network itself for /32). Pure — no side effects.
+ *
+ * @param string $netBin 4-byte IPv4 network address.
+ * @param int    $prefix CIDR prefix length.
+ * @return string        4-byte binary broadcast address.
+ */
 function ipv4_broadcast_bin(string $netBin, int $prefix): string
 {
     $hostBits = 32 - $prefix;
@@ -266,6 +341,14 @@ function ipv4_broadcast_bin(string $netBin, int $prefix): string
     return pack('N', $b);
 }
 
+/**
+ * Compute the IPv4 broadcast address as an integer by setting all host bits
+ * of the given network integer. Pure — no side effects.
+ *
+ * @param int $networkInt IPv4 network address as an integer.
+ * @param int $prefix     CIDR prefix length.
+ * @return int            Broadcast address as an unsigned 32-bit integer.
+ */
 function ipv4_broadcast_int(int $networkInt, int $prefix): int
 {
     $hostBits = 32 - $prefix;
@@ -296,6 +379,14 @@ function ipv6_bin_increment(string $bin): string
 
 /* ---------------- CIDR helpers ---------------- */
 
+/**
+ * Convert a dotted-quad IPv4 netmask to a CIDR prefix length. Returns null
+ * when the mask is not parseable IPv4 or is not contiguous (a 1-bit appears
+ * after a 0-bit). Pure — no side effects.
+ *
+ * @param string $mask Dotted-quad netmask, e.g. '255.255.255.0'.
+ * @return int|null    Prefix length 0–32, or null on invalid/non-contiguous mask.
+ */
 function netmask_to_prefix(string $mask): ?int
 {
     $bin = @inet_pton(trim($mask));

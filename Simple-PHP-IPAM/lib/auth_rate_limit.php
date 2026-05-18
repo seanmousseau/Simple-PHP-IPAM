@@ -70,6 +70,16 @@ function auth_rate_limited(PDO $db, string $action, string $ip, int $maxAttempts
     return (is_array($countRow) ? to_int($countRow['c']) : 0) >= $maxAttempts;
 }
 
+/**
+ * Record one failed auth attempt for an (action, ip) pair. Side effect:
+ * INSERTs a row into login_attempts (attempted_at defaults to now in the
+ * schema). An empty $username is stored as NULL.
+ *
+ * @param PDO    $db       Live PDO handle.
+ * @param string $action   Auth action, e.g. 'login', 'forgot_password'.
+ * @param string $ip       Caller IP.
+ * @param string $username Optional username associated with the attempt.
+ */
 function record_auth_failure(PDO $db, string $action, string $ip, string $username = ''): void
 {
     $db->prepare(
@@ -81,12 +91,29 @@ function record_auth_failure(PDO $db, string $action, string $ip, string $userna
     ]);
 }
 
+/**
+ * Clear all recorded failures for an (action, ip) pair after a successful
+ * auth. Side effect: DELETEs matching rows from login_attempts.
+ *
+ * @param PDO    $db     Live PDO handle.
+ * @param string $action Auth action.
+ * @param string $ip     Caller IP.
+ */
 function clear_auth_failures(PDO $db, string $action, string $ip): void
 {
     $db->prepare("DELETE FROM login_attempts WHERE action = :a AND ip = :ip")
        ->execute([':a' => $action, ':ip' => $ip]);
 }
 
+/**
+ * action='login' wrapper around auth_rate_limited(). True when the IP has
+ * reached $maxAttempts failed logins within $windowSeconds.
+ *
+ * @param PDO    $db            Live PDO handle.
+ * @param string $ip            Caller IP.
+ * @param int    $maxAttempts   Failure threshold.
+ * @param int    $windowSeconds Sliding-window size in seconds.
+ */
 function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSeconds): bool
 {
     return auth_rate_limited($db, 'login', $ip, $maxAttempts, $windowSeconds);
@@ -251,16 +278,42 @@ function prune_rate_limit_dampener(PDO $db, int $graceSeconds = 86400): void
        ->execute([':cutoff' => $cutoff]);
 }
 
+/**
+ * action='login' wrapper around record_auth_failure(). Side effect:
+ * INSERTs a login failure row into login_attempts.
+ *
+ * @param PDO    $db       Live PDO handle.
+ * @param string $ip       Caller IP.
+ * @param string $username Optional username associated with the attempt.
+ */
 function record_login_failure(PDO $db, string $ip, string $username = ''): void
 {
     record_auth_failure($db, 'login', $ip, $username);
 }
 
+/**
+ * action='login' wrapper around clear_auth_failures(). Side effect:
+ * DELETEs the IP's login failure rows from login_attempts.
+ *
+ * @param PDO    $db Live PDO handle.
+ * @param string $ip Caller IP.
+ */
 function clear_login_failures(PDO $db, string $ip): void
 {
     clear_auth_failures($db, 'login', $ip);
 }
 
+/**
+ * True when a username has reached $maxAttempts failed action='login'
+ * attempts within $windowSeconds. Scoped to action='login' so non-login
+ * failures (forgot_password, email_otp, vault_key_reveal) do not
+ * contaminate login lockout.
+ *
+ * @param PDO    $db            Live PDO handle.
+ * @param string $username      Username to check.
+ * @param int    $maxAttempts   Failure threshold.
+ * @param int    $windowSeconds Sliding-window size in seconds.
+ */
 function account_locked_out(PDO $db, string $username, int $maxAttempts, int $windowSeconds): bool
 {
     // login_attempts.attempted_at is UTC; build the cutoff in UTC (gmdate).
@@ -277,6 +330,15 @@ function account_locked_out(PDO $db, string $username, int $maxAttempts, int $wi
     return (is_array($row) ? to_int($row['c']) : 0) >= $maxAttempts;
 }
 
+/**
+ * Clear a username's action='login' lockout after a successful login.
+ * Side effect: DELETEs the username's action='login' rows from
+ * login_attempts; scoped to action='login' so forgot_password / email_otp
+ * / vault_key_reveal attempt rows survive.
+ *
+ * @param PDO    $db       Live PDO handle.
+ * @param string $username Username whose lockout to clear.
+ */
 function clear_account_lockout(PDO $db, string $username): void
 {
     // Scope to action='login' so clearing a login lockout does not wipe
@@ -285,6 +347,14 @@ function clear_account_lockout(PDO $db, string $username): void
        ->execute([':u' => $username]);
 }
 
+/**
+ * Housekeeping: drop login_attempts rows older than $windowSeconds.
+ * Side effect: DELETEs aged-out rows. Called during the lazy housekeeping
+ * sweep to bound the table size.
+ *
+ * @param PDO $db            Live PDO handle.
+ * @param int $windowSeconds Age cutoff in seconds; rows older than this are removed.
+ */
 function purge_old_login_attempts(PDO $db, int $windowSeconds): void
 {
     // login_attempts.attempted_at is UTC; build the cutoff in UTC (gmdate).
@@ -376,6 +446,14 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
 
 /* ---------------- Persistent account lockout (v3.6.0, #421) ---------------- */
 
+/**
+ * Clear a user's persistent account lockout. Side effect: UPDATEs the
+ * users row, resetting failed_auth_count to 0 and nulling locked_until /
+ * lock_reason.
+ *
+ * @param PDO $db  Live PDO handle.
+ * @param int $uid User id whose lockout to clear.
+ */
 function ipam_clear_persistent_lockout(PDO $db, int $uid): void {
     $db->prepare(
         "UPDATE users SET failed_auth_count = 0, locked_until = NULL, lock_reason = NULL WHERE id = :id"
