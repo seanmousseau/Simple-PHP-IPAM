@@ -281,6 +281,34 @@ test('addresses: form drawer opens on Add Address click', async () => {
   await expect(page.locator('#global-drawer')).toBeVisible();
 });
 
+// Regression: the "Use" link beside "Next available" had a click handler that
+// scoped its input lookup to .card / .drawer-form-card only. The add-address
+// form renders into a bare .drawer-body, so closest() returned null and the
+// link was dead. Fix widened the scope selector to include .drawer-body.
+test('addresses: Next-available "Use" link fills IP in the drawer', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  const trigger = page.locator('[data-drawer-title="Add Address"]').first();
+  if (await trigger.count() === 0) {
+    test.skip(true, 'No Add Address drawer trigger found');
+    return;
+  }
+  await trigger.click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+
+  // Fresh test subnet has plenty of free space, so a next-available IP exists.
+  const useLink = page.locator('#global-drawer-body a[data-fill-ip]');
+  await expect(page.locator('#global-drawer-body').getByText('Next available:')).toBeVisible();
+  await expect(useLink).toBeVisible();
+
+  const nextIp = await useLink.getAttribute('data-fill-ip');
+  expect(nextIp, 'Use link should carry a next-available IP').toBeTruthy();
+
+  const ipInput = page.locator('#global-drawer-body input[name="ip"]');
+  await useLink.click();
+  await expect(ipInput).toHaveValue(nextIp!);
+});
+
 // ── v2.3.0 scan-related address fields ────────────────────────────────────────
 
 test('addresses: Last Seen column header is present (default hidden)', async () => {

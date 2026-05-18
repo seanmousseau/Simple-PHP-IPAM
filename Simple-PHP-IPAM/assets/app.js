@@ -690,11 +690,14 @@
     }
 
     // --- "Use next IP" fill helper (data-fill-ip on addresses.php) ---
+    // The link also appears in the Add Address drawer, whose body is a
+    // bare .drawer-body (no .card / .drawer-form-card wrapper), so accept
+    // that as a scoping container too.
     document.addEventListener("click", function(e) {
       var el = e.target.closest("[data-fill-ip]");
       if (!el) return;
       e.preventDefault();
-      var card = el.closest(".drawer-form-card, .card");
+      var card = el.closest(".drawer-form-card, .card, .drawer-body");
       if (!card) return;
       var inp = card.querySelector('input[name="ip"]');
       if (inp) { inp.value = el.dataset.fillIp; inp.focus(); }
