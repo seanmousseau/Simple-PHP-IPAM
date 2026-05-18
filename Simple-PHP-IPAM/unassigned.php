@@ -161,7 +161,7 @@ ipam_skeleton_flush();
   <a href="dashboard.php"><?= icon('home') ?> Dashboard</a>
   <?php if ($sub): ?>
     <span class="sep">›</span><a href="subnets.php"><?= icon('server-stack') ?> Subnets</a>
-    <span class="sep">›</span><a href="addresses.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>"><?= e(to_str($sub['cidr'])) ?></a>
+    <span class="sep">›</span><a href="addresses.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast + e() escaping */ e((string)(int)$subnetId) ?>"><?= e(to_str($sub['cidr'])) ?></a>
     <span class="sep">›</span>
   <?php endif; ?>
   <span><?= icon('unassigned') ?> Unassigned IPs</span>
@@ -176,12 +176,12 @@ ipam_skeleton_flush();
 
 <div class="page-actions">
   <?php if ($subnetId > 0): ?>
-    <a class="action-pill" href="addresses.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>"><?= icon('map-pin') ?> View Addresses</a>
+    <a class="action-pill" href="addresses.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast + e() escaping */ e((string)(int)$subnetId) ?>"><?= icon('map-pin') ?> View Addresses</a>
     <?php if (current_user()['role'] !== 'readonly'): ?>
-      <a class="action-pill" href="bulk_update.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>"><?= icon('pencil') ?> Bulk Update</a>
+      <a class="action-pill" href="bulk_update.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast + e() escaping */ e((string)(int)$subnetId) ?>"><?= icon('pencil') ?> Bulk Update</a>
     <?php endif; ?>
-    <a class="action-pill" href="search.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>"><?= icon('magnifying-glass') ?> Search in Subnet</a>
-    <a class="action-pill" href="export_unassigned.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>"><?= icon('download') ?> Export CSV</a>
+    <a class="action-pill" href="search.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast + e() escaping */ e((string)(int)$subnetId) ?>"><?= icon('magnifying-glass') ?> Search in Subnet</a>
+    <a class="action-pill" href="export_unassigned.php?subnet_id=<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast + e() escaping */ e((string)(int)$subnetId) ?>"><?= icon('download') ?> Export CSV</a>
   <?php endif; ?>
 </div>
 
@@ -244,7 +244,7 @@ ipam_skeleton_flush();
               <form method="post" action="unassigned.php?<?= e(build_query_unassigned()) ?>" class="row gap-6">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="add">
-                <input type="hidden" name="subnet_id" value="<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast neutralises taint */ (int)$subnetId ?>">
+                <input type="hidden" name="subnet_id" value="<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 integer cast + e() escaping */ e((string)(int)$subnetId) ?>">
                 <input type="hidden" name="ip" value="<?= /* nosemgrep: php.lang.security.injection.echoed-request.echoed-request,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1201 e() HTML-escapes output */ e($ip) ?>">
 
                 <label>Hostname<br><input name="hostname" class="w-160"></label>

@@ -296,7 +296,7 @@ $systemSec  = is_array($data['system'] ?? null)  ? $data['system']  : [];
 
 $dbStatus     = 'ok';
 $backupStatus = (bool)($backupSec['tool_missing'] ?? false) ? 'crit'
-    : ((bool)($backupSec['enabled'] ?? false)
+    : (to_int($backupSec['destinations_active'] ?? 0) > 0
         ? (($backupSec['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
         : 'warn');
 $scanStatus   = to_int($scanSec['overdue'] ?? 0) > 0 ? 'warn' : 'ok';
@@ -358,8 +358,11 @@ page_header('Health Dashboard');
       Backups
     </div>
     <?php
-    $bEnabled = (bool)($backupSec['enabled'] ?? false);
-    health_row('Status', $bEnabled ? '<span style="color:var(--success)">Enabled</span>' : '<span class="muted">Disabled</span>');
+    // v3.26.0 (#1059) moved backups to a per-destination model — "enabled"
+    // means at least one active backup destination is configured.
+    $destActive = to_int($backupSec['destinations_active'] ?? 0);
+    health_row('Status', $destActive > 0 ? '<span style="color:var(--success)">Enabled</span>' : '<span class="muted">Disabled</span>');
+    health_row('Active destinations', e((string)$destActive), $destActive === 0 ? 'warn' : 'ok');
     if ((bool)($backupSec['tool_missing'] ?? false)) {
         health_row('Dump tool', '<span class="danger">Not found in $PATH — backups will fail</span>', 'crit');
     }
@@ -369,9 +372,6 @@ page_header('Health Dashboard');
     health_row('Last status', e(to_str($backupSec['last_status'] ?? '—')));
     health_row('Successful backups', e((string)to_int($backupSec['count'] ?? 0)));
     health_row('Storage used', e(format_bytes(to_int($backupSec['storage_used'] ?? 0))));
-    $df = to_int($backupSec['disk_free'] ?? -1);
-    health_row('Disk free', $df >= 0 ? e(format_bytes($df)) : '<span class="muted">unknown</span>');
-    health_row('Retention', e((string)to_int($backupSec['retention'] ?? 7)) . ' backups');
     ?>
   </div>
 
