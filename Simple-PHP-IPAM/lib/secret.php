@@ -28,6 +28,15 @@ const IPAM_SECRET_ENVELOPE_PREFIX = 'IPAMSEC1.';
 const IPAM_SECRET_KDF_CONTEXT     = 'ipam-settings-secret-v1';
 
 /**
+ * Thrown when a stored IPAMSEC1 envelope cannot be decrypted — wrong
+ * app_secret or a corrupt/tampered row. Distinct from a generic
+ * RuntimeException so callers can catch decrypt failure specifically.
+ */
+class IpamSecretDecryptException extends \RuntimeException
+{
+}
+
+/**
  * Derive the 32-byte settings-secret key from app_secret.
  *
  * @throws \RuntimeException if app_secret is unreadable or malformed.

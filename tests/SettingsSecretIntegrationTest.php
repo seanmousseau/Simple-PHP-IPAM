@@ -115,4 +115,32 @@ final class SettingsSecretIntegrationTest extends TestCase
         self::assertSame('My IPAM', $raw, 'non-sensitive setting must be stored plaintext');
         self::assertStringStartsNotWith(IPAM_SECRET_ENVELOPE_PREFIX, (string) $raw);
     }
+
+    public function testCorruptEnvelopeForManagedKeyFailsLoud(): void
+    {
+        // A well-formed IPAMSEC1 envelope (valid base64, long enough to clear
+        // the nonce+MAC length floor) whose body is random bytes — not a valid
+        // ciphertext for the current key, so the Poly1305 MAC check fails.
+        $corrupt = IPAM_SECRET_ENVELOPE_PREFIX . base64_encode(random_bytes(40));
+        $kc      = ipam_key_col();
+        $st      = $this->db->prepare(
+            "INSERT INTO settings (tenant_id, {$kc}, value, type) VALUES (NULL, :k, :v, 'string')"
+        );
+        $st->execute([':k' => 'smtp.auth_pass', ':v' => $corrupt]);
+        ipam_setting_cache_bust();
+
+        try {
+            ipam_setting('smtp.auth_pass');
+            self::fail('ipam_setting() must throw IpamSecretDecryptException on a corrupt managed envelope');
+        } catch (IpamSecretDecryptException $e) {
+            $msg = $e->getMessage();
+            self::assertStringContainsString('smtp.auth_pass', $msg, 'message must name the key');
+            self::assertStringNotContainsString($corrupt, $msg, 'message must not leak the envelope');
+            self::assertStringNotContainsString(
+                substr($corrupt, strlen(IPAM_SECRET_ENVELOPE_PREFIX)),
+                $msg,
+                'message must not leak the ciphertext body'
+            );
+        }
+    }
 }
