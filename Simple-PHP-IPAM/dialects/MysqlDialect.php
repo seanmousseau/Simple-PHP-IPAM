@@ -77,6 +77,28 @@ final class MysqlDialect implements Dialect
     }
 
     /**
+     * MySQL `INSERT ... ON DUPLICATE KEY UPDATE c = c + 1`. ON DUPLICATE KEY
+     * UPDATE fires on any unique-key conflict — for rate_limit_buckets, which
+     * has exactly one UNIQUE (bucket_key, window_start), that is invisible.
+     * Bare `c` (no VALUES()/table qualifier) on the right-hand side refers to
+     * the existing row's value, which is the increment we want.
+     *
+     * @param list<string> $keyCols
+     */
+    public function increment_or_insert(string $table, array $keyCols, string $counterCol): string
+    {
+        if ($keyCols === []) {
+            throw new InvalidArgumentException('increment_or_insert() requires at least one key column');
+        }
+        DialectValidator::assertBareIdentifiers($keyCols, 'MysqlDialect::increment_or_insert');
+        DialectValidator::assertBareIdentifiers([$table, $counterCol], 'MysqlDialect::increment_or_insert');
+        $cols         = implode(', ', $keyCols);
+        $placeholders = implode(', ', array_map(static fn (string $c): string => ':' . $c, $keyCols));
+        return "INSERT INTO $table ($cols, $counterCol) VALUES ($placeholders, 1) "
+            . "ON DUPLICATE KEY UPDATE $counterCol = $counterCol + 1";
+    }
+
+    /**
      * INSERT ... ON DUPLICATE KEY UPDATE col=col is the MySQL idiom for
      * "leave the existing row untouched on conflict" — the self-assign
      * is a no-op. Matches SQLite's ON CONFLICT(...) DO NOTHING semantics

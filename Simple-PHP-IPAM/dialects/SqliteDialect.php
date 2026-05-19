@@ -44,6 +44,26 @@ final class SqliteDialect implements Dialect
     }
 
     /**
+     * SQLite native `INSERT ... ON CONFLICT(...) DO UPDATE SET c = t.c + 1`.
+     * The `t.c` qualified form (rather than bare `c`) disambiguates the
+     * existing-row column from the EXCLUDED pseudo-table inside the DO UPDATE.
+     *
+     * @param list<string> $keyCols
+     */
+    public function increment_or_insert(string $table, array $keyCols, string $counterCol): string
+    {
+        if ($keyCols === []) {
+            throw new InvalidArgumentException('increment_or_insert() requires at least one key column');
+        }
+        DialectValidator::assertBareIdentifiers($keyCols, 'SqliteDialect::increment_or_insert');
+        DialectValidator::assertBareIdentifiers([$table, $counterCol], 'SqliteDialect::increment_or_insert');
+        $cols         = implode(', ', $keyCols);
+        $placeholders = implode(', ', array_map(static fn (string $c): string => ':' . $c, $keyCols));
+        return "INSERT INTO $table ($cols, $counterCol) VALUES ($placeholders, 1) "
+            . "ON CONFLICT($cols) DO UPDATE SET $counterCol = $table.$counterCol + 1";
+    }
+
+    /**
      * SQLite's `ON CONFLICT(col, ...) DO NOTHING` is the direct native idiom.
      *
      * @param string[] $conflictCols

@@ -75,6 +75,27 @@ final class PgsqlDialect implements Dialect
     }
 
     /**
+     * Postgres native `INSERT ... ON CONFLICT (...) DO UPDATE SET c = t.c + 1`.
+     * The conflict target is scoped to $keyCols (unlike MySQL). The `t.c`
+     * table-qualified form disambiguates the existing-row column from the
+     * EXCLUDED pseudo-table inside the DO UPDATE.
+     *
+     * @param list<string> $keyCols
+     */
+    public function increment_or_insert(string $table, array $keyCols, string $counterCol): string
+    {
+        if ($keyCols === []) {
+            throw new InvalidArgumentException('increment_or_insert() requires at least one key column');
+        }
+        DialectValidator::assertBareIdentifiers($keyCols, 'PgsqlDialect::increment_or_insert');
+        DialectValidator::assertBareIdentifiers([$table, $counterCol], 'PgsqlDialect::increment_or_insert');
+        $cols         = implode(', ', $keyCols);
+        $placeholders = implode(', ', array_map(static fn (string $c): string => ':' . $c, $keyCols));
+        return "INSERT INTO $table ($cols, $counterCol) VALUES ($placeholders, 1) "
+            . "ON CONFLICT ($cols) DO UPDATE SET $counterCol = $table.$counterCol + 1";
+    }
+
+    /**
      * Postgres's ON CONFLICT (cols) DO NOTHING is the direct native idiom,
      * identical in shape to SQLite's. Unlike MySQL, the conflict target is
      * scoped to the listed columns.

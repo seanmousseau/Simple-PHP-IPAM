@@ -4,6 +4,7 @@ declare(strict_types=1);
 use PHPUnit\Framework\TestCase;
 
 require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/Dialect.php';
+require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/DialectValidator.php';
 require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/SqliteDialect.php';
 
 /**
@@ -173,6 +174,89 @@ final class DialectTest extends TestCase
 
         $row = $pdo->query("SELECT v FROM kv WHERE k = 'greeting'")->fetch(PDO::FETCH_ASSOC);
         $this->assertSame('hello', $row['v']);
+    }
+
+    public function testIncrementOrInsertCompositeKeyShape(): void
+    {
+        $sql = $this->sqlite->increment_or_insert('rate_limit_buckets', ['bucket_key', 'window_start'], 'count');
+        $this->assertSame(
+            'INSERT INTO rate_limit_buckets (bucket_key, window_start, count) '
+            . 'VALUES (:bucket_key, :window_start, 1) '
+            . 'ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = rate_limit_buckets.count + 1',
+            $sql
+        );
+    }
+
+    public function testIncrementOrInsertSingleKeyShape(): void
+    {
+        $sql = $this->sqlite->increment_or_insert('hits', ['path'], 'n');
+        $this->assertSame(
+            'INSERT INTO hits (path, n) VALUES (:path, 1) '
+            . 'ON CONFLICT(path) DO UPDATE SET n = hits.n + 1',
+            $sql
+        );
+    }
+
+    public function testIncrementOrInsertRequiresAtLeastOneKeyColumn(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->sqlite->increment_or_insert('hits', [], 'n');
+    }
+
+    public function testIncrementOrInsertRejectsNonBareIdentifier(): void
+    {
+        // Injection-shaped key column must be rejected by DialectValidator
+        // before any interpolation into the emitted statement.
+        $this->expectException(InvalidArgumentException::class);
+        $this->sqlite->increment_or_insert('hits', ['path) --'], 'n');
+    }
+
+    public function testIncrementOrInsertActuallyIncrementsOnRealSqlite(): void
+    {
+        // End-to-end: the statement the dialect returns must atomically
+        // insert a counter=1 row and increment it on a repeat key, while a
+        // different key gets its own independent row at 1.
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->exec(
+            "CREATE TABLE rate_limit_buckets (
+                bucket_key TEXT NOT NULL,
+                window_start TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(bucket_key, window_start)
+            )"
+        );
+
+        $sql = $this->sqlite->increment_or_insert('rate_limit_buckets', ['bucket_key', 'window_start'], 'count');
+        $st  = $pdo->prepare($sql);
+
+        // First call for key A: inserts a fresh row at count = 1.
+        $st->execute([':bucket_key' => 'A', ':window_start' => '2026-01-01 00:00:00']);
+        $this->assertSame(
+            1,
+            (int) $pdo->query("SELECT count FROM rate_limit_buckets WHERE bucket_key = 'A'")->fetchColumn()
+        );
+
+        // Second call for key A: increments the existing row to count = 2.
+        $st->execute([':bucket_key' => 'A', ':window_start' => '2026-01-01 00:00:00']);
+        $this->assertSame(
+            2,
+            (int) $pdo->query("SELECT count FROM rate_limit_buckets WHERE bucket_key = 'A'")->fetchColumn()
+        );
+
+        // A different key gets its own independent row at count = 1.
+        $st->execute([':bucket_key' => 'B', ':window_start' => '2026-01-01 00:00:00']);
+        $this->assertSame(
+            1,
+            (int) $pdo->query("SELECT count FROM rate_limit_buckets WHERE bucket_key = 'B'")->fetchColumn()
+        );
+
+        // A different window for key A is also an independent row at 1.
+        $st->execute([':bucket_key' => 'A', ':window_start' => '2026-01-01 00:01:00']);
+        $this->assertSame(
+            3,
+            (int) $pdo->query("SELECT COUNT(*) FROM rate_limit_buckets")->fetchColumn()
+        );
     }
 
     public function testAppendOnlyTriggerReturnsExactlyTwoStatements(): void
