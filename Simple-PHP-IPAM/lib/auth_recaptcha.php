@@ -37,7 +37,9 @@ declare(strict_types=1);
  * signatures change. The `global $db` handle is never accessed here.
  *
  * Dependencies: lib.php (oidc_http_post — used by the
- * Turnstile/hCaptcha/reCAPTCHA/Friendly verify paths), lib/auth.php
+ * Turnstile/hCaptcha/reCAPTCHA/Friendly form-encoded verify paths;
+ * ipam_http_post_json — used by the reCAPTCHA Enterprise JSON verify
+ * path), lib/auth.php
  * (client_ip — used by the same verify paths), lib/utils.php
  * (to_int / to_str / e), lib/settings.php (ipam_setting() — fallback
  * config source) and lib/config.php (ipam_config() — legacy action key).
@@ -63,31 +65,22 @@ function recaptcha_enterprise_verify(string $token, string $siteKey, array $cfg)
         return null; // fail open — misconfiguration should not block users
     }
 
-    $url     = 'https://recaptchaenterprise.googleapis.com/v1/projects/' . rawurlencode($projectId) . '/assessments?key=' . rawurlencode($apiKey);
-    $payload = (string)json_encode(['event' => ['token' => $token, 'expectedAction' => $expectedAction, 'siteKey' => $siteKey]]);
-    $ctx = stream_context_create([
-        'http' => [
-            'method'        => 'POST',
-            'header'        => "Content-Type: application/json\r\nContent-Length: " . strlen($payload) . "\r\n",
-            'content'       => $payload,
-            'timeout'       => 10,
-            'ignore_errors' => true,
-        ],
-        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
-    ]);
+    $url  = 'https://recaptchaenterprise.googleapis.com/v1/projects/' . rawurlencode($projectId) . '/assessments?key=' . rawurlencode($apiKey);
+    $body = ['event' => ['token' => $token, 'expectedAction' => $expectedAction, 'siteKey' => $siteKey]];
 
     try {
-        $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
-        if ($raw === false) {
-            error_log('reCAPTCHA Enterprise: HTTP request failed.');
-            return null;
+        // Shared JSON POST helper (lib.php): TLS peer verification ON, 10s
+        // timeout. Never throws — transport failures arrive via 'error'.
+        $http = ipam_http_post_json($url, $body);
+        if ($http['error'] !== null) {
+            error_log('reCAPTCHA Enterprise: ' . $http['error'] . '.');
+            return null; // fail open — transport failure must not block users
         }
-        $resp = json_decode($raw, true);
+        $resp = $http['body'];
         if (!is_array($resp)) {
             error_log('reCAPTCHA Enterprise: Invalid JSON response.');
             return null;
         }
-        /** @var array<string, mixed> $resp */
         $tokenProps  = is_array($resp['tokenProperties'] ?? null) ? $resp['tokenProperties'] : [];
         $riskAnalysis = is_array($resp['riskAnalysis'] ?? null)   ? $resp['riskAnalysis']   : [];
 

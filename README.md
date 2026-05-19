@@ -12,18 +12,17 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.32.0
+## What's new in v3.33.0
 
-Code-quality, hardening, and dependency-maintenance release — no schema migrations, no new pages, no operator action required. Closes milestone #84.
+Refactor Wave 2 — a pure code-quality release, no schema migrations, no new config keys, no new pages, no operator action required. Closes milestone #57 (22 issues).
 
-- **Server-side site-hierarchy enforcement** — the 2-level depth limit and cycle rejection for site parent assignments are now enforced at the API layer (`ipam_site_validate_parent()`), not just in the UI.
-- **PHPMailer 7.x** — upgraded from 6.12.0 to 7.1.1; no configuration changes required.
-- **`ipam_prefix_to_netmask()` hardened** — throws `InvalidArgumentException` on an IPv4 prefix outside 0–32 instead of silently corrupting bitmask math.
-- **`restore.php` latent bugs fixed** — six PHPStan-surfaced masked bugs resolved: `getopt()` cast, `realpath()` unchecked `string|false`, and a dead `pgsql` branch.
-- **Semgrep sweep complete** — 18 `p/php`/`p/security-audit` false-positives annotated in `dhcp_pool.php` and `unassigned.php`, finishing the full admin-surface triage pass.
-- **47 PHPStan baseline entries pruned** — via new `ipam_fetch_assoc()` helper routing all `health.php` DB fetches through a typed wrapper.
-- **API spec drift closed** — `docs/api-spec.yaml` now matches `api.php` exactly; `ApiSpecDriftTest` allowlist cleared.
-- **Visual-regression CI re-enabled** — Linux `vr-*` baselines generated; VR step no longer skips in CI.
+- **`api.php` decomposed into reusable helpers** — pagination and bulk-create logic extracted into `api_paginated_query()` and a generic `api_bulk_create()`, removing duplicated per-resource boilerplate.
+- **CSV import state machine extracted** — `import_csv.php` ingest logic lifted into the testable `lib/csv_import.php` module.
+- **`migrations.php` helpers and cleanup** — new `migration_create_table()` and `ipam_query_or_throw()` helpers, `now()` routed through `Dialect`, legacy closures collapsed, and `audit()` entries added for material migrations.
+- **`lib` helper hardening** — `ipam_app_base_url()` memoised with boot validation, `ipam_setting_set()` decomposed, `Dialect::increment_or_insert()` added, `ipam_http_post_json()` extracted.
+- **ADR-003 `global $config` sweep completed** — remaining `global $config;` reads replaced with the `ipam_config()` accessor; the module linter is widened to block reintroduction.
+- **Three new test suites** — WebAuthn, DHCP reservations, and CSV row-error coverage.
+- **API list-response shape deprecation** — list endpoints now emit a `Deprecation` header; the `{data,meta}` envelope (`?envelope=1`) is canonical. Flat-shape removal is tracked for v4.0.0 (#1252).
 
 [Full changelog →](CHANGELOG.md)
 

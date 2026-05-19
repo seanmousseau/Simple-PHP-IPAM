@@ -24,6 +24,7 @@ require_once __DIR__ . '/lib/app_secret.php';
 require_once __DIR__ . '/lib/secret.php'; // settings-secret encrypt-at-rest crypto core (v3.31.0, #1233)
 require_once __DIR__ . '/lib/backup.php';
 require_once __DIR__ . '/lib/auth_step_up.php';
+require_once __DIR__ . '/lib/csv_import.php'; // CSV-import wizard logic (ADR-004, B13, #925)
 
 /* ---------------- View helpers (v3.8.0, #522) ---------------- */
 
@@ -262,11 +263,13 @@ function ipam_install_key_announce_record(string $key): void
     // the event. When `$db` is not yet a PDO (very early bootstrap, or a
     // CLI seed script that opens its own connection), fall back to a
     // fresh `ipam_db($config)` connection rather than silently no-op.
-    global $db, $config;
+    // ADR-003 (#1207): config read via ipam_config(), not `global $config;`.
+    // `global $db;` (the runtime PDO handle) is still permitted.
+    global $db;
     $conn = $db instanceof PDO ? $db : null;
-    if ($conn === null && isset($config) && function_exists('ipam_db')) {
+    if ($conn === null && function_exists('ipam_db')) {
         try {
-            $conn = ipam_db($config);
+            $conn = ipam_db(ipam_config());
         } catch (\Throwable $e) {
             error_log('[ipam_install_key_announce_record] ' . $key . ': fallback ipam_db() failed: ' . $e->getMessage());
             $conn = null;
@@ -679,6 +682,21 @@ function ipam_validate_config(array $config): array
         $val = to_int(ipam_setting($key));
         if ($val < $min) {
             $warnings[] = "{$label} is {$val}; minimum is {$min}.";
+        }
+    }
+    // base_url drives absolute links in password-reset / email-verification
+    // mail. When it is set but not a valid https:// URL the failure is
+    // otherwise silent (ipam_app_base_url() returns ''); surface it here.
+    // An unset base_url is left alone — it is legitimately optional for
+    // installs that do not send email, and init.php derives the HTTPS
+    // redirect target from the Host header in that case.
+    $baseUrl = rtrim(to_str($config['base_url'] ?? ''), '/');
+    if ($baseUrl !== '') {
+        $parsed = parse_url($baseUrl);
+        if (!is_array($parsed) || ($parsed['scheme'] ?? '') !== 'https'
+            || empty($parsed['host'])) {
+            $warnings[] = 'base_url is set but is not a valid https:// URL; '
+                . 'password-reset and email-verification links will not be sent.';
         }
     }
     foreach ($warnings as $w) {
@@ -1553,8 +1571,7 @@ function ipam_argon2id_derive(
  */
 function ipam_backup_vault_key_get_raw(): ?string
 {
-    /** @var array<string,mixed> $config */
-    global $config;
+    // ADR-003 (#1207): config read via ipam_config(), not `global $config;`.
 
     // v3.26.0 (#1098 + CR #1100): DB-resident wrapped envelope is the
     // primary store. Falls back to the legacy config field for one
@@ -1600,7 +1617,8 @@ function ipam_backup_vault_key_get_raw(): ?string
             $raw = '';
         }
         if ($raw !== '' && strlen($raw) === BACKUP_VAULT_KEY_LEN) {
-            if (isset($config['backup_vault_key']) && $config['backup_vault_key'] !== '') {
+            $cfgVaultKey = ipam_config('backup_vault_key');
+            if (is_string($cfgVaultKey) && $cfgVaultKey !== '') {
                 error_log(
                     'backup_vault_key present in BOTH config.php and the settings table; '
                     . 'using the DB row. Remove the config.php field once you have confirmed '
@@ -1611,7 +1629,7 @@ function ipam_backup_vault_key_get_raw(): ?string
         }
     }
 
-    $b64 = $config['backup_vault_key'] ?? null;
+    $b64 = ipam_config('backup_vault_key');
     if (!is_string($b64) || $b64 === '') {
         return null;
     }
@@ -3867,7 +3885,7 @@ function parse_contact_assignments(array $post): array
 function demo_mode_enabled(): bool
 {
     /** @var IpamConfig $gConf */
-    $gConf = $GLOBALS['config'];
+    $gConf = ipam_config();
     return !empty($gConf['demo_mode']['enabled']);
 }
 
@@ -5082,9 +5100,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             // available — it's a config.php-only key, never in the
             // settings table, per CLAUDE.md.
             $appSecret = to_str($config['app_secret']
-                ?? (is_array($GLOBALS['config'] ?? null)
-                    ? ($GLOBALS['config']['app_secret'] ?? '')
-                    : ''));
+                ?? ipam_config('app_secret', ''));
             try {
                 $secretPlain = ipam_webhook_decrypt_secret(
                     (string)$hook['secret'],
@@ -5554,6 +5570,93 @@ function oidc_http_post(string $url, array $params): array
             . (isset($d['error_description']) ? ' — ' . to_str($d['error_description']) : ''));
     }
     return $d;
+}
+
+/**
+ * Build the stream-context options array for a JSON HTTP POST.
+ *
+ * Pure builder — no network call, no I/O — so the request shape
+ * (encoded body, headers, timeout, TLS posture) is unit-testable in
+ * isolation. The returned array is the exact argument passed to
+ * stream_context_create() by ipam_http_post_json().
+ *
+ * TLS peer verification is always ON (verify_peer / verify_peer_name);
+ * a 10s timeout is always set. Callers cannot weaken either.
+ *
+ * @param array<string, mixed> $body    Decoded body, JSON-encoded into POSTFIELDS.
+ * @param list<string>         $headers Extra request headers (Content-Type: application/json is always added).
+ * @return array{http: array{method: string, header: string, content: string, timeout: int, ignore_errors: bool}, ssl: array{verify_peer: bool, verify_peer_name: bool}}
+ */
+function ipam_http_post_json_options(array $body, array $headers = []): array
+{
+    $payload = (string)json_encode($body);
+    $hdr     = array_merge(['Content-Type: application/json'], $headers);
+    $hdr[]   = 'Content-Length: ' . strlen($payload);
+    return [
+        'http' => [
+            'method'        => 'POST',
+            'header'        => implode("\r\n", $hdr) . "\r\n",
+            'content'       => $payload,
+            'timeout'       => 10,
+            'ignore_errors' => true,
+        ],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ];
+}
+
+/**
+ * Parse the numeric HTTP status from a stream-wrapper response-header list.
+ *
+ * The first entry is the status line (e.g. "HTTP/1.1 200 OK"); returns 0
+ * when the list is empty or the status line is unparseable.
+ *
+ * @param array<int|string, mixed> $headers
+ */
+function ipam_http_status_from_headers(array $headers): int
+{
+    if (isset($headers[0]) && is_string($headers[0])
+        && preg_match('#\s(\d{3})\s#', $headers[0], $m) === 1) {
+        return (int)$m[1];
+    }
+    return 0;
+}
+
+/**
+ * POST a JSON body and return a structured result.
+ *
+ * Shares the request-shaping logic with ipam_http_post_json_options()
+ * (the pure builder) so behaviour is testable without a network call.
+ * Never throws — a network/transport failure is reported via the
+ * 'error' key with body=null, leaving the fail-open/fail-closed
+ * decision entirely to the caller.
+ *
+ * @param array<string, mixed> $body
+ * @param list<string>         $headers
+ * @return array{body: array<string, mixed>|null, status: int, error: string|null}
+ */
+function ipam_http_post_json(string $url, array $body, array $headers = []): array
+{
+    $ctx = stream_context_create(ipam_http_post_json_options($body, $headers));
+    $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
+    if ($raw === false) {
+        return ['body' => null, 'status' => 0, 'error' => 'HTTP request failed'];
+    }
+
+    // Extract the HTTP status from the response status line via the
+    // PHP 8.4+ http_get_last_response_headers(). On PHP 8.2–8.3 the status
+    // is reported as 0 — it is informational only; no caller branches on it
+    // (reCAPTCHA verify keys solely off the decoded body and 'error').
+    $headers = function_exists('http_get_last_response_headers')
+        ? http_get_last_response_headers()
+        : null;
+    $status = ipam_http_status_from_headers(is_array($headers) ? $headers : []);
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return ['body' => null, 'status' => $status, 'error' => 'Invalid JSON response'];
+    }
+    /** @var array<string, mixed> $decoded */
+    return ['body' => $decoded, 'status' => $status, 'error' => null];
 }
 
 /* ---- PKCE ---- */
@@ -6344,18 +6447,30 @@ function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
 // ── Password reset + email verification helpers (v3.2.0) ─────────────────────
 
 /**
- * Return the canonical HTTPS base URL of this install (no trailing slash).
- * Used to build absolute links in emails.
+ * Return the canonical HTTPS base URL of this install (no trailing slash),
+ * or '' when `config.base_url` is unset or not a valid https:// URL.
+ *
+ * Used to build absolute links in emails. This function does NOT throw:
+ * a misconfigured base_url is a boot-time config error (see
+ * ipam_validate_config()), and callers must treat '' as "cannot build a
+ * link". Result is memoised per process — base_url is config-derived and
+ * stable for the lifetime of a request/CLI run.
  */
 function ipam_app_base_url(): string
 {
-    $cfg  = $GLOBALS['config'] ?? null;
-    $base = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
-    $parsed = parse_url($base);
-    if ($base === '' || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {
-        throw new RuntimeException('config.base_url must be set to an https:// URL for email links.');
+    static $memo = null;
+    if ($memo !== null) {
+        return $memo;
     }
-    return $base;
+    $base   = rtrim(to_str(ipam_config('base_url', '')), '/');
+    $parsed = $base !== '' ? parse_url($base) : false;
+    if ($base === '' || !is_array($parsed)
+        || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {
+        $memo = '';
+        return $memo;
+    }
+    $memo = $base;
+    return $memo;
 }
 
 /* ipam_create_reset_token(), ipam_consume_reset_token(), and               */
@@ -6373,11 +6488,11 @@ function ipam_app_base_url(): string
 function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): array
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-    try {
-        $base = ipam_app_base_url();
-    } catch (\RuntimeException $e) {
-        error_log('ipam_send_email_verification: ' . $e->getMessage());
-        return ['success' => false, 'error' => $e->getMessage()];
+    $base = ipam_app_base_url();
+    if ($base === '') {
+        $msg = 'config.base_url must be set to an https:// URL for email links.';
+        error_log('ipam_send_email_verification: ' . $msg);
+        return ['success' => false, 'error' => $msg];
     }
 
     $rawToken  = bin2hex(random_bytes(32));
@@ -6749,7 +6864,7 @@ function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool 
         "SELECT id, code_hash FROM totp_backup_codes WHERE user_id = :uid AND used_at IS NULL"
     );
     $stmt->execute([':uid' => $userId]);
-    $nowExpr = $db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? "datetime('now')" : "NOW()";
+    $nowExpr = ipam_dialect()->now();
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         if (password_verify($code, (string)$row['code_hash'])) {
             $consume = $db->prepare(
@@ -7125,13 +7240,7 @@ function ipam_passkey_find_by_credential_id(PDO $db, string $credentialIdBin): ?
 
 function ipam_passkey_update_sign_count(PDO $db, int $credentialDbId, int $signCount): void
 {
-    /** @var string $driver */
-    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $nowExpr = match($driver) {
-        'sqlite' => "datetime('now')",
-        'mysql'  => "UTC_TIMESTAMP()",
-        default  => "(NOW() AT TIME ZONE 'utc')",
-    };
+    $nowExpr = ipam_dialect()->now();
     $db->prepare("UPDATE webauthn_credentials SET sign_count = :sc, last_used_at = $nowExpr WHERE id = :id")
        ->execute([':sc' => $signCount, ':id' => $credentialDbId]);
 }

@@ -1,6 +1,89 @@
 <?php
 declare(strict_types=1);
 
+/**
+ * Run a query and throw a RuntimeException if it returns false.
+ *
+ * Collapses the `$db->query(...) ?: throw new RuntimeException(...)` idiom
+ * repeated across migration closures, and surfaces the failing SQL in the
+ * exception message.
+ *
+ * @param  PDO    $db  Open connection; caller controls error mode.
+ * @param  string $sql Raw SQL string — must not contain user-supplied input.
+ * @return PDOStatement
+ * @throws RuntimeException if query() returns false.
+ */
+function ipam_query_or_throw(PDO $db, string $sql): PDOStatement
+{
+    $st = $db->query($sql);
+    if ($st === false) {
+        $err = $db->errorInfo();
+        throw new RuntimeException(
+            'Migration query failed: ' . ($err[2] ?? 'unknown') . ' — SQL: ' . $sql
+        );
+    }
+    return $st;
+}
+
+/**
+ * Execute the engine-specific DDL from a three-arm driver-dispatch map.
+ *
+ * Collapses the copy-pasted `if (driver === 'sqlite') ... elseif ('mysql') ...
+ * elseif ('pgsql')` DDL pattern repeated across migration closures into a
+ * single call, delegating execution to ipam_query_or_throw().
+ *
+ * @param  PDO                                                    $db          Open connection; caller controls error mode.
+ * @param  array{sqlite?:string,mysql?:string,pgsql?:string}      $ddlByEngine Map of driver name to CREATE TABLE DDL string.
+ * @return void
+ * @throws RuntimeException if no DDL key exists for the current driver.
+ */
+function migration_create_table(PDO $db, array $ddlByEngine): void
+{
+    $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver    = is_string($driverRaw) ? $driverRaw : '';
+    if (!isset($ddlByEngine[$driver])) {
+        throw new RuntimeException("migration_create_table: no DDL for driver '{$driver}'");
+    }
+    ipam_query_or_throw($db, $ddlByEngine[$driver]);
+}
+
+/**
+ * Allow-list of migration keys considered "material" — security- or
+ * data-surface schema upgrades that warrant an audit_log entry when they
+ * apply (TOTP/2FA, passkeys/WebAuthn, devices, webhooks, backup, and
+ * account-lockout). apply_migrations() consults this list and, after a
+ * material migration commits, writes a `migration.<key>` audit row.
+ *
+ * Housekeeping migrations (index tweaks, column drops, settings cascades,
+ * re-encryption passes) are deliberately excluded — they don't change the
+ * security/data surface in a way an operator needs an audit trail for.
+ *
+ * @return list<string>
+ */
+function ipam_material_migrations(): array
+{
+    return [
+        // Account lockout — login-attempt throttling surface.
+        '2.12.0-account-lockout',
+        '3.6.0-lockout',
+        // Devices — new inventory data surface.
+        '3.2.0-devices',
+        // Webhooks — outbound integration / secret-bearing surface.
+        '3.3.0-webhooks',
+        // TOTP / 2FA — authenticator-secret surface.
+        '3.6.0-totp',
+        '3.14.0-mfa-settings',
+        '3.14.0-email-otp',
+        // Passkeys / WebAuthn — credential surface.
+        '3.15.0-passkeys',
+        '3.16.0-preferred-mfa-method',
+        // Backup — backup-history / backup-config surface.
+        '3.7.0-backup-history',
+        '3.17.0-backup',
+        '3.21.0-backup-runs',
+    ];
+}
+
 /** @return array<string, \Closure> */
 function ipam_migrations(): array
 {
@@ -19,7 +102,7 @@ function ipam_migrations(): array
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') {
                 return;
             }
-            $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $cols = ipam_query_or_throw($db, "PRAGMA table_info(subnets)")->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('network_bin', $names, true)) {
@@ -96,7 +179,7 @@ function ipam_migrations(): array
                 )
             ");
 
-            $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $cols = ipam_query_or_throw($db, "PRAGMA table_info(subnets)")->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('site_id', $names, true)) {
@@ -115,14 +198,15 @@ function ipam_migrations(): array
             // crash with SQLSTATE 42000/42601 and contributes nothing.
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
-            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $cols  = ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('password_changed_at', $names, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN password_changed_at TEXT");
                 // Backfill existing local accounts so they aren't immediately expired.
                 // SSO-only accounts (unusable hash starting with '!') are left NULL
                 // since expiry doesn't apply to them.
-                $db->exec("UPDATE users SET password_changed_at = datetime('now')
+                $now = ipam_dialect()->now();
+                $db->exec("UPDATE users SET password_changed_at = {$now}
                            WHERE password_hash NOT LIKE '!%'");
             }
         },
@@ -136,7 +220,7 @@ function ipam_migrations(): array
             // crash with SQLSTATE 42000/42601 and contributes nothing.
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
-            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $cols  = ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('last_login_at', $names, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
@@ -152,7 +236,7 @@ function ipam_migrations(): array
             // crash with SQLSTATE 42000/42601 and contributes nothing.
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
-            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $cols  = ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('name', $names, true)) {
@@ -172,7 +256,7 @@ function ipam_migrations(): array
             // crash with SQLSTATE 42000/42601 and contributes nothing.
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
-            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $cols  = ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('oidc_sub', $names, true)) {
@@ -224,20 +308,20 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             // addresses.grp — SQL reserved word, stored as grp, exposed as group in UI/API/CSV
-            $cols = array_column(($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
+            $cols = array_column(ipam_query_or_throw($db, "PRAGMA table_info(addresses)")->fetchAll(), 'name');
             if (!in_array('grp', $cols, true)) {
                 $db->exec("ALTER TABLE addresses ADD COLUMN grp TEXT NOT NULL DEFAULT ''");
             }
             $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_grp ON addresses(grp)");
 
             // subnets.vlan_id — nullable integer, 1–4094, NULL means unassigned
-            $cols = array_column(($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
+            $cols = array_column(ipam_query_or_throw($db, "PRAGMA table_info(subnets)")->fetchAll(), 'name');
             if (!in_array('vlan_id', $cols, true)) {
                 $db->exec("ALTER TABLE subnets ADD COLUMN vlan_id INTEGER");
             }
 
             // users.theme — persisted theme preference: 'auto'|'light'|'dark'
-            $cols = array_column(($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
+            $cols = array_column(ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll(), 'name');
             if (!in_array('theme', $cols, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'auto'");
             }
@@ -290,7 +374,7 @@ function ipam_migrations(): array
             // crash with SQLSTATE 42000/42601 and contributes nothing.
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
-            $cols = array_column(($db->query("PRAGMA table_info(api_keys)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
+            $cols = array_column(ipam_query_or_throw($db, "PRAGMA table_info(api_keys)")->fetchAll(), 'name');
             if (!in_array('is_readonly', $cols, true)) {
                 $db->exec("ALTER TABLE api_keys ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0");
             }
@@ -309,7 +393,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
-                ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "PRAGMA table_info(addresses)")->fetchAll(),
                 'name'
             );
             if (!in_array('mac', $cols, true)) {
@@ -330,7 +414,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
             if (!in_array('vlans', $tables, true)) {
@@ -350,7 +434,7 @@ function ipam_migrations(): array
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_vlans_site_id ON vlans(site_id)");
             }
             $subnetCols = array_column(
-                ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "PRAGMA table_info(subnets)")->fetchAll(),
                 'name'
             );
             if (!in_array('vlan_fk', $subnetCols, true)) {
@@ -377,7 +461,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
-                ($db->query("PRAGMA table_info(sites)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "PRAGMA table_info(sites)")->fetchAll(),
                 'name'
             );
             if (!in_array('parent_id', $cols, true)) {
@@ -394,7 +478,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
             if (!in_array('tags', $tables, true)) {
@@ -438,7 +522,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
             if (!in_array('alert_state', $tables, true)) {
@@ -466,7 +550,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
 
@@ -494,7 +578,7 @@ function ipam_migrations(): array
 
             // Rebuild subnets only if vrf_id column is absent
             $subnetCols = array_column(
-                ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "PRAGMA table_info(subnets)")->fetchAll(),
                 'name'
             );
             if (in_array('vrf_id', $subnetCols, true)) {
@@ -573,7 +657,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
 
@@ -613,7 +697,7 @@ function ipam_migrations(): array
 
             // addresses.last_seen_at — timestamp of last successful scan response
             $addrCols = array_column(
-                ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "PRAGMA table_info(addresses)")->fetchAll(),
                 'name'
             );
             if (!in_array('last_seen_at', $addrCols, true)) {
@@ -636,7 +720,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
             if (!in_array('contacts', $tables, true)) {
@@ -663,7 +747,7 @@ function ipam_migrations(): array
                 ");
             }
             $addrCols = array_column(
-                ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "PRAGMA table_info(addresses)")->fetchAll(),
                 'name'
             );
             if (!in_array('owner_contact_id', $addrCols, true)) {
@@ -682,7 +766,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
-                ($db->query("PRAGMA table_info(vrfs)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "PRAGMA table_info(vrfs)")->fetchAll(),
                 'name'
             );
             if (!in_array('asn', $cols, true)) {
@@ -707,7 +791,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
             if (!in_array('vlan_ranges', $tables, true)) {
@@ -735,7 +819,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
             if (!in_array('aggregates', $tables, true)) {
@@ -766,7 +850,7 @@ function ipam_migrations(): array
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
                 'name'
             );
             if (!in_array('pd_pools', $tables, true)) {
@@ -811,7 +895,7 @@ function ipam_migrations(): array
             // crash with SQLSTATE 42000/42601 and contributes nothing.
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
-            $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $cols = ipam_query_or_throw($db, "PRAGMA table_info(subnets)")->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('notes', $names, true)) {
                 $db->exec("ALTER TABLE subnets ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
@@ -850,7 +934,7 @@ function ipam_migrations(): array
             $hasTenantCol = false;
             if ($driver2 === 'sqlite') {
                 $existingCols = array_column(
-                    ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "PRAGMA table_info(settings)")->fetchAll(),
                     'name'
                 );
                 $hasTenantCol = in_array('tenant_id', $existingCols, true);
@@ -924,17 +1008,19 @@ function ipam_migrations(): array
                    ->execute([':v' => is_string($payload) ? $payload : '[]']);
                 // Audit the auto-migration so it appears in audit.php and the
                 // admin sees what happened.
+                $auditNow = ipam_dialect()->now();
                 $db->prepare(
                     "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
-                     VALUES ('settings.auto_migrate_alert_email', 'setting', NULL, NULL, 'system', '', '', :d, datetime('now'))"
+                     VALUES ('settings.auto_migrate_alert_email', 'setting', NULL, NULL, 'system', '', '', :d, {$auditNow})"
                 )->execute([':d' => "from={$legacy} matched_user_id={$uid}"]);
             } else {
                 // Either zero matches or ambiguous (>1 active user with the
                 // same email). Don't drop the value silently — emit an audit
                 // row so the admin can re-pick recipients on settings.php.
+                $auditNow = ipam_dialect()->now();
                 $db->prepare(
                     "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
-                     VALUES ('settings.alert_email_unmigrated', 'setting', NULL, NULL, 'system', '', '', :d, datetime('now'))"
+                     VALUES ('settings.alert_email_unmigrated', 'setting', NULL, NULL, 'system', '', '', :d, {$auditNow})"
                 )->execute([':d' => "from={$legacy} matched_count=" . count($matches)]);
             }
         },
@@ -1260,7 +1346,7 @@ function ipam_migrations(): array
                 $tblSt = $db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'");
                 $tbl = $tblSt ? $tblSt->fetch() : false;
                 if (!$tbl) return;
-                foreach (($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll() as $col) {
+                foreach (ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll() as $col) {
                     if (to_str($col['name']) === 'timezone') { $hasCol = true; break; }
                 }
             } elseif ($driver === 'mysql') {
@@ -1353,6 +1439,16 @@ function ipam_migrations(): array
             }
         },
 
+        // NOTE (C5, #929): this key's '3.0.0' semver predates its array
+        // position — it sits physically after the 3.1.0-* migrations above.
+        // The subnet_contacts feature arrived late in the 3.1.0 cycle but was
+        // tagged with a 3.0.0 key. The key is INTENTIONALLY NOT renamed:
+        // migration keys are persisted per-install in schema_migrations and
+        // apply_migrations() (lib/db.php) keys solely on exact string match
+        // with no aliasing layer — renaming a shipped key makes every upgraded
+        // install treat it as unapplied and re-run + re-record the migration.
+        // Runtime ordering is unaffected: apply_migrations() ksort()s by key,
+        // so physical array position is cosmetic only.
         '3.0.0-subnet-contacts' => function(PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'sqlite') {
@@ -1398,9 +1494,13 @@ function ipam_migrations(): array
                 $r->execute();
                 $devExists = (bool)$r->fetch();
             }
+            // NOTE: this closure pre-dates the "one migration_create_table per
+            // closure" policy — it ships two tables (devices, device_interfaces)
+            // plus addresses FK columns. It has already shipped; the schema it
+            // produces must stay byte-identical, so it keeps both calls.
             if (!$devExists) {
-                if ($driver === 'sqlite') {
-                    $db->exec("CREATE TABLE IF NOT EXISTS devices (
+                migration_create_table($db, [
+                    'sqlite' => "CREATE TABLE IF NOT EXISTS devices (
                         id         INTEGER PRIMARY KEY AUTOINCREMENT,
                         name       TEXT NOT NULL,
                         type       TEXT NOT NULL DEFAULT 'other',
@@ -1411,13 +1511,8 @@ function ipam_migrations(): array
                         note       TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-                    )");
-                    $db->exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_name ON devices(name)");
-                    $db->exec("CREATE TRIGGER IF NOT EXISTS devices_updated_at
-                        AFTER UPDATE ON devices FOR EACH ROW
-                        BEGIN UPDATE devices SET updated_at = datetime('now') WHERE id = OLD.id; END");
-                } elseif ($driver === 'mysql') {
-                    $db->exec("CREATE TABLE IF NOT EXISTS devices (
+                    )",
+                    'mysql' => "CREATE TABLE IF NOT EXISTS devices (
                         id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                         name       VARCHAR(191) NOT NULL,
                         type       VARCHAR(50)  NOT NULL DEFAULT 'other',
@@ -1430,9 +1525,8 @@ function ipam_migrations(): array
                         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         UNIQUE KEY uq_devices_name (name),
                         CONSTRAINT fk_devices_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE SET NULL
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-                } else {
-                    $db->exec("CREATE TABLE IF NOT EXISTS devices (
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+                    'pgsql' => "CREATE TABLE IF NOT EXISTS devices (
                         id         BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                         name       TEXT NOT NULL UNIQUE,
                         type       TEXT NOT NULL DEFAULT 'other',
@@ -1443,7 +1537,14 @@ function ipam_migrations(): array
                         note       TEXT NOT NULL DEFAULT '',
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                    )");
+                    )",
+                ]);
+                if ($driver === 'sqlite') {
+                    $db->exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_name ON devices(name)");
+                    $db->exec("CREATE TRIGGER IF NOT EXISTS devices_updated_at
+                        AFTER UPDATE ON devices FOR EACH ROW
+                        BEGIN UPDATE devices SET updated_at = datetime('now') WHERE id = OLD.id; END");
+                } elseif ($driver === 'pgsql') {
                     $db->exec("CREATE INDEX IF NOT EXISTS idx_devices_site ON devices(site_id)");
                 }
             }
@@ -1462,8 +1563,8 @@ function ipam_migrations(): array
                 $ifExists = (bool)$r->fetch();
             }
             if (!$ifExists) {
-                if ($driver === 'sqlite') {
-                    $db->exec("CREATE TABLE IF NOT EXISTS device_interfaces (
+                migration_create_table($db, [
+                    'sqlite' => "CREATE TABLE IF NOT EXISTS device_interfaces (
                         id          INTEGER PRIMARY KEY AUTOINCREMENT,
                         device_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
                         name        TEXT NOT NULL,
@@ -1471,13 +1572,8 @@ function ipam_migrations(): array
                         created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                         updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
                         UNIQUE(device_id, name)
-                    )");
-                    $db->exec("CREATE INDEX IF NOT EXISTS idx_di_device ON device_interfaces(device_id)");
-                    $db->exec("CREATE TRIGGER IF NOT EXISTS device_interfaces_updated_at
-                        AFTER UPDATE ON device_interfaces FOR EACH ROW
-                        BEGIN UPDATE device_interfaces SET updated_at = datetime('now') WHERE id = OLD.id; END");
-                } elseif ($driver === 'mysql') {
-                    $db->exec("CREATE TABLE IF NOT EXISTS device_interfaces (
+                    )",
+                    'mysql' => "CREATE TABLE IF NOT EXISTS device_interfaces (
                         id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                         device_id   BIGINT UNSIGNED NOT NULL,
                         name        VARCHAR(191) NOT NULL,
@@ -1486,9 +1582,8 @@ function ipam_migrations(): array
                         updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         UNIQUE KEY uq_di_device_name (device_id, name),
                         CONSTRAINT fk_di_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-                } else {
-                    $db->exec("CREATE TABLE IF NOT EXISTS device_interfaces (
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+                    'pgsql' => "CREATE TABLE IF NOT EXISTS device_interfaces (
                         id          BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                         device_id   BIGINT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
                         name        TEXT NOT NULL,
@@ -1496,7 +1591,14 @@ function ipam_migrations(): array
                         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE(device_id, name)
-                    )");
+                    )",
+                ]);
+                if ($driver === 'sqlite') {
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_di_device ON device_interfaces(device_id)");
+                    $db->exec("CREATE TRIGGER IF NOT EXISTS device_interfaces_updated_at
+                        AFTER UPDATE ON device_interfaces FOR EACH ROW
+                        BEGIN UPDATE device_interfaces SET updated_at = datetime('now') WHERE id = OLD.id; END");
+                } elseif ($driver === 'pgsql') {
                     $db->exec("CREATE INDEX IF NOT EXISTS idx_di_device ON device_interfaces(device_id)");
                 }
             }
@@ -1506,7 +1608,7 @@ function ipam_migrations(): array
             $hasInterfaceId = false;
             if ($driver === 'sqlite') {
                 $cols = array_column(
-                    ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "PRAGMA table_info(addresses)")->fetchAll(),
                     'name'
                 );
                 $hasDeviceId    = in_array('device_id',    $cols, true);
@@ -1627,7 +1729,7 @@ function ipam_migrations(): array
                     return; // users table absent — nothing to alter
                 }
                 $userCols = array_column(
-                    ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll(),
                     'name'
                 );
                 if (!in_array('pending_email', $userCols, true)) {
@@ -1695,10 +1797,15 @@ function ipam_migrations(): array
                 }
             };
 
+            // NOTE: this closure pre-dates the "one migration_create_table per
+            // closure" policy — it ships two tables (webhooks,
+            // webhook_deliveries). It has already shipped; the schema it
+            // produces must stay byte-identical, so it keeps both calls.
+
             // ── 1. webhooks table ────────────────────────────────────────────
             if (!$tableExists('webhooks')) {
-                if ($driver === 'sqlite') {
-                    $db->exec("CREATE TABLE webhooks (
+                migration_create_table($db, [
+                    'sqlite' => "CREATE TABLE webhooks (
                         id                    INTEGER PRIMARY KEY AUTOINCREMENT,
                         name                  TEXT NOT NULL,
                         url                   TEXT NOT NULL,
@@ -1708,9 +1815,8 @@ function ipam_migrations(): array
                         created_at            TEXT NOT NULL DEFAULT (datetime('now')),
                         last_delivery_at      TEXT,
                         last_delivery_status  INTEGER
-                    )");
-                } elseif ($driver === 'mysql') {
-                    $db->exec("CREATE TABLE webhooks (
+                    )",
+                    'mysql' => "CREATE TABLE webhooks (
                         id                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                         name                  VARCHAR(255) NOT NULL,
                         url                   TEXT NOT NULL,
@@ -1720,9 +1826,8 @@ function ipam_migrations(): array
                         created_at            DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
                         last_delivery_at      DATETIME NULL,
                         last_delivery_status  SMALLINT NULL
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-                } else {
-                    $db->exec("CREATE TABLE webhooks (
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+                    'pgsql' => "CREATE TABLE webhooks (
                         id                    BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                         name                  TEXT NOT NULL,
                         url                   TEXT NOT NULL,
@@ -1732,14 +1837,14 @@ function ipam_migrations(): array
                         created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         last_delivery_at      TIMESTAMPTZ,
                         last_delivery_status  SMALLINT
-                    )");
-                }
+                    )",
+                ]);
             }
 
             // ── 2. webhook_deliveries table ──────────────────────────────────
             if (!$tableExists('webhook_deliveries')) {
-                if ($driver === 'sqlite') {
-                    $db->exec("CREATE TABLE webhook_deliveries (
+                migration_create_table($db, [
+                    'sqlite' => "CREATE TABLE webhook_deliveries (
                         id            INTEGER PRIMARY KEY AUTOINCREMENT,
                         webhook_id    INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
                         event_type    TEXT NOT NULL,
@@ -1751,13 +1856,8 @@ function ipam_migrations(): array
                         error         TEXT,
                         created_at    TEXT NOT NULL DEFAULT (datetime('now')),
                         delivered_at  TEXT
-                    )");
-                    $db->exec("CREATE INDEX IF NOT EXISTS idx_wh_deliveries_wh
-                               ON webhook_deliveries(webhook_id, created_at DESC)");
-                    $db->exec("CREATE INDEX IF NOT EXISTS idx_wh_deliveries_pending
-                               ON webhook_deliveries(delivered_at, attempt)");
-                } elseif ($driver === 'mysql') {
-                    $db->exec("CREATE TABLE webhook_deliveries (
+                    )",
+                    'mysql' => "CREATE TABLE webhook_deliveries (
                         id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                         webhook_id    BIGINT UNSIGNED NOT NULL,
                         event_type    VARCHAR(100) NOT NULL,
@@ -1772,9 +1872,8 @@ function ipam_migrations(): array
                         CONSTRAINT fk_whd_webhook FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE,
                         KEY idx_wh_deliveries_wh (webhook_id, created_at),
                         KEY idx_wh_deliveries_pending (delivered_at, attempt)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-                } else {
-                    $db->exec("CREATE TABLE webhook_deliveries (
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+                    'pgsql' => "CREATE TABLE webhook_deliveries (
                         id            BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                         webhook_id    BIGINT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
                         event_type    TEXT NOT NULL,
@@ -1786,7 +1885,9 @@ function ipam_migrations(): array
                         error         TEXT,
                         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         delivered_at  TIMESTAMPTZ
-                    )");
+                    )",
+                ]);
+                if ($driver === 'sqlite' || $driver === 'pgsql') {
                     $db->exec("CREATE INDEX IF NOT EXISTS idx_wh_deliveries_wh
                                ON webhook_deliveries(webhook_id, created_at DESC)");
                     $db->exec("CREATE INDEX IF NOT EXISTS idx_wh_deliveries_pending
@@ -2140,6 +2241,16 @@ function ipam_migrations(): array
         },
 
         // 3.6.0-lockout: persistent account lockout columns (#421)
+        // NOTE (C5, #929): this key's '3.6.0' semver predates its array
+        // position — it sits physically after 3.7.0-backup-history above.
+        // The persistent-lockout columns arrived late in the 3.7.0 cycle but
+        // were tagged with a 3.6.0 key. The key is INTENTIONALLY NOT renamed:
+        // migration keys are persisted per-install in schema_migrations and
+        // apply_migrations() (lib/db.php) keys solely on exact string match
+        // with no aliasing layer — renaming a shipped key makes every upgraded
+        // install treat it as unapplied and re-run + re-record the migration.
+        // Runtime ordering is unaffected: apply_migrations() ksort()s by key,
+        // so physical array position is cosmetic only.
         '3.6.0-lockout' => function(PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
@@ -2247,7 +2358,7 @@ function ipam_migrations(): array
 
             if ($driver === 'sqlite') {
                 $cols = array_column(
-                    ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "PRAGMA table_info(settings)")->fetchAll(),
                     'name'
                 );
                 if (in_array('tenant_id', $cols, true)) {
@@ -2276,29 +2387,29 @@ function ipam_migrations(): array
                 $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings (key) WHERE tenant_id IS NULL');
                 $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL');
             } elseif ($driver === 'mysql') {
-                $col = ($db->query("SHOW COLUMNS FROM settings LIKE 'tenant_id'") ?: throw new \RuntimeException('Query failed'))->fetch();
+                $col = ipam_query_or_throw($db, "SHOW COLUMNS FROM settings LIKE 'tenant_id'")->fetch();
                 if ($col) {
                     return;
                 }
                 // Check if PRIMARY KEY exists before trying to drop it — the settings
                 // table was created with only a UNIQUE KEY, so on a fresh install there
                 // is no PRIMARY KEY and DROP PRIMARY KEY would throw ERROR 1091.
-                $hasPk = (int)($db->query(
+                $hasPk = (int)ipam_query_or_throw($db,
                     "SELECT COUNT(*) FROM information_schema.table_constraints
                      WHERE table_schema = DATABASE()
                        AND table_name = 'settings'
                        AND constraint_type = 'PRIMARY KEY'"
-                ) ?: throw new \RuntimeException('Query failed'))->fetchColumn();
+                )->fetchColumn();
                 if ($hasPk > 0) {
                     $db->exec("ALTER TABLE settings DROP PRIMARY KEY");
                 }
                 $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INT NULL FIRST");
                 $db->exec("ALTER TABLE settings ADD UNIQUE KEY uq_settings_tenant_key (tenant_id, `key`)");
             } elseif ($driver === 'pgsql') {
-                $col = ($db->query(
+                $col = ipam_query_or_throw($db,
                     "SELECT 1 FROM information_schema.columns
                      WHERE table_name='settings' AND column_name='tenant_id'"
-                ) ?: throw new \RuntimeException('Query failed'))->fetch();
+                )->fetch();
                 if ($col) {
                     return;
                 }
@@ -2354,7 +2465,7 @@ function ipam_migrations(): array
 
             if ($driver === 'sqlite') {
                 $cols = array_column(
-                    ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('PRAGMA failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll(),
                     'name'
                 );
                 // PRAGMA table_info returns zero rows when the table does not exist;
@@ -2376,7 +2487,7 @@ function ipam_migrations(): array
                 }
             } elseif ($driver === 'mysql') {
                 $cols = array_column(
-                    ($db->query("SHOW COLUMNS FROM users") ?: throw new \RuntimeException('SHOW COLUMNS failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "SHOW COLUMNS FROM users")->fetchAll(),
                     'Field'
                 );
                 if ($cols === []) {
@@ -2395,9 +2506,9 @@ function ipam_migrations(): array
                     $db->exec("ALTER TABLE users ADD COLUMN email_otp_attempts INT NOT NULL DEFAULT 0");
                 }
             } elseif ($driver === 'pgsql') {
-                $existing = ($db->query(
+                $existing = ipam_query_or_throw($db,
                     "SELECT column_name FROM information_schema.columns WHERE table_name='users'"
-                ) ?: throw new \RuntimeException('Column query failed'))->fetchAll(\PDO::FETCH_COLUMN);
+                )->fetchAll(\PDO::FETCH_COLUMN);
                 if (!in_array('email_otp_enabled', $existing, true)) {
                     $db->exec("ALTER TABLE users ADD COLUMN email_otp_enabled    SMALLINT NOT NULL DEFAULT 0");
                 }
@@ -2420,15 +2531,15 @@ function ipam_migrations(): array
             $nowDflt = '(' . $dialect->now() . ')';
             $tables  = [];
             if ($driver === 'sqlite') {
-                foreach (($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll() as $t) {
+                foreach (ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll() as $t) {
                     $tables[] = $t['name'];
                 }
             } elseif ($driver === 'mysql') {
-                foreach (($db->query("SHOW TABLES") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_COLUMN) as $t) {
+                foreach (ipam_query_or_throw($db, "SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN) as $t) {
                     $tables[] = $t;
                 }
             } else {
-                foreach (($db->query("SELECT tablename FROM pg_tables WHERE schemaname='public'") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_COLUMN) as $t) {
+                foreach (ipam_query_or_throw($db, "SELECT tablename FROM pg_tables WHERE schemaname='public'")->fetchAll(PDO::FETCH_COLUMN) as $t) {
                     $tables[] = $t;
                 }
             }
@@ -2495,7 +2606,7 @@ function ipam_migrations(): array
 
             if ($driver === 'sqlite') {
                 $cols = array_column(
-                    ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('PRAGMA failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "PRAGMA table_info(users)")->fetchAll(),
                     'name'
                 );
                 if ($cols === []) {
@@ -2506,7 +2617,7 @@ function ipam_migrations(): array
                 }
             } elseif ($driver === 'mysql') {
                 $cols = array_column(
-                    ($db->query("SHOW COLUMNS FROM users") ?: throw new \RuntimeException('SHOW COLUMNS failed'))->fetchAll(),
+                    ipam_query_or_throw($db, "SHOW COLUMNS FROM users")->fetchAll(),
                     'Field'
                 );
                 if ($cols === []) {
@@ -2516,9 +2627,9 @@ function ipam_migrations(): array
                     $db->exec("ALTER TABLE users ADD COLUMN preferred_mfa_method VARCHAR(20) NULL");
                 }
             } elseif ($driver === 'pgsql') {
-                $existing = ($db->query(
+                $existing = ipam_query_or_throw($db,
                     "SELECT column_name FROM information_schema.columns WHERE table_name='users'"
-                ) ?: throw new \RuntimeException('Column query failed'))->fetchAll(\PDO::FETCH_COLUMN);
+                )->fetchAll(\PDO::FETCH_COLUMN);
                 if (!in_array('preferred_mfa_method', $existing, true)) {
                     $db->exec("ALTER TABLE users ADD COLUMN preferred_mfa_method TEXT NULL");
                 }
@@ -3598,13 +3709,10 @@ function ipam_migrations(): array
                 return;
             }
 
-            /** @var array<string,mixed>|null $config */
-            $config = $GLOBALS['config'] ?? null;
-            if (!is_array($config)) {
-                return;
-            }
-
-            $legacyB64 = $config['backup_vault_key'] ?? null;
+            // ADR-003 (#1207): config read via ipam_config(), not $GLOBALS.
+            // backup_vault_key is a legacy/optional config key outside the
+            // IpamConfig shape, so read it via the single-key accessor.
+            $legacyB64 = ipam_config('backup_vault_key');
             if (!is_string($legacyB64) || $legacyB64 === '') {
                 return;
             }
@@ -3805,11 +3913,9 @@ function ipam_migrations(): array
             $rows = $db->query("SELECT id, secret FROM webhooks");
             if ($rows === false) return;
 
-            $appSecret = '';
-            global $config;
-            if (is_array($config) && isset($config['app_secret']) && is_string($config['app_secret'])) {
-                $appSecret = $config['app_secret'];
-            }
+            // ADR-003 (#1207): config read via ipam_config(), not `global`.
+            $appSecretCfg = ipam_config('app_secret');
+            $appSecret = is_string($appSecretCfg) ? $appSecretCfg : '';
 
             $upd = $db->prepare("UPDATE webhooks SET secret = :s WHERE id = :id");
             $reencrypted = 0;
@@ -3999,8 +4105,7 @@ function ipam_migrations(): array
 
             if ($driver === 'sqlite') {
                 // Probe PRAGMA table_info for the `type` column; no-op if gone.
-                $cols = ($db->query("PRAGMA table_info(settings)")
-                    ?: throw new \RuntimeException('PRAGMA table_info(settings) failed'))
+                $cols = ipam_query_or_throw($db, "PRAGMA table_info(settings)")
                     ->fetchAll();
                 $hasType = false;
                 foreach ($cols as $col) {
@@ -4110,11 +4215,7 @@ function ipam_migrations(): array
             //    table without the theme column (they mark 1.11 as already
             //    applied but don't actually run it). Skip the backfill when
             //    the column is absent rather than fail.
-            $nowExpr = match ($driver) {
-                'mysql' => 'UTC_TIMESTAMP()',
-                'pgsql' => "NOW() AT TIME ZONE 'utc'",
-                default => "datetime('now')", // sqlite
-            };
+            $nowExpr = ipam_dialect()->now();
             $keyCol = match ($driver) {
                 'mysql' => '`key`',
                 'pgsql' => '"key"',
@@ -4124,8 +4225,7 @@ function ipam_migrations(): array
             // Probe for users.theme before backfilling.
             $hasTheme = false;
             if ($driver === 'sqlite') {
-                $cols = ($db->query("PRAGMA table_info(users)")
-                    ?: throw new \RuntimeException('PRAGMA table_info(users) failed'))
+                $cols = ipam_query_or_throw($db, "PRAGMA table_info(users)")
                     ->fetchAll();
                 foreach ($cols as $col) {
                     if (($col['name'] ?? null) === 'theme') {
@@ -4168,8 +4268,7 @@ function ipam_migrations(): array
 
             if ($driver === 'sqlite') {
                 // Probe PRAGMA table_info for the `theme` column; no-op if gone.
-                $cols = ($db->query("PRAGMA table_info(users)")
-                    ?: throw new \RuntimeException('PRAGMA table_info(users) failed'))
+                $cols = ipam_query_or_throw($db, "PRAGMA table_info(users)")
                     ->fetchAll();
                 $hasTheme = false;
                 foreach ($cols as $col) {
@@ -4377,7 +4476,7 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     if (is_string($driverRaw) && $driverRaw === 'sqlite') {
         $tables = array_column(
-            ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+            ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
             'name'
         );
 
@@ -4402,8 +4501,9 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
         return;
     }
 
-    /** @var array<string, mixed>|null $config */
-    $config = $GLOBALS['config'] ?? null;
+    // ADR-003 (#1207): config read via ipam_config(), not $GLOBALS.
+    /** @var IpamConfig $config */
+    $config = ipam_config();
     $definitions = ipam_setting_definitions();
 
     // Detect whether the 3.13.0-settings-cascade migration has already run
@@ -4419,7 +4519,7 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     $hasTenantCol = false;
     if (is_string($driverRaw) && $driverRaw === 'sqlite') {
         $existingCols = array_column(
-            ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+            ipam_query_or_throw($db, "PRAGMA table_info(settings)")->fetchAll(),
             'name'
         );
         $hasTenantCol = in_array('tenant_id', $existingCols, true);
@@ -4465,12 +4565,10 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
 
         $storageType = is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string';
         $value = $def['default'] ?? null;
-        if (is_array($config)) {
-            $cfgKey = $def['config_key'] ?? null;
-            if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
-                $cfgVal = ipam_setting_config_fallback($config, $cfgKey);
-                if ($cfgVal !== null) $value = $cfgVal;
-            }
+        $cfgKey = $def['config_key'] ?? null;
+        if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
+            $cfgVal = ipam_setting_config_fallback($config, $cfgKey);
+            if ($cfgVal !== null) $value = $cfgVal;
         }
 
         // v3.30.0 Task 3.3 (ADR-001): no :t bind — settings.type was dropped.

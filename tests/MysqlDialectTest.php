@@ -4,6 +4,7 @@ declare(strict_types=1);
 use PHPUnit\Framework\TestCase;
 
 require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/Dialect.php';
+require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/DialectValidator.php';
 require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/MysqlDialect.php';
 
 /**
@@ -202,5 +203,34 @@ final class MysqlDialectTest extends TestCase
             $this->assertStringContainsString('some_other_table', $stmt);
             $this->assertStringNotContainsString('audit_log', $stmt);
         }
+    }
+
+    public function testIncrementOrInsertEmitsOnDuplicateKeyUpdate(): void
+    {
+        // MySQL ON DUPLICATE KEY UPDATE with a bare-column increment — no
+        // VALUES() / table qualifier on the right-hand side.
+        $sql = $this->mysql->increment_or_insert('rate_limit_buckets', ['bucket_key', 'window_start'], 'count');
+        $this->assertSame(
+            'INSERT INTO rate_limit_buckets (bucket_key, window_start, count) '
+            . 'VALUES (:bucket_key, :window_start, 1) '
+            . 'ON DUPLICATE KEY UPDATE count = count + 1',
+            $sql
+        );
+    }
+
+    public function testIncrementOrInsertSingleKeyShape(): void
+    {
+        $sql = $this->mysql->increment_or_insert('hits', ['path'], 'n');
+        $this->assertSame(
+            'INSERT INTO hits (path, n) VALUES (:path, 1) '
+            . 'ON DUPLICATE KEY UPDATE n = n + 1',
+            $sql
+        );
+    }
+
+    public function testIncrementOrInsertRequiresAtLeastOneKeyColumn(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->mysql->increment_or_insert('hits', [], 'n');
     }
 }

@@ -796,6 +796,26 @@ function apply_migrations(PDO $db): array
                 $fn($db);
                 $st = $db->prepare("INSERT INTO schema_migrations (version) VALUES (:v)");
                 $st->execute([':v' => $ver]);
+                // C12 (#933): material schema upgrades (TOTP, passkeys,
+                // devices, webhooks, backup, account-lockout) leave an
+                // audit_log entry so an operator can see when a
+                // security/data-surface migration applied. Guarded by an
+                // existence probe because early migrations run before
+                // audit_log itself exists — audit() must be a no-op then.
+                // The audit row lands inside this migration's transaction
+                // so it commits atomically with the schema_migrations row;
+                // a genuine insert failure rethrows and rolls the
+                // migration back rather than silently dropping the trail.
+                if (in_array($ver, ipam_material_migrations(), true)
+                    && ipam_table_exists($db, 'audit_log')) {
+                    audit(
+                        $db,
+                        'migration.' . $ver,
+                        'system',
+                        null,
+                        "Automated schema migration '{$ver}' applied."
+                    );
+                }
                 $db->exec("COMMIT");
                 $applied = true;
                 $appliedNow[] = $ver;

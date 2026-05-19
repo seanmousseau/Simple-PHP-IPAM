@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.33.0](#v3330) — refactor wave 2 (`api.php` / `import_csv` / `migrations`), ADR-003 `global $config` sweep complete; API list-response flat shape soft-deprecated (no breaking changes)
   - [v3.32.0](#v3320) — code-quality, hardening, and dependency-maintenance release; PHPMailer 7.x, server-side site-hierarchy enforcement (no breaking changes)
   - [v3.31.0](#v3310) — encrypt-at-rest for settings secrets (`IPAMSEC1` envelopes), webhook-secret consolidation, `lib.php` refactor wave 1 finish (no breaking changes)
   - [v3.30.0](#v3300) — per-user theme preference table with backfill, settings type system moved to PHP, `lib.php` decomposed into modules (no breaking changes)
@@ -118,6 +119,12 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.33.0
+
+- **No breaking changes. No schema migrations. No new config keys. No operator action required.** v3.33.0 is "Refactor Wave 2" — a pure internal refactor release (milestone #57) that decomposes `api.php`, rewrites `import_csv.php`, consolidates `migrations.php`, completes the ADR-003 `global $config` sweep, and adds test coverage. Upgrade with `upgrade.sh` as normal.
+- **API list-response flat shape is soft-deprecated (integrations only).** List endpoints now emit a `Deprecation: true` response header (RFC 8594) when returning the legacy flat shape (items under a resource-named key alongside top-level `total`/`page`/`limit`). The `{data, meta}` envelope — requested with `?envelope=1` — is the canonical shape. The flat shape still works unchanged, but API integrations using list endpoints should move to `?envelope=1`. The flat shape will be **removed in v4.0.0** (tracked as issue [#1252](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1252)). See [API → List response shape](api.md#list-response-shape).
+- **No config-format changes.** Existing `config.php` files keep working unchanged.
 
 ### v3.32.0
 

@@ -44,7 +44,7 @@ if ($mode === 'result') {
         exit('No import result found');
     }
 
-    $res = load_result_file($path);
+    $res = ipam_csv_import_load_result($path); // B13 (#925): renamed from load_result_file()
     $rows = is_array($res['rows'] ?? null) ? $res['rows'] : [];
 
     $filename = safe_export_filename('ipam-import-result-report');

@@ -46,6 +46,40 @@ interface Dialect
     public function upsert(string $table, array $conflictCols, array $updateCols): string;
 
     /**
+     * Returns a complete, atomic "insert a row with the counter at 1, or
+     * increment the counter of the existing row" INSERT statement, ready for
+     * a prepared statement.
+     *
+     * Unlike upsert() / upsert_or_ignore() (which return only the conflict
+     * suffix) this method returns the *whole* statement: the column list,
+     * the VALUES tuple, and the conflict clause. The increment is a pure
+     * `counter = counter + 1` — no other column is touched on conflict, and
+     * the inserted row gets `counter = 1` with every key column supplied by
+     * the caller. The caller binds one named placeholder per key column
+     * (`:keycol`); the counter literal is emitted inline, never bound.
+     *
+     *  - SQLite  : `INSERT INTO t (k1, k2, c) VALUES (:k1, :k2, 1)
+     *               ON CONFLICT(k1, k2) DO UPDATE SET c = t.c + 1`
+     *  - MySQL   : `INSERT INTO t (k1, k2, c) VALUES (:k1, :k2, 1)
+     *               ON DUPLICATE KEY UPDATE c = c + 1`
+     *  - Postgres: `INSERT INTO t (k1, k2, c) VALUES (:k1, :k2, 1)
+     *               ON CONFLICT (k1, k2) DO UPDATE SET c = t.c + 1`
+     *
+     * MySQL note: ON DUPLICATE KEY UPDATE fires on any unique-key conflict,
+     * not scoped to $keyCols. For the single-UNIQUE call site this method
+     * was introduced for (rate_limit_buckets), that difference is invisible.
+     *
+     * Introduced in v3.33.0 (A19/A32, #937) to collapse the driver-branched
+     * upsert in ipam_api_key_rate_limit_check().
+     *
+     * @param string       $table      Target table.
+     * @param list<string> $keyCols    Conflict-key column(s) — PK or UNIQUE.
+     * @param string       $counterCol The integer counter column.
+     * @return string Complete INSERT statement for a prepared statement.
+     */
+    public function increment_or_insert(string $table, array $keyCols, string $counterCol): string;
+
+    /**
      * Returns an INSERT ... ON CONFLICT DO NOTHING fragment.
      *
      * Semantically distinct from upsert(): this variant leaves any existing

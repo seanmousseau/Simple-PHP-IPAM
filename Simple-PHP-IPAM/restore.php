@@ -84,7 +84,7 @@ if (is_array($histRow)) {
 }
 
 /** @var IpamConfig $gConf */
-$gConf  = $GLOBALS['config'];
+$gConf  = ipam_config();
 $driver = ipam_dialect()->driver_name();
 
 // Extension-based format detection

@@ -183,7 +183,58 @@ final class LibModuleLinterTest extends TestCase
     }
 
     /**
-     * The real Simple-PHP-IPAM/lib tree must pass all three rules.
+     * ADR-003 (#1207): a `global $config;` declaration anywhere under the
+     * root — including a page handler outside lib/ — must be flagged. The
+     * config-access ban is whole-tree, not lib/*.php-only.
+     */
+    public function testGlobalConfigOutsideLibIsReported(): void
+    {
+        $tmp = sys_get_temp_dir() . '/lml_' . uniqid();
+        mkdir($tmp . '/lib', 0700, true);
+        // A page handler at the repo root (not under lib/).
+        file_put_contents($tmp . '/some_page.php',
+            "<?php\ndeclare(strict_types=1);\n"
+            . "function thing(): void { global \$config; echo \$config['x']; }\n");
+
+        $cmd = sprintf('php %s --root=%s 2>&1; echo "RC=$?"',
+            escapeshellarg(self::LINTER), escapeshellarg($tmp));
+        $out = shell_exec($cmd);
+        $raw = is_string($out) ? $out : '';
+        $this->assertStringContainsString('RC=1', $raw, $raw);
+        $this->assertStringContainsString('global $config', $raw);
+        $this->assertStringContainsString('some_page.php', $raw);
+    }
+
+    /**
+     * ADR-003 (#1207): a direct `$GLOBALS['config']` read is flagged, while
+     * the same text inside a comment or a string literal is NOT — the rule
+     * is tokenizer-based. Also confirms `lib/config.php` (the accessor
+     * itself) is exempt even though it legitimately reads $GLOBALS['config'].
+     */
+    public function testGlobalsConfigBanIsTokenizerScopedAndExemptsAccessor(): void
+    {
+        $tmp = sys_get_temp_dir() . '/lml_' . uniqid();
+        mkdir($tmp . '/lib', 0700, true);
+        // The accessor module — legitimately reads $GLOBALS['config'].
+        file_put_contents($tmp . '/lib/config.php',
+            "<?php\ndeclare(strict_types=1);\n/**\n * @module config\n */\n"
+            . "function ipam_config() { return \$GLOBALS['config'] ?? []; }\n");
+        // A file that only mentions the banned shapes in a comment / string.
+        file_put_contents($tmp . '/clean_page.php',
+            "<?php\ndeclare(strict_types=1);\n"
+            . "// historical: this used \$GLOBALS['config']\n"
+            . "function ok(): string { return 'global \$config;'; }\n");
+
+        $cmd = sprintf('php %s --root=%s 2>&1; echo "RC=$?"',
+            escapeshellarg(self::LINTER), escapeshellarg($tmp));
+        $out = shell_exec($cmd);
+        $raw = is_string($out) ? $out : '';
+        $this->assertStringContainsString('RC=0', $raw, $raw);
+        $this->assertStringNotContainsString('ADR-003', $raw);
+    }
+
+    /**
+     * The real Simple-PHP-IPAM/lib tree must pass all four rules.
      */
     public function testRealRepoPasses(): void
     {

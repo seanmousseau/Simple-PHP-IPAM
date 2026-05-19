@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.33.0] - 2026-05-19
+
+Refactor Wave 2. A pure code-quality release that finishes the structural work begun in waves 0 and 1: `api.php`, `import_csv.php`, and `migrations.php` are decomposed into reusable helpers, the ADR-003 `global $config` sweep is completed, and three new test suites land. Closes milestone #57 (22 issues). No schema migrations, no new config keys, no new operator-facing pages. The one behaviour-adjacent change is the soft-deprecation of the legacy flat API list-response shape — see Known limitations.
+
+### Known limitations
+
+- **Legacy flat API list-response shape is deprecated.** List endpoints still return the flat shape by default and now emit a `Deprecation` response header; the `{data,meta}` envelope (`?envelope=1`) is canonical. Hard removal tracked as #1252, target milestone v4.0.0.
+
+### Added
+
+- **WebAuthn unit tests (#886).** Coverage for the WebAuthn registration and assertion paths.
+- **DHCP reservation tests (#892).** Coverage for the `lib/dhcp.php` reservation helpers.
+- **CSV row-error tests (#895).** Coverage for per-row error handling in the new `lib/csv_import.php` state machine.
+- **Refactor-stability test suite (#1046).** A regression suite asserting that the wave-2 refactors are behaviour-preserving.
+
+### Changed
+
+- **Canonical `{data,meta}` API envelope; flat list shape soft-deprecated (#924).** List endpoints accept `?envelope=1` to return the canonical `{data,meta}` envelope. The legacy flat shape remains the default for backwards compatibility but now emits a `Deprecation` response header. Hard removal is tracked as #1252 against milestone v4.0.0.
+- **`api.php` decomposed into reusable helpers (#922, #923).** Pagination logic is extracted into `api_paginated_query()` and bulk-create logic into a generic `api_bulk_create()`, removing duplicated per-resource boilerplate across the API surface.
+- **`import_csv.php` state machine extracted to `lib/csv_import.php` (#925).** The CSV ingest state machine is lifted out of the page script into a dedicated, independently testable module.
+- **`migrations.php` helpers and closure cleanup (#926, #927, #930, #931, #933).** New `migration_create_table()` and `ipam_query_or_throw()` helpers; `now()` calls routed through `Dialect`; the `3.2.0-devices` and `3.3.0-webhooks` closures collapsed; and `audit()` entries added for material migrations.
+- **`lib` helper hardening and extraction (#934, #935, #936, #937, #938).** `ipam_app_base_url()` memoised with boot-time validation; `ipam_setting_set()` decomposed into focused units; `now()` and driver detection unified onto `Dialect`; `Dialect::increment_or_insert()` added for rate-limit upserts; and `ipam_http_post_json()` extracted as a shared HTTP helper.
+- **ADR-003 `global $config` sweep completed (#1207).** The remaining `global $config;` reads in `lib/*.php` modules are replaced with the `ipam_config()` accessor, and the ADR-004 module linter is widened to flag any future reintroduction.
+
+### Internal
+
+- **Refactor Wave 2.** Builds on the wave-0 and wave-1 `lib/*.php` decomposition; `api.php`, `import_csv.php`, and `migrations.php` are now backed by reusable helpers, and the ADR-003 config-accessor migration is fully complete.
+- **Migration policy and naming documentation (#928, #929, #932).** Documented the one-table-per-closure migration policy, the handling of out-of-order version keys, and the version-key naming convention.
+
 ## [3.32.0] - 2026-05-18
 
 Code-quality, hardening, and dependency-maintenance release. Closes milestone #84. No schema migrations and no new operator-facing pages — every change is a bug fix, server-side enforcement of a guard that was previously UI-only, a dependency upgrade, or internal tooling work. Operators who upgrade will see no visible change beyond tighter validation on the site-hierarchy form.
@@ -1974,6 +2003,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.33.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.32.0...v3.33.0
 [3.32.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.31.0...v3.32.0
 [3.31.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.30.0...v3.31.0
 [3.30.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.29.0...v3.30.0

@@ -44,8 +44,9 @@ declare(strict_types=1);
  * (to_int / to_str), lib/audit.php (audit() — called by
  * ipam_audit_ip_rate_limited). All cross-module helpers resolve lazily at
  * call time, never at include time — this module has no side-effects on
- * load. Note: ipam_api_key_rate_limit_check() uses driver-specific upsert
- * SQL branched on PDO::ATTR_DRIVER_NAME (no ipam_dialect() call).
+ * load. Note: ipam_api_key_rate_limit_check() builds its atomic
+ * insert-or-increment upsert via ipam_dialect()->increment_or_insert()
+ * (A19/A32, #937) — no driver branching in this module.
  */
 
 /* ---------------- Login rate limiting ---------------- */
@@ -389,19 +390,13 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
     $db->prepare("DELETE FROM rate_limit_buckets WHERE window_start < :cutoff")
        ->execute([':cutoff' => $cutoff]);
 
-    // Increment current window
-    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    if ($driver === 'mysql') {
-        $db->prepare(
-            "INSERT INTO rate_limit_buckets (bucket_key, window_start, count) VALUES (:k, :w, 1)
-             ON DUPLICATE KEY UPDATE count = count + 1"
-        )->execute([':k' => $bucketKey, ':w' => $windowStart]);
-    } else {
-        $db->prepare(
-            "INSERT INTO rate_limit_buckets (bucket_key, window_start, count) VALUES (:k, :w, 1)
-             ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = rate_limit_buckets.count + 1"
-        )->execute([':k' => $bucketKey, ':w' => $windowStart]);
-    }
+    // Increment current window: atomic insert-counter-1-or-increment, routed
+    // through Dialect::increment_or_insert() rather than driver-branched SQL
+    // (A19/A32, #937). The composite UNIQUE (bucket_key, window_start) is the
+    // conflict key; the dialect binds one placeholder per key column.
+    $db->prepare(
+        ipam_dialect()->increment_or_insert('rate_limit_buckets', ['bucket_key', 'window_start'], 'count')
+    )->execute([':bucket_key' => $bucketKey, ':window_start' => $windowStart]);
 
     // Sliding-window approximation: weight previous bucket by fraction remaining in current window
     $stmt = $db->prepare(

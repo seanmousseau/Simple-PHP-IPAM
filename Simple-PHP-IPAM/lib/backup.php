@@ -926,8 +926,8 @@ function ipam_backup_dump_to_tmp(PDO $db): string
         }
 
         if ($driver === 'mysql' || $driver === 'pgsql') {
-            global $config;
-            $cfg = is_array($config ?? null) ? $config : [];
+            // ADR-003 (#1207): config read via ipam_config(), not `global`.
+            $cfg = ipam_config();
             $tmpSql = $tmp . '.sql';
             $native = ipam_backup_native_cmd($driver, $cfg);
             try {
@@ -4146,7 +4146,7 @@ function ipam_logical_replay_row(
     // a sequence name, so it gets a RETURNING clause appended and reads back
     // the generated PK directly. SQLite and MySQL keep the lastInsertId() path.
     $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $driver     = is_string($driverAttr) ? $driverAttr : '';
+    $driver = is_string($driverAttr) ? $driverAttr : '';
     $cols   = array_keys($decoded);
     $colList = implode(', ', array_map(fn($c) => ipam_logical_q($db, (string) $c), $cols));
     $phList  = implode(', ', array_map(fn($c) => ':' . $c, $cols));

@@ -64,8 +64,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
 
   <?php
   // app_secret missing warning — only relevant for the MFA group.
-  $_globalCfg = is_array($GLOBALS['config'] ?? null) ? $GLOBALS['config'] : [];
-  $_appSecret = trim(to_str($_globalCfg['app_secret'] ?? ''));
+  // ADR-003 (#1207): config read via ipam_config(), not $GLOBALS.
+  $_appSecret = trim(to_str(ipam_config('app_secret', '')));
   if ($groupKey === 'mfa'
       && (bool)to_int(ipam_setting('mfa.totp_enabled', true))
       && $_appSecret === ''): ?>

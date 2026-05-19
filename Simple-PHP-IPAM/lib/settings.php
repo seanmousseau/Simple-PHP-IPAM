@@ -1676,130 +1676,28 @@ function ipam_setting_set(
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
 
-    // Data-layer type gate. A key with no registry definition has no logical
-    // type, so validation is a no-op pass — never a throw — for unknown keys.
-    if ($validate && is_array($def)) {
-        $logicalType = is_string($def['logical_type'] ?? null) && $def['logical_type'] !== ''
-            ? $def['logical_type']
-            : (is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string');
-        $verdict = ipam_setting_validate($logicalType, $value, $def);
-        if ($verdict !== true) {
-            throw new \InvalidArgumentException(
-                "Invalid value for setting '{$key}': {$verdict}"
-            );
-        }
-    }
+    // Phase 1 — validate the value against its registry logical type (no-op
+    // for keys with no definition; throws \InvalidArgumentException otherwise).
+    ipam_setting_set_validate($key, $value, $def, $validate);
 
-    $storageType = (is_array($def) && is_string($def['storage_type'] ?? null) && $def['storage_type'] !== '')
-        ? $def['storage_type']
-        : ipam_setting_infer_type($value);
+    // Phase 2 — resolve the storage type and produce the encoded (and, for
+    // managed secrets, encrypted) string that will be persisted.
+    $storageType = ipam_setting_set_storage_type($def, $value);
     $sensitive   = is_array($def) && !empty($def['sensitive']);
+    $encoded     = ipam_setting_set_encode_for_storage($key, $value, $storageType, $sensitive);
 
-    $encoded = ipam_setting_encode($value, $storageType);
+    // Phase 3 — acquire the MySQL advisory lock (no-op on SQLite/PostgreSQL).
+    $mysqlLockName = ipam_setting_set_lock_acquire($db, $key, $tenantId);
 
-    // v3.31.0 (#1233): encrypt-at-rest for managed settings secrets.
-    // ipam_secret_is_managed_key() excludes backup_vault_key (own envelope).
-    // ipam_setting_encode() always returns a string, so no is_string() guard
-    // is needed here (PHPStan: it would be an always-true narrowed type).
-    if ($sensitive && ipam_secret_is_managed_key($key)) {
-        $encoded = ipam_secret_encrypt($encoded);
-    }
-
-    $kc = ipam_key_col();
-    $d  = ipam_dialect();
-    $tenantWhere = $tenantId === null ? 'tenant_id IS NULL' : 'tenant_id = :tb';
-    $oldRaw  = null;
-
-    // MySQL advisory lock: serialise SELECT->INSERT for this key/scope so that
-    // two concurrent writers cannot both see "row does not exist" and both
-    // attempt INSERT. SQLite and PostgreSQL enforce uniqueness via partial
-    // indexes (uq_settings_global, uq_settings_tenant), but MySQL's composite
-    // UNIQUE(tenant_id, key) allows multiple NULL tenant_id values per SQL
-    // standard, so a second concurrent INSERT would silently succeed and create
-    // duplicate global rows. GET_LOCK blocks until the lock is free (or the
-    // 5 s timeout elapses). RELEASE_LOCK runs unconditionally in the finally
-    // block so the lock is freed even when an exception is thrown.
-    //
-    // Cross-references — read together if you change any of the three:
-    //   - migrations.php :: 3.13.0-settings-cascade (cross-engine UQ shape)
-    //   - tests/SchemaParityTest.php (whitelist of the divergence)
-    //   - this lock (the runtime fix MySQL needs to match the partial-index
-    //     semantics SQLite/PG get for free)
-    // E1 (#884) cross-reference complete.
-    $mysqlLockName = null;
-    if ($d->driver_name() === 'mysql') {
-        // MySQL GET_LOCK names are capped at 64 bytes and silently truncate
-        // beyond that — two long keys sharing a 50+ char prefix would both
-        // hash to the same lock and deadlock-ish. Hash the composed name to
-        // a fixed 32-char digest so length is bounded regardless of key.
-        $mysqlLockName = 'ipam_setting:' . md5($key . ':' . ($tenantId === null ? '__GLOBAL__' : (string)$tenantId));
-        $db->prepare("SELECT GET_LOCK(:n, 5)")->execute([':n' => $mysqlLockName]);
-    }
-
-    // Wrap SELECT+UPDATE/INSERT in a transaction to prevent TOCTOU races only
-    // when no outer transaction is already active. settings.php wraps all saves
-    // in its own transaction, so starting a nested one here would throw
-    // "There is already an active transaction" on every page save.
+    // Phase 4 — run the SELECT-then-UPDATE/INSERT upsert and the audit write
+    // inside a single transaction (own transaction only when none is active).
     $ownTx = !$db->inTransaction();
     if ($ownTx) {
         $db->beginTransaction();
     }
     try {
-        // Fetch the existing row for the same scope (tenant or global) to produce
-        // a meaningful audit diff. Build the tenant WHERE clause as a literal
-        // condition rather than a parameterized NULL so that PostgreSQL can infer
-        // the data type (PostgreSQL raises "indeterminate datatype" on bare NULL
-        // parameters in prepared statements).
-        $st = $db->prepare(
-            "SELECT value FROM settings
-             WHERE {$tenantWhere} AND {$kc} = :k"
-        );
-        $stParams = [':k' => $key];
-        if ($tenantId !== null) { $stParams[':tb'] = $tenantId; }
-        $st->execute($stParams);
-        $prev = $st->fetch();
-        if (is_array($prev)) {
-            $oldRaw  = is_string($prev['value'] ?? null) ? $prev['value'] : null;
-        }
-
-        // Write the new value. We use explicit UPDATE-then-INSERT rather than a
-        // dialect upsert because SQLite treats NULL as distinct from NULL in UNIQUE
-        // index lookups, so ON CONFLICT(tenant_id, key) never fires for global
-        // (tenant_id IS NULL) rows in SQLite. The SELECT above already tells us
-        // whether a row exists, so branching on $prev is cheap and portable.
-        if (is_array($prev)) {
-            // Row exists — update in place.
-            $up = $db->prepare(
-                "UPDATE settings
-                 SET value = :v, updated_at = {$d->now()}, updated_by = :u
-                 WHERE {$tenantWhere} AND {$kc} = :k"
-            );
-            $upParams = [':v' => $encoded, ':u' => $userId, ':k' => $key];
-            if ($tenantId !== null) { $upParams[':tb'] = $tenantId; }
-            $up->execute($upParams);
-        } else {
-            // Row does not exist — insert.
-            $up = $db->prepare(
-                "INSERT INTO settings (tenant_id, {$kc}, value, updated_at, updated_by)
-                 VALUES (:t, :k, :v, {$d->now()}, :u)"
-            );
-            $up->execute([
-                ':t'  => $tenantId,
-                ':k'  => $key,
-                ':v'  => $encoded,
-                ':u'  => $userId,
-            ]);
-        }
-        // Build and write the audit row inside the transaction so that a
-        // failed audit INSERT rolls back the settings write too. The setting
-        // change and its audit trail are committed atomically.
-        $details = [
-            'key' => $key,
-            'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $storageType, null),
-            'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $storageType, null),
-        ];
-        $encodedDetails = json_encode($details);
-        audit($db, 'setting.update', 'setting', null, is_string($encodedDetails) ? $encodedDetails : $key);
+        $oldRaw = ipam_setting_set_upsert($db, $key, $tenantId, $encoded, $userId);
+        ipam_setting_set_audit($db, $key, $oldRaw, $encoded, $storageType, $sensitive);
 
         if ($ownTx) {
             $db->commit();
@@ -1816,17 +1714,238 @@ function ipam_setting_set(
         }
         throw $ex;
     } finally {
-        if ($mysqlLockName !== null) {
-            try {
-                $db->prepare("SELECT RELEASE_LOCK(:n)")->execute([':n' => $mysqlLockName]);
-            } catch (\Throwable $_) {
-                // Best-effort: the connection close will free it regardless.
-            }
-        }
+        ipam_setting_set_lock_release($db, $mysqlLockName);
     }
 
-    // Bust the per-request cache by forcing a re-read on next call.
+    // Phase 5 — bust the per-request cache by forcing a re-read on next call.
     ipam_setting_cache_bust($key);
+}
+
+/**
+ * Data-layer type gate for ipam_setting_set(). Validates $value against the
+ * key's registry logical type. A key with no registry definition has no
+ * logical type, so validation is a no-op pass — never a throw — for unknown
+ * keys. Likewise a no-op when $validate is false (the legacy config-import
+ * escape hatch).
+ *
+ * @param string             $key      Setting key being written.
+ * @param mixed              $value    Caller-supplied value.
+ * @param array<mixed>|null  $def      Registry definition for $key, or null.
+ * @param bool               $validate When false, skip the gate entirely.
+ * @return void
+ * @throws \InvalidArgumentException When the value fails its logical-type validator.
+ * @internal
+ */
+function ipam_setting_set_validate(string $key, mixed $value, ?array $def, bool $validate): void
+{
+    if ($validate && is_array($def)) {
+        $logicalType = is_string($def['logical_type'] ?? null) && $def['logical_type'] !== ''
+            ? $def['logical_type']
+            : (is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string');
+        $verdict = ipam_setting_validate($logicalType, $value, $def);
+        if ($verdict !== true) {
+            throw new \InvalidArgumentException(
+                "Invalid value for setting '{$key}': {$verdict}"
+            );
+        }
+    }
+}
+
+/**
+ * Resolve the storage type for a write: the registry's declared storage_type
+ * when present, otherwise the type inferred from the value itself.
+ *
+ * @param array<mixed>|null $def   Registry definition for the key, or null.
+ * @param mixed             $value Caller-supplied value (used for inference).
+ * @return string The storage type to encode against.
+ * @internal
+ */
+function ipam_setting_set_storage_type(?array $def, mixed $value): string
+{
+    return (is_array($def) && is_string($def['storage_type'] ?? null) && $def['storage_type'] !== '')
+        ? $def['storage_type']
+        : ipam_setting_infer_type($value);
+}
+
+/**
+ * Encode a value for persistence, applying encrypt-at-rest for sensitive
+ * managed-secret keys.
+ *
+ * v3.31.0 (#1233): encrypt-at-rest for managed settings secrets.
+ * ipam_secret_is_managed_key() excludes backup_vault_key (own envelope).
+ * ipam_setting_encode() always returns a string, so no is_string() guard is
+ * needed here (PHPStan: it would be an always-true narrowed type).
+ *
+ * @param string $key         Setting key being written.
+ * @param mixed  $value        Caller-supplied value.
+ * @param string $storageType  Storage type resolved by ipam_setting_set_storage_type().
+ * @param bool   $sensitive    Whether the registry flags this key as sensitive.
+ * @return string The string to store in settings.value.
+ * @internal
+ */
+function ipam_setting_set_encode_for_storage(string $key, mixed $value, string $storageType, bool $sensitive): string
+{
+    $encoded = ipam_setting_encode($value, $storageType);
+    if ($sensitive && ipam_secret_is_managed_key($key)) {
+        $encoded = ipam_secret_encrypt($encoded);
+    }
+    return $encoded;
+}
+
+/**
+ * Acquire the MySQL advisory lock that serialises the SELECT->INSERT for a
+ * key/scope. No-op on SQLite and PostgreSQL, which enforce uniqueness via
+ * partial indexes (uq_settings_global, uq_settings_tenant).
+ *
+ * MySQL's composite UNIQUE(tenant_id, key) allows multiple NULL tenant_id
+ * values per SQL standard, so two concurrent writers could both see "row does
+ * not exist" and both INSERT, creating duplicate global rows. GET_LOCK blocks
+ * until the lock is free (or the 5 s timeout elapses).
+ *
+ * Cross-references — read together if you change any of the three:
+ *   - migrations.php :: 3.13.0-settings-cascade (cross-engine UQ shape)
+ *   - tests/SchemaParityTest.php (whitelist of the divergence)
+ *   - this lock (the runtime fix MySQL needs to match the partial-index
+ *     semantics SQLite/PG get for free)
+ * E1 (#884) cross-reference complete.
+ *
+ * @param PDO      $db       Database handle.
+ * @param string   $key      Setting key being written.
+ * @param int|null $tenantId Tenant scope, or null for the global layer.
+ * @return string|null The lock name to release later, or null when no lock was taken.
+ * @internal
+ */
+function ipam_setting_set_lock_acquire(PDO $db, string $key, ?int $tenantId): ?string
+{
+    if (ipam_dialect()->driver_name() !== 'mysql') {
+        return null;
+    }
+    // MySQL GET_LOCK names are capped at 64 bytes and silently truncate
+    // beyond that — two long keys sharing a 50+ char prefix would both hash
+    // to the same lock and deadlock-ish. Hash the composed name to a fixed
+    // 32-char digest so length is bounded regardless of key.
+    $mysqlLockName = 'ipam_setting:' . md5($key . ':' . ($tenantId === null ? '__GLOBAL__' : (string)$tenantId));
+    $db->prepare("SELECT GET_LOCK(:n, 5)")->execute([':n' => $mysqlLockName]);
+    return $mysqlLockName;
+}
+
+/**
+ * Release a MySQL advisory lock taken by ipam_setting_set_lock_acquire().
+ * Best-effort: a failed release is swallowed because the connection close
+ * frees the lock regardless. No-op when $mysqlLockName is null.
+ *
+ * @param PDO         $db            Database handle.
+ * @param string|null $mysqlLockName Lock name from ipam_setting_set_lock_acquire().
+ * @return void
+ * @internal
+ */
+function ipam_setting_set_lock_release(PDO $db, ?string $mysqlLockName): void
+{
+    if ($mysqlLockName === null) {
+        return;
+    }
+    try {
+        $db->prepare("SELECT RELEASE_LOCK(:n)")->execute([':n' => $mysqlLockName]);
+    } catch (\Throwable $_) {
+        // Best-effort: the connection close will free it regardless.
+    }
+}
+
+/**
+ * Persist the encoded value: SELECT the existing row for the scope, then
+ * UPDATE in place or INSERT. Must run inside the caller's transaction.
+ *
+ * We use explicit UPDATE-then-INSERT rather than a dialect upsert because
+ * SQLite treats NULL as distinct from NULL in UNIQUE index lookups, so
+ * ON CONFLICT(tenant_id, key) never fires for global (tenant_id IS NULL)
+ * rows. The tenant WHERE clause is built as a literal condition rather than
+ * a parameterized NULL so PostgreSQL can infer the data type (it raises
+ * "indeterminate datatype" on bare NULL parameters in prepared statements).
+ *
+ * @param PDO      $db       Database handle (inside an active transaction).
+ * @param string   $key      Setting key being written.
+ * @param int|null $tenantId Tenant scope, or null for the global layer.
+ * @param string   $encoded  The encoded value to persist.
+ * @param int|null $userId   The acting user id, recorded as updated_by.
+ * @return string|null The previous raw stored value, or null when no row existed.
+ * @internal
+ */
+function ipam_setting_set_upsert(PDO $db, string $key, ?int $tenantId, string $encoded, ?int $userId): ?string
+{
+    $kc          = ipam_key_col();
+    $d           = ipam_dialect();
+    $tenantWhere = $tenantId === null ? 'tenant_id IS NULL' : 'tenant_id = :tb';
+
+    // Fetch the existing row for the same scope to produce a meaningful audit diff.
+    $st = $db->prepare(
+        "SELECT value FROM settings
+         WHERE {$tenantWhere} AND {$kc} = :k"
+    );
+    $stParams = [':k' => $key];
+    if ($tenantId !== null) { $stParams[':tb'] = $tenantId; }
+    $st->execute($stParams);
+    $prev = $st->fetch();
+
+    $oldRaw = null;
+    if (is_array($prev)) {
+        $oldRaw = is_string($prev['value'] ?? null) ? $prev['value'] : null;
+
+        // Row exists — update in place.
+        $up = $db->prepare(
+            "UPDATE settings
+             SET value = :v, updated_at = {$d->now()}, updated_by = :u
+             WHERE {$tenantWhere} AND {$kc} = :k"
+        );
+        $upParams = [':v' => $encoded, ':u' => $userId, ':k' => $key];
+        if ($tenantId !== null) { $upParams[':tb'] = $tenantId; }
+        $up->execute($upParams);
+    } else {
+        // Row does not exist — insert.
+        $up = $db->prepare(
+            "INSERT INTO settings (tenant_id, {$kc}, value, updated_at, updated_by)
+             VALUES (:t, :k, :v, {$d->now()}, :u)"
+        );
+        $up->execute([
+            ':t'  => $tenantId,
+            ':k'  => $key,
+            ':v'  => $encoded,
+            ':u'  => $userId,
+        ]);
+    }
+
+    return $oldRaw;
+}
+
+/**
+ * Write the `setting.update` audit row for a settings change. Must run inside
+ * the same transaction as the upsert so a failed audit INSERT rolls the
+ * settings write back — the change and its audit trail commit atomically.
+ * Old/new values are masked for sensitive keys.
+ *
+ * @param PDO         $db          Database handle (inside an active transaction).
+ * @param string      $key         Setting key that was written.
+ * @param string|null $oldRaw      Previous raw stored value, or null.
+ * @param string      $encoded     The newly persisted encoded value.
+ * @param string      $storageType Storage type used to decode old/new for the diff.
+ * @param bool        $sensitive   Whether old/new values must be masked.
+ * @return void
+ * @internal
+ */
+function ipam_setting_set_audit(
+    PDO $db,
+    string $key,
+    ?string $oldRaw,
+    string $encoded,
+    string $storageType,
+    bool $sensitive
+): void {
+    $details = [
+        'key' => $key,
+        'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $storageType, null),
+        'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $storageType, null),
+    ];
+    $encodedDetails = json_encode($details);
+    audit($db, 'setting.update', 'setting', null, is_string($encodedDetails) ? $encodedDetails : $key);
 }
 
 /**

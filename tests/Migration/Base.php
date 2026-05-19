@@ -149,18 +149,24 @@ abstract class Base extends TestCase
             )
         ");
 
+        // Mirrors Simple-PHP-IPAM/schema.sql: user_id / username / ip /
+        // user_agent / details are all nullable. Migrations run with no
+        // logged-in user, so audit() (C12 #933) binds username = NULL —
+        // a NOT NULL column here would diverge from production and break
+        // every apply_migrations() fixture that crosses a material
+        // migration.
         $db->exec("
             CREATE TABLE audit_log (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                action      TEXT NOT NULL,
-                entity_type TEXT NOT NULL DEFAULT '',
-                entity_id   INTEGER,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 user_id     INTEGER,
-                username    TEXT NOT NULL DEFAULT '',
-                ip          TEXT NOT NULL DEFAULT '',
-                user_agent  TEXT NOT NULL DEFAULT '',
-                details     TEXT NOT NULL DEFAULT '',
-                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                username    TEXT,
+                action      TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id   INTEGER,
+                ip          TEXT,
+                user_agent  TEXT,
+                details     TEXT
             )
         ");
 
