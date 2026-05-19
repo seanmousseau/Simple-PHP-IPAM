@@ -5571,6 +5571,93 @@ function oidc_http_post(string $url, array $params): array
     return $d;
 }
 
+/**
+ * Build the stream-context options array for a JSON HTTP POST.
+ *
+ * Pure builder — no network call, no I/O — so the request shape
+ * (encoded body, headers, timeout, TLS posture) is unit-testable in
+ * isolation. The returned array is the exact argument passed to
+ * stream_context_create() by ipam_http_post_json().
+ *
+ * TLS peer verification is always ON (verify_peer / verify_peer_name);
+ * a 10s timeout is always set. Callers cannot weaken either.
+ *
+ * @param array<string, mixed> $body    Decoded body, JSON-encoded into POSTFIELDS.
+ * @param list<string>         $headers Extra request headers (Content-Type: application/json is always added).
+ * @return array{http: array{method: string, header: string, content: string, timeout: int, ignore_errors: bool}, ssl: array{verify_peer: bool, verify_peer_name: bool}}
+ */
+function ipam_http_post_json_options(array $body, array $headers = []): array
+{
+    $payload = (string)json_encode($body);
+    $hdr     = array_merge(['Content-Type: application/json'], $headers);
+    $hdr[]   = 'Content-Length: ' . strlen($payload);
+    return [
+        'http' => [
+            'method'        => 'POST',
+            'header'        => implode("\r\n", $hdr) . "\r\n",
+            'content'       => $payload,
+            'timeout'       => 10,
+            'ignore_errors' => true,
+        ],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ];
+}
+
+/**
+ * Parse the numeric HTTP status from a stream-wrapper response-header list.
+ *
+ * The first entry is the status line (e.g. "HTTP/1.1 200 OK"); returns 0
+ * when the list is empty or the status line is unparseable.
+ *
+ * @param array<int|string, mixed> $headers
+ */
+function ipam_http_status_from_headers(array $headers): int
+{
+    if (isset($headers[0]) && is_string($headers[0])
+        && preg_match('#\s(\d{3})\s#', $headers[0], $m) === 1) {
+        return (int)$m[1];
+    }
+    return 0;
+}
+
+/**
+ * POST a JSON body and return a structured result.
+ *
+ * Shares the request-shaping logic with ipam_http_post_json_options()
+ * (the pure builder) so behaviour is testable without a network call.
+ * Never throws — a network/transport failure is reported via the
+ * 'error' key with body=null, leaving the fail-open/fail-closed
+ * decision entirely to the caller.
+ *
+ * @param array<string, mixed> $body
+ * @param list<string>         $headers
+ * @return array{body: array<string, mixed>|null, status: int, error: string|null}
+ */
+function ipam_http_post_json(string $url, array $body, array $headers = []): array
+{
+    $ctx = stream_context_create(ipam_http_post_json_options($body, $headers));
+    $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
+    if ($raw === false) {
+        return ['body' => null, 'status' => 0, 'error' => 'HTTP request failed'];
+    }
+
+    // Extract the HTTP status from the response status line via the
+    // PHP 8.4+ http_get_last_response_headers(). On PHP 8.2–8.3 the status
+    // is reported as 0 — it is informational only; no caller branches on it
+    // (reCAPTCHA verify keys solely off the decoded body and 'error').
+    $headers = function_exists('http_get_last_response_headers')
+        ? http_get_last_response_headers()
+        : null;
+    $status = ipam_http_status_from_headers(is_array($headers) ? $headers : []);
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return ['body' => null, 'status' => $status, 'error' => 'Invalid JSON response'];
+    }
+    /** @var array<string, mixed> $decoded */
+    return ['body' => $decoded, 'status' => $status, 'error' => null];
+}
+
 /* ---- PKCE ---- */
 /* base64url_encode() and base64url_decode() moved to lib/utils.php in v3.30.0 (ADR-004). */
 
