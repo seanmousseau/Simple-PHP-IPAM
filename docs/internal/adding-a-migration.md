@@ -63,6 +63,38 @@ Every **new** migration closure must create at most one logical table (one `CREA
 
 **Preferred implementation.** Use `migration_create_table(PDO $db, array $ddlByEngine)` — the three-arm driver-dispatch helper defined at the top of `migrations.php` — to execute the single `CREATE TABLE` per engine. This collapses the copy-pasted `if ($driver === 'sqlite') ... elseif ('mysql') ...` pattern into one call.
 
+## Version-key naming
+
+### Two key forms
+
+Migration keys appear in two forms in `migrations.php`:
+
+| Form | Example | When to use |
+|---|---|---|
+| `<semver>` (two-part) | `3.6.0` | Legacy — not used for new migrations |
+| `<semver>-<slug>` (three-part) | `3.6.0-lockout` | **All new migrations** |
+
+For every new migration, use the three-part `<semver>-<slug>` form. The slug is a short, lowercase, hyphen-separated description of what the migration does (e.g. `3.33.0-audit-log`, `3.33.0-mfa-tokens`). If a release ships more than one migration, each gets a distinct slug under the same semver prefix.
+
+### Execution order
+
+`apply_migrations()` in `lib/db.php` calls `ksort($migrations, SORT_NATURAL)` before iterating. Execution order is determined solely by the key's semver prefix — physical array position in `migrations.php` is cosmetic. A late-arriving migration should be keyed with the semver of the release it **actually ships in**, not the release cycle it was conceived in.
+
+### Keys are immutable once shipped
+
+**A migration key, once present in a shipped release, must never be renamed.**
+
+`apply_migrations()` matches keys by exact string against the `schema_migrations` table with no aliasing. Renaming a shipped key causes every existing install to treat the migration as unapplied, re-run it, and insert a duplicate row in `schema_migrations`. The impact is data corruption on upgrade (at minimum duplicate rows; at worst a failed DDL that leaves a partially-applied schema).
+
+If a shipped key carries the "wrong" semver (e.g. it was keyed `3.6.0-lockout` but actually shipped in v3.7.0), document the discrepancy with a code comment — do **not** rename the key. See `3.6.0-lockout` and `3.0.0-subnet-contacts` in `migrations.php` for the established comment pattern:
+
+```php
+// NOTE (C5, #929): this key's '3.6.0' semver predates its array position …
+// The key is INTENTIONALLY NOT renamed: migration keys are persisted per-install
+// in schema_migrations and apply_migrations() keys solely on exact string match …
+'3.6.0-lockout' => function (PDO $db): void {
+```
+
 ## Pitfalls (already burned)
 
 - **`DROP TABLE` with FKs ON cascades to children.** SQLite executes a row-by-row DELETE before dropping. v2.2.1 wiped every IP address on upgrade because of this. `apply_migrations()` now disables FKs around each migration; do not re-enable them inside your closure.
