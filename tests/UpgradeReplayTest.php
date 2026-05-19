@@ -243,17 +243,21 @@ class UpgradeReplayTest extends TestCase
             PRIMARY KEY (address_id, tag_id)
         )");
 
+        // Mirrors Simple-PHP-IPAM/schema.sql: user_id / username / ip /
+        // user_agent / details are nullable. Migrations run with no logged-in
+        // user, so audit() (C12 #933) binds username = NULL — a NOT NULL
+        // column here would diverge from production and break the replay.
         $db->exec("CREATE TABLE audit_log (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            action      TEXT NOT NULL,
-            entity_type TEXT NOT NULL DEFAULT '',
-            entity_id   INTEGER,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
             user_id     INTEGER,
-            username    TEXT NOT NULL DEFAULT '',
-            ip          TEXT NOT NULL DEFAULT '',
-            user_agent  TEXT NOT NULL DEFAULT '',
-            details     TEXT NOT NULL DEFAULT '',
-            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            username    TEXT,
+            action      TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id   INTEGER,
+            ip          TEXT,
+            user_agent  TEXT,
+            details     TEXT
         )");
 
         // Correct migration IDs — match actual migrations.php keys, all before 2.1.0-vrfs
@@ -281,14 +285,15 @@ class UpgradeReplayTest extends TestCase
             "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, status)
              VALUES (?, ?, ?, ?, ?, ?)"
         );
-        foreach ([
+        $addrRows = [
             [1,'10.0.0.1','h1','alice','used'], [1,'10.0.0.2','h2','bob','used'],
             [1,'10.0.0.3','h3','','used'],      [1,'10.0.0.4','h4','','reserved'],
             [2,'10.0.1.1','h5','','used'],      [2,'10.0.1.2','h6','','used'],
             [2,'10.0.1.3','h7','','used'],      [2,'10.0.1.4','h8','','free'],
             [3,'10.0.2.1','h9','','used'],      [3,'10.0.2.2','h10','','used'],
             [3,'10.0.2.3','h11','','used'],     [3,'10.0.2.4','h12','','used'],
-        ] as [$sid, $ip, $hn, $owner, $status]) {
+        ];
+        foreach ($addrRows as [$sid, $ip, $hn, $owner, $status]) {
             $insAddr->execute([$sid, $ip, inet_pton($ip), $hn, $owner, $status]);
         }
 

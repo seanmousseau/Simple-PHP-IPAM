@@ -47,6 +47,43 @@ function migration_create_table(PDO $db, array $ddlByEngine): void
     ipam_query_or_throw($db, $ddlByEngine[$driver]);
 }
 
+/**
+ * Allow-list of migration keys considered "material" — security- or
+ * data-surface schema upgrades that warrant an audit_log entry when they
+ * apply (TOTP/2FA, passkeys/WebAuthn, devices, webhooks, backup, and
+ * account-lockout). apply_migrations() consults this list and, after a
+ * material migration commits, writes a `migration.<key>` audit row.
+ *
+ * Housekeeping migrations (index tweaks, column drops, settings cascades,
+ * re-encryption passes) are deliberately excluded — they don't change the
+ * security/data surface in a way an operator needs an audit trail for.
+ *
+ * @return list<string>
+ */
+function ipam_material_migrations(): array
+{
+    return [
+        // Account lockout — login-attempt throttling surface.
+        '2.12.0-account-lockout',
+        '3.6.0-lockout',
+        // Devices — new inventory data surface.
+        '3.2.0-devices',
+        // Webhooks — outbound integration / secret-bearing surface.
+        '3.3.0-webhooks',
+        // TOTP / 2FA — authenticator-secret surface.
+        '3.6.0-totp',
+        '3.14.0-mfa-settings',
+        '3.14.0-email-otp',
+        // Passkeys / WebAuthn — credential surface.
+        '3.15.0-passkeys',
+        '3.16.0-preferred-mfa-method',
+        // Backup — backup-history / backup-config surface.
+        '3.7.0-backup-history',
+        '3.17.0-backup',
+        '3.21.0-backup-runs',
+    ];
+}
+
 /** @return array<string, \Closure> */
 function ipam_migrations(): array
 {

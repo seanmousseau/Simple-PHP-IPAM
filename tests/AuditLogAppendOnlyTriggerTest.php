@@ -29,6 +29,13 @@ final class AuditLogAppendOnlyTriggerTest extends TestCase
 {
     private \PDO $db;
 
+    /**
+     * id of this test's own seed row. apply_migrations() now writes its
+     * own migration.* audit rows (C12 #933), so the seed row is no longer
+     * guaranteed to be id 1 — capture the real id after INSERT.
+     */
+    private int $seedId;
+
     protected function setUp(): void
     {
         $this->db = InMemoryDb::withMigrations();
@@ -36,30 +43,32 @@ final class AuditLogAppendOnlyTriggerTest extends TestCase
             "INSERT INTO audit_log (action, entity_type, entity_id, username) "
             . "VALUES ('seed', 'test', 1, 'tester')"
         );
+        $this->seedId = (int)$this->db->lastInsertId();
     }
 
     public function testInsertSucceeds(): void
     {
+        $before = (int)$this->db->query("SELECT COUNT(*) AS c FROM audit_log")->fetch()['c'];
         $this->db->exec(
             "INSERT INTO audit_log (action, entity_type, entity_id, username) "
             . "VALUES ('insert', 'test', 2, 'tester')"
         );
-        $count = (int)$this->db->query("SELECT COUNT(*) AS c FROM audit_log")->fetch()['c'];
-        $this->assertSame(2, $count, 'INSERT must succeed; append-only does not block adds.');
+        $after = (int)$this->db->query("SELECT COUNT(*) AS c FROM audit_log")->fetch()['c'];
+        $this->assertSame($before + 1, $after, 'INSERT must succeed; append-only does not block adds.');
     }
 
     public function testUpdateIsBlockedByTrigger(): void
     {
         $this->expectException(\PDOException::class);
         $this->expectExceptionMessageMatches('/append-only/i');
-        $this->db->exec("UPDATE audit_log SET action = 'mutated' WHERE id = 1");
+        $this->db->exec("UPDATE audit_log SET action = 'mutated' WHERE id = {$this->seedId}");
     }
 
     public function testDeleteByIdIsBlockedByTrigger(): void
     {
         $this->expectException(\PDOException::class);
         $this->expectExceptionMessageMatches('/append-only/i');
-        $this->db->exec("DELETE FROM audit_log WHERE id = 1");
+        $this->db->exec("DELETE FROM audit_log WHERE id = {$this->seedId}");
     }
 
     /**
@@ -78,12 +87,12 @@ final class AuditLogAppendOnlyTriggerTest extends TestCase
     public function testRowSurvivesBlockedMutation(): void
     {
         try {
-            $this->db->exec("UPDATE audit_log SET action = 'mutated' WHERE id = 1");
+            $this->db->exec("UPDATE audit_log SET action = 'mutated' WHERE id = {$this->seedId}");
             $this->fail('UPDATE should have been blocked.');
         } catch (\PDOException) {
             // Expected — trigger raised ABORT.
         }
-        $row = $this->db->query("SELECT action FROM audit_log WHERE id = 1")->fetch();
+        $row = $this->db->query("SELECT action FROM audit_log WHERE id = {$this->seedId}")->fetch();
         $this->assertIsArray($row);
         $this->assertSame('seed', $row['action'], 'Original row must be untouched after blocked UPDATE.');
     }
