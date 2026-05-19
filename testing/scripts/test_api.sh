@@ -237,6 +237,25 @@ call_api() {
     call "$1" "${API}?resource=$2" "${3:-}"
 }
 
+# call_headers METHOD URL — like call() but also captures response headers
+# into RESP_HEADERS so tests can assert on them (e.g. the Deprecation header
+# the v3.33.0 api.php refactor adds to flat list responses).
+call_headers() {
+    local method="$1" url="$2"
+    local tmp hdr; tmp=$(mktemp); hdr=$(mktemp)
+    local args=(-s --noproxy '*' -o "$tmp" -D "$hdr" -w '%{http_code}' -X "$method"
+                -H "Content-Type: application/json")
+    [[ -n "$CURL_INSECURE" ]] && args+=(-k)
+    [[ -n "$CURL_EXTRA_HEADER" ]] && args+=(-H "$CURL_EXTRA_HEADER")
+    [[ -n "$BASIC_AUTH" ]] && args+=(-u "$BASIC_AUTH")
+    args+=(-H "Authorization: Bearer $API_KEY")
+    args+=("$url")
+    HTTP_CODE=$(curl "${args[@]}")
+    BODY=$(cat "$tmp")
+    RESP_HEADERS=$(cat "$hdr")
+    rm -f "$tmp" "$hdr"
+}
+
 jq_val() {
     python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" <<< "$BODY" 2>/dev/null || echo ""
 }
@@ -553,6 +572,31 @@ call_api GET "subnets&page=1&limit=2"
 assert_http 200 "Subnets pagination"
 PAGE_N=$(jq_len subnets)
 [[ "$PAGE_N" -le 2 ]] && pass "Pagination: $PAGE_N items (limit 2)" || fail "Pagination not respected: $PAGE_N items"
+
+# ====================================================================
+log "=== List Response Shape (v3.33.0 deprecation) ==="
+# ====================================================================
+# The api.php refactor (B5, #924) soft-deprecates the flat list shape: a flat
+# list request emits a `Deprecation: true` response header, while the canonical
+# `?envelope=1` {data,meta} shape does not. Assert both.
+
+call_headers GET "${API}?resource=subnets&page=1&limit=2"
+assert_http 200 "Flat list request (HTTP shape check)"
+if grep -qi '^Deprecation:[[:space:]]*true' <<< "$RESP_HEADERS"; then
+    pass "Flat list emits 'Deprecation: true' header"
+else
+    fail "Flat list missing 'Deprecation: true' header"
+fi
+
+call_headers GET "${API}?resource=subnets&page=1&limit=2&envelope=1"
+assert_http 200 "Envelope list request (HTTP shape check)"
+if grep -qi '^Deprecation:' <<< "$RESP_HEADERS"; then
+    fail "Envelope request must NOT emit a Deprecation header"
+else
+    pass "Envelope (?envelope=1) request omits Deprecation header"
+fi
+ENV_HAS_DATA=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('data' in d and 'meta' in d)" <<< "$BODY" 2>/dev/null || echo "False")
+[[ "$ENV_HAS_DATA" == "True" ]] && pass "Envelope request returns {data,meta} shape" || fail "Envelope request not {data,meta} shape"
 
 # ====================================================================
 log "=== Error Handling ==="
