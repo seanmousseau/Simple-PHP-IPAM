@@ -1,0 +1,5 @@
+ip,hostname,owner,cidr
+10.20.30.5,host-a,alice,10.20.30.0/24
+10.20.30.6,host-b,bob,10.20.30.0/24
+10.20.30.5,dup-host,carol,10.20.30.0/24
+not-an-ip,bad,dave,10.20.30.0/24

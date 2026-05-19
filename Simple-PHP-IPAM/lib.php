@@ -24,6 +24,7 @@ require_once __DIR__ . '/lib/app_secret.php';
 require_once __DIR__ . '/lib/secret.php'; // settings-secret encrypt-at-rest crypto core (v3.31.0, #1233)
 require_once __DIR__ . '/lib/backup.php';
 require_once __DIR__ . '/lib/auth_step_up.php';
+require_once __DIR__ . '/lib/csv_import.php'; // CSV-import wizard logic (ADR-004, B13, #925)
 
 /* ---------------- View helpers (v3.8.0, #522) ---------------- */
 
