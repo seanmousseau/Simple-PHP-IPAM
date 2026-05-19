@@ -398,6 +398,81 @@ function api_error(int $code, string $message): never
     api_json(['error' => $message]);
 }
 
+/**
+ * B6 (#922): shared paginated-list query runner. Every list endpoint used to
+ * hand-roll the same WHERE-join / COUNT(*) / LIMIT-OFFSET SELECT. This helper
+ * runs both queries from one $spec and returns the rows + total; it does NOT
+ * emit any HTTP response — callers still pass the result to
+ * api_paginated_response().
+ *
+ * Pagination math matches the long-standing handler convention:
+ *   offset = ($page - 1) * $limit
+ * Callers are responsible for clamping $page (>= 1) and $limit (per-resource
+ * min/max) BEFORE calling — clamp ranges differ per endpoint, so they stay
+ * handler-side. The helper trusts the values it is given.
+ *
+ * The COUNT(*) query reuses the SAME from/join/where/params as the SELECT, so
+ * total always reflects the filtered set. Named placeholders in $params are
+ * bound to the COUNT statement via execute(); for the SELECT they are bound
+ * with bindValue() so :lim/:off can be forced to PARAM_INT. Param type for the
+ * caller's predicates is taken from $param_types (default PARAM_STR, matching
+ * the historic `foreach ... bindValue($k, $v)` behaviour where PDO inferred
+ * string for emulated prepares).
+ *
+ * @param array{
+ *     select: string,
+ *     from: string,
+ *     join?: string,
+ *     where: list<string>,
+ *     params: array<string, scalar>,
+ *     param_types?: array<string, int>,
+ *     order_by: string,
+ *     page: int,
+ *     limit: int
+ * } $spec
+ *     select       — column list for the SELECT (no leading "SELECT")
+ *     from         — table reference for the FROM (no leading "FROM"), may
+ *                    include an alias
+ *     join         — optional JOIN clause(s), already including the JOIN keyword
+ *     where        — list of predicate fragments AND-joined into the WHERE
+ *     params       — named bound params shared by both COUNT and SELECT
+ *     param_types  — optional per-param PDO::PARAM_* override for the SELECT
+ *     order_by     — ORDER BY clause (no leading "ORDER BY")
+ *     page         — 1-based page number (already clamped by caller)
+ *     limit        — page size (already clamped by caller)
+ * @return array{items: list<array<string, mixed>>, total: int, page: int, limit: int}
+ */
+function api_paginated_query(PDO $db, array $spec): array
+{
+    $join     = $spec['join'] ?? '';
+    $whereSql = $spec['where'] ? ('WHERE ' . implode(' AND ', $spec['where'])) : '';
+    $page     = $spec['page'];
+    $limit    = $spec['limit'];
+    $offset   = ($page - 1) * $limit;
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM {$spec['from']} {$join} {$whereSql}");
+    $cntSt->execute($spec['params']);
+    /** @var array<string, mixed>|false $cntRow */
+    $cntRow = $cntSt->fetch();
+    $total  = is_array($cntRow) ? to_int($cntRow['c']) : 0;
+
+    $st = $db->prepare(
+        "SELECT {$spec['select']} FROM {$spec['from']} {$join} {$whereSql}"
+        . " ORDER BY {$spec['order_by']} LIMIT :lim OFFSET :off"
+    );
+    $types = $spec['param_types'] ?? [];
+    foreach ($spec['params'] as $k => $v) {
+        $st->bindValue($k, $v, $types[$k] ?? PDO::PARAM_STR);
+    }
+    $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+    $st->execute();
+    /** @var list<array<string, mixed>> $items */
+    $items = $st->fetchAll();
+
+    return ['items' => $items, 'total' => $total, 'page' => $page, 'limit' => $limit];
+}
+
 // ---- Resource handlers ----
 
 function api_subnets(PDO $db): never
@@ -424,16 +499,16 @@ function api_subnets(PDO $db): never
            ) ac ON ac.subnet_id = s.id"
         : '';
 
-    $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
+    $subnetSelect = "s.id, s.cidr, s.ip_version, s.network, s.prefix,
                        s.description, s.notes, s.vlan_id, s.vlan_fk, s.site_id, s.vrf_id, s.alerts_enabled, s.created_at,
                        s.custom_fields,
                        si.name AS site, v.vlan_id AS vlan_number, v.name AS vlan_name,
-                       vr.name AS vrf_name$countsSelect
-                FROM subnets s
-                LEFT JOIN sites si ON si.id = s.site_id
+                       vr.name AS vrf_name$countsSelect";
+    $subnetJoins = "LEFT JOIN sites si ON si.id = s.site_id
                 LEFT JOIN vlans v ON v.id = s.vlan_fk
                 LEFT JOIN vrfs vr ON vr.id = s.vrf_id
                 $countsJoin";
+    $baseSql = "SELECT $subnetSelect FROM subnets s $subnetJoins";
 
     if (isset($_GET['id'])) {
         $id = to_int($_GET['id']);
@@ -448,7 +523,6 @@ function api_subnets(PDO $db): never
 
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(1000, to_int($_GET['limit'] ?? 200)));
-    $offset = ($page - 1) * $limit;
 
     $where  = [];
     $params = [];
@@ -491,28 +565,26 @@ function api_subnets(PDO $db): never
         }
     }
 
-    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
-
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM subnets s LEFT JOIN vlans v ON v.id = s.vlan_fk $tagJoin $whereSql");
-    $cntSt->execute($params);
-    /** @var array<string, mixed>|false $cntRow */
-
-    $cntRow = $cntSt->fetch();
-
-    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-    $st = $db->prepare($baseSql . " $tagJoin $whereSql ORDER BY s.ip_version, s.network_bin LIMIT :lim OFFSET :off");
-    foreach ($params as $k => $v) {
-        $st->bindValue($k, $v, PDO::PARAM_INT);
+    // All filter params are integers except :tag_name; mark them so the
+    // helper binds PARAM_INT exactly as the hand-rolled loop did.
+    $paramTypes = [];
+    foreach ($params as $k => $_) {
+        $paramTypes[$k] = ($k === ':tag_name') ? PDO::PARAM_STR : PDO::PARAM_INT;
     }
-    // tag_name is a string param — rebind as string
-    if (isset($params[':tag_name'])) {
-        $st->bindValue(':tag_name', $params[':tag_name'], PDO::PARAM_STR);
-    }
-    $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-    $st->execute();
-    $rawSubnets = $st->fetchAll();
+
+    $result = api_paginated_query($db, [
+        'select'      => $subnetSelect,
+        'from'        => 'subnets s',
+        'join'        => "$subnetJoins $tagJoin",
+        'where'       => $where,
+        'params'      => $params,
+        'param_types' => $paramTypes,
+        'order_by'    => 's.ip_version, s.network_bin',
+        'page'        => $page,
+        'limit'       => $limit,
+    ]);
+    $rawSubnets = $result['items'];
+    $total      = $result['total'];
 
     // Batch-load tags for all returned subnets
     $subnetIds    = array_map(fn($r) => to_int($r['id']), $rawSubnets);
@@ -624,38 +696,27 @@ function api_addresses(PDO $db): never
         $params[':exp_to']   = date('Y-m-d', (int)strtotime("+{$expDays} days"));
     }
 
-    $joins   = ($joinSite ? ' JOIN subnets s ON s.id = a.subnet_id' : '');
+    $joins   = ($joinSite ? 'JOIN subnets s ON s.id = a.subnet_id' : '');
     $joins  .= ($joinTag  ? ' JOIN address_tags atf ON atf.address_id = a.id JOIN tags tf ON tf.id = atf.tag_id' : '');
     $joins  .= ' LEFT JOIN contacts co ON co.id = a.owner_contact_id';
-    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(500, to_int($_GET['limit'] ?? 100)));
-    $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses a$joins $whereSql");
-    $cntSt->execute($params);
-    /** @var array<string, mixed>|false $cntRow */
-
-    $cntRow = $cntSt->fetch();
-
-    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-    $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
+    $result = api_paginated_query($db, [
+        'select'   => 'a.id, a.subnet_id, a.ip, a.hostname, a.owner,
                    a.status, a.note, a.grp, a.mac, a.expires_at, a.created_at, a.updated_at,
-                   a.custom_fields, a.owner_contact_id, co.name AS owner_contact_name
-            FROM addresses a$joins $whereSql
-            ORDER BY a.ip_bin
-            LIMIT :lim OFFSET :off";
-
-    $st = $db->prepare($sql);
-    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-    foreach ($params as $k => $v) {
-        $st->bindValue($k, $v);
-    }
-    $st->execute();
-    $rawRows = $st->fetchAll();
+                   a.custom_fields, a.owner_contact_id, co.name AS owner_contact_name',
+        'from'     => 'addresses a',
+        'join'     => $joins,
+        'where'    => $where,
+        'params'   => $params,
+        'order_by' => 'a.ip_bin',
+        'page'     => $page,
+        'limit'    => $limit,
+    ]);
+    $rawRows = $result['items'];
+    $total   = $result['total'];
 
     // Batch-load tags for all returned addresses
     $addrIds = array_map(fn($r) => to_int($r['id']), $rawRows);
@@ -992,26 +1053,25 @@ function api_contacts(PDO $db): never
         }
     }
 
-    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
-
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(200, to_int($_GET['limit'] ?? 50)));
-    $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM contacts $whereSql");
-    $cntSt->execute($params);
-    /** @var array<string, mixed>|false $cntRow */
-    $cntRow = $cntSt->fetch();
-    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-    $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts $whereSql ORDER BY name LIMIT :lim OFFSET :off");
-    foreach ($params as $k => $v2) {
-        $st->bindValue($k, $v2, PDO::PARAM_STR);
-    }
-    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-    $st->execute();
-    api_json(api_paginated_response('contacts', array_map('fmt_contact', $st->fetchAll()), $total, $page, $limit));
+    $result = api_paginated_query($db, [
+        'select'   => 'id, name, email, phone, org, note, created_at, updated_at',
+        'from'     => 'contacts',
+        'where'    => $where,
+        'params'   => $params,
+        'order_by' => 'name',
+        'page'     => $page,
+        'limit'    => $limit,
+    ]);
+    api_json(api_paginated_response(
+        'contacts',
+        array_map('fmt_contact', $result['items']),
+        $result['total'],
+        $page,
+        $limit
+    ));
 }
 
 /**
@@ -1321,27 +1381,18 @@ function api_history(PDO $db): never
 
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(200, to_int($_GET['limit'] ?? 50)));
-    $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM address_history WHERE address_id = :id");
-    $cntSt->execute([':id' => $addressId]);
-    /** @var array<string, mixed>|false $cntRow */
-
-    $cntRow = $cntSt->fetch();
-
-    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-    $st = $db->prepare(
-        "SELECT id, action, before_json, after_json, username, created_at
-         FROM address_history
-         WHERE address_id = :id
-         ORDER BY id DESC
-         LIMIT :lim OFFSET :off"
-    );
-    $st->bindValue(':id',  $addressId, PDO::PARAM_INT);
-    $st->bindValue(':lim', $limit,     PDO::PARAM_INT);
-    $st->bindValue(':off', $offset,    PDO::PARAM_INT);
-    $st->execute();
+    $result = api_paginated_query($db, [
+        'select'      => 'id, action, before_json, after_json, username, created_at',
+        'from'        => 'address_history',
+        'where'       => ['address_id = :id'],
+        'params'      => [':id' => $addressId],
+        'param_types' => [':id' => PDO::PARAM_INT],
+        'order_by'    => 'id DESC',
+        'page'        => $page,
+        'limit'       => $limit,
+    ]);
+    $total = $result['total'];
 
     $rows = array_map(function(array $r): array {
         $before = $r['before_json'] !== null ? json_decode(to_str($r['before_json']), true) : null;
@@ -1354,7 +1405,7 @@ function api_history(PDO $db): never
             'username'   => to_str($r['username']),
             'created_at' => $r['created_at'],
         ];
-    }, $st->fetchAll());
+    }, $result['items']);
 
     api_json(api_paginated_response('history', $rows, $total, $page, $limit, [
         'address_id' => $addressId,
@@ -1490,29 +1541,19 @@ function api_audit_log(PDO $db): never
         $params[':to_dt'] = date('Y-m-d', $ts) . ' 23:59:59';
     }
 
-    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(500, to_int($_GET['limit'] ?? 100)));
-    $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log $whereSql");
-    $cntSt->execute($params);
-    /** @var array<string, mixed>|false $cntRow */
-
-    $cntRow = $cntSt->fetch();
-
-    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-    $st = $db->prepare("
-        SELECT id, created_at, username, action, entity_type, entity_id, ip, details
-        FROM audit_log $whereSql
-        ORDER BY id DESC
-        LIMIT :lim OFFSET :off
-    ");
-    foreach ($params as $k => $v) $st->bindValue($k, $v);
-    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-    $st->execute();
+    $result = api_paginated_query($db, [
+        'select'   => 'id, created_at, username, action, entity_type, entity_id, ip, details',
+        'from'     => 'audit_log',
+        'where'    => $where,
+        'params'   => $params,
+        'order_by' => 'id DESC',
+        'page'     => $page,
+        'limit'    => $limit,
+    ]);
+    $total = $result['total'];
 
     $rows = array_map(fn(array $r) => [
         'id' => to_int($r['id']), 'created_at' => $r['created_at'],
@@ -1520,7 +1561,7 @@ function api_audit_log(PDO $db): never
         'entity_type' => $r['entity_type'],
         'entity_id' => $r['entity_id'] !== null ? to_int($r['entity_id']) : null,
         'ip' => to_str($r['ip'] ?? ''), 'details' => to_str($r['details'] ?? ''),
-    ], $st->fetchAll());
+    ], $result['items']);
 
     api_json(api_paginated_response('entries', $rows, $total, $page, $limit));
 }
@@ -2724,25 +2765,26 @@ function api_devices(PDO $db): never
         }
     }
 
-    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(200, to_int($_GET['limit'] ?? 50)));
-    $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM devices d $whereSql");
-    $cntSt->execute($params);
-    /** @var array<string,mixed>|false $cntRow */
-    $cntRow = $cntSt->fetch();
-    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-    $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id $whereSql ORDER BY d.name LIMIT :lim OFFSET :off");
-    foreach ($params as $k => $v) {
-        $st->bindValue($k, $v, PDO::PARAM_STR);
-    }
-    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-    $st->execute();
-    api_json(api_paginated_response('devices', array_map('fmt_device', $st->fetchAll()), $total, $page, $limit));
+    $result = api_paginated_query($db, [
+        'select'   => 'd.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count',
+        'from'     => 'devices d',
+        'join'     => 'LEFT JOIN sites s ON s.id = d.site_id',
+        'where'    => $where,
+        'params'   => $params,
+        'order_by' => 'd.name',
+        'page'     => $page,
+        'limit'    => $limit,
+    ]);
+    api_json(api_paginated_response(
+        'devices',
+        array_map('fmt_device', $result['items']),
+        $result['total'],
+        $page,
+        $limit
+    ));
 }
 
 /**
@@ -2914,25 +2956,25 @@ function api_device_interfaces(PDO $db): never
         $params[':did'] = $did;
     }
 
-    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(200, to_int($_GET['limit'] ?? 50)));
-    $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM device_interfaces $whereSql");
-    $cntSt->execute($params);
-    /** @var array<string,mixed>|false $cntRow */
-    $cntRow = $cntSt->fetch();
-    $total  = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-    $st = $db->prepare("SELECT * FROM device_interfaces $whereSql ORDER BY name LIMIT :lim OFFSET :off");
-    foreach ($params as $k => $v) {
-        $st->bindValue($k, $v, PDO::PARAM_STR);
-    }
-    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-    $st->execute();
-    api_json(api_paginated_response('device_interfaces', array_map('fmt_device_interface', $st->fetchAll()), $total, $page, $limit));
+    $result = api_paginated_query($db, [
+        'select'   => '*',
+        'from'     => 'device_interfaces',
+        'where'    => $where,
+        'params'   => $params,
+        'order_by' => 'name',
+        'page'     => $page,
+        'limit'    => $limit,
+    ]);
+    api_json(api_paginated_response(
+        'device_interfaces',
+        array_map('fmt_device_interface', $result['items']),
+        $result['total'],
+        $page,
+        $limit
+    ));
 }
 
 /**
