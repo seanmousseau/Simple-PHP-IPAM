@@ -176,9 +176,9 @@ function ipam_consume_reset_token(PDO $db, string $rawToken): ?int
 function ipam_send_reset_email(string $toAddress, string $toName, string $rawToken): bool
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-    try {
-        $base = ipam_app_base_url();
-    } catch (\RuntimeException) {
+    $base = ipam_app_base_url();
+    if ($base === '') {
+        error_log('ipam_send_reset_email: config.base_url is not a valid https:// URL.');
         return false;
     }
     $link    = $base . '/reset_password.php?token=' . rawurlencode($rawToken);

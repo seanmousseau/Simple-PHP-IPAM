@@ -681,6 +681,21 @@ function ipam_validate_config(array $config): array
             $warnings[] = "{$label} is {$val}; minimum is {$min}.";
         }
     }
+    // base_url drives absolute links in password-reset / email-verification
+    // mail. When it is set but not a valid https:// URL the failure is
+    // otherwise silent (ipam_app_base_url() returns ''); surface it here.
+    // An unset base_url is left alone — it is legitimately optional for
+    // installs that do not send email, and init.php derives the HTTPS
+    // redirect target from the Host header in that case.
+    $baseUrl = rtrim(to_str($config['base_url'] ?? ''), '/');
+    if ($baseUrl !== '') {
+        $parsed = parse_url($baseUrl);
+        if (!is_array($parsed) || ($parsed['scheme'] ?? '') !== 'https'
+            || empty($parsed['host'])) {
+            $warnings[] = 'base_url is set but is not a valid https:// URL; '
+                . 'password-reset and email-verification links will not be sent.';
+        }
+    }
     foreach ($warnings as $w) {
         error_log("Simple PHP IPAM config warning: {$w}");
     }
@@ -6344,18 +6359,31 @@ function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
 // ── Password reset + email verification helpers (v3.2.0) ─────────────────────
 
 /**
- * Return the canonical HTTPS base URL of this install (no trailing slash).
- * Used to build absolute links in emails.
+ * Return the canonical HTTPS base URL of this install (no trailing slash),
+ * or '' when `config.base_url` is unset or not a valid https:// URL.
+ *
+ * Used to build absolute links in emails. This function does NOT throw:
+ * a misconfigured base_url is a boot-time config error (see
+ * ipam_validate_config()), and callers must treat '' as "cannot build a
+ * link". Result is memoised per process — base_url is config-derived and
+ * stable for the lifetime of a request/CLI run.
  */
 function ipam_app_base_url(): string
 {
-    $cfg  = $GLOBALS['config'] ?? null;
-    $base = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
-    $parsed = parse_url($base);
-    if ($base === '' || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {
-        throw new RuntimeException('config.base_url must be set to an https:// URL for email links.');
+    static $memo = null;
+    if ($memo !== null) {
+        return $memo;
     }
-    return $base;
+    $cfg    = $GLOBALS['config'] ?? null;
+    $base   = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
+    $parsed = $base !== '' ? parse_url($base) : false;
+    if ($base === '' || !is_array($parsed)
+        || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {
+        $memo = '';
+        return $memo;
+    }
+    $memo = $base;
+    return $memo;
 }
 
 /* ipam_create_reset_token(), ipam_consume_reset_token(), and               */
@@ -6373,11 +6401,11 @@ function ipam_app_base_url(): string
 function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): array
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-    try {
-        $base = ipam_app_base_url();
-    } catch (\RuntimeException $e) {
-        error_log('ipam_send_email_verification: ' . $e->getMessage());
-        return ['success' => false, 'error' => $e->getMessage()];
+    $base = ipam_app_base_url();
+    if ($base === '') {
+        $msg = 'config.base_url must be set to an https:// URL for email links.';
+        error_log('ipam_send_email_verification: ' . $msg);
+        return ['success' => false, 'error' => $msg];
     }
 
     $rawToken  = bin2hex(random_bytes(32));
