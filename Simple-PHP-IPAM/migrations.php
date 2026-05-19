@@ -25,6 +25,28 @@ function ipam_query_or_throw(PDO $db, string $sql): PDOStatement
     return $st;
 }
 
+/**
+ * Execute the engine-specific DDL from a three-arm driver-dispatch map.
+ *
+ * Collapses the copy-pasted `if (driver === 'sqlite') ... elseif ('mysql') ...
+ * elseif ('pgsql')` DDL pattern repeated across migration closures into a
+ * single call, delegating execution to ipam_query_or_throw().
+ *
+ * @param  PDO                                                    $db          Open connection; caller controls error mode.
+ * @param  array{sqlite?:string,mysql?:string,pgsql?:string}      $ddlByEngine Map of driver name to CREATE TABLE DDL string.
+ * @return void
+ * @throws RuntimeException if no DDL key exists for the current driver.
+ */
+function migration_create_table(PDO $db, array $ddlByEngine): void
+{
+    $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver    = is_string($driverRaw) ? $driverRaw : '';
+    if (!isset($ddlByEngine[$driver])) {
+        throw new RuntimeException("migration_create_table: no DDL for driver '{$driver}'");
+    }
+    ipam_query_or_throw($db, $ddlByEngine[$driver]);
+}
+
 /** @return array<string, \Closure> */
 function ipam_migrations(): array
 {

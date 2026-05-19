@@ -35,4 +35,25 @@ final class MigrationHelperTest extends TestCase
         $this->expectExceptionMessageMatches('/NOPE/');
         ipam_query_or_throw($db, 'SELECT * FROM NOPE_no_such_table');
     }
+
+    public function test_migration_create_table_runs_engine_specific_ddl(): void
+    {
+        $db = new PDO('sqlite::memory:');
+        $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        migration_create_table($db, [
+            'sqlite' => 'CREATE TABLE t (id INTEGER PRIMARY KEY)',
+            'mysql'  => 'CREATE TABLE t (id INT PRIMARY KEY)',
+            'pgsql'  => 'CREATE TABLE t (id SERIAL PRIMARY KEY)',
+        ]);
+        $exists = ipam_query_or_throw($db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='t'")
+            ->fetchColumn();
+        $this->assertSame(1, (int)$exists);
+    }
+
+    public function test_migration_create_table_throws_on_missing_engine_key(): void
+    {
+        $db = new PDO('sqlite::memory:');
+        $this->expectException(RuntimeException::class);
+        migration_create_table($db, ['mysql' => 'CREATE TABLE t (id INT)']);
+    }
 }
