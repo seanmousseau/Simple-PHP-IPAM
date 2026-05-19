@@ -1402,6 +1402,16 @@ function ipam_migrations(): array
             }
         },
 
+        // NOTE (C5, #929): this key's '3.0.0' semver predates its array
+        // position — it sits physically after the 3.1.0-* migrations above.
+        // The subnet_contacts feature arrived late in the 3.1.0 cycle but was
+        // tagged with a 3.0.0 key. The key is INTENTIONALLY NOT renamed:
+        // migration keys are persisted per-install in schema_migrations and
+        // apply_migrations() (lib/db.php) keys solely on exact string match
+        // with no aliasing layer — renaming a shipped key makes every upgraded
+        // install treat it as unapplied and re-run + re-record the migration.
+        // Runtime ordering is unaffected: apply_migrations() ksort()s by key,
+        // so physical array position is cosmetic only.
         '3.0.0-subnet-contacts' => function(PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'sqlite') {
@@ -2194,6 +2204,16 @@ function ipam_migrations(): array
         },
 
         // 3.6.0-lockout: persistent account lockout columns (#421)
+        // NOTE (C5, #929): this key's '3.6.0' semver predates its array
+        // position — it sits physically after 3.7.0-backup-history above.
+        // The persistent-lockout columns arrived late in the 3.7.0 cycle but
+        // were tagged with a 3.6.0 key. The key is INTENTIONALLY NOT renamed:
+        // migration keys are persisted per-install in schema_migrations and
+        // apply_migrations() (lib/db.php) keys solely on exact string match
+        // with no aliasing layer — renaming a shipped key makes every upgraded
+        // install treat it as unapplied and re-run + re-record the migration.
+        // Runtime ordering is unaffected: apply_migrations() ksort()s by key,
+        // so physical array position is cosmetic only.
         '3.6.0-lockout' => function(PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
