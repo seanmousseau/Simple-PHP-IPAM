@@ -51,13 +51,13 @@ These are the rules a fresh agent must hold in working memory before touching co
 5. **`app_secret` lives in `config.php`, never the DB.** Per-tenant keys (v4+) HKDF-derive from it; vault key likewise stays out of DB.
 6. **No `git push` or PR merge without explicit per-conversation authorisation.** Previous yes does not carry forward.
 7. **Local 3-driver gate before push.** `bash testing/bootstrap-app.sh sqlite|mysql|pgsql` + Playwright all green. CI minutes are paid; don't use CI as the test runner.
-8. **No `global $config;` in extracted `lib/*.php` modules — use the `ipam_config()` accessor (ADR-003).** `global $db` (runtime PDO handle) is still permitted. Full sweep tracked as #1207.
+8. **No `global $config;` (or `$GLOBALS['config']`) anywhere in the tree — use the `ipam_config()` accessor (ADR-003).** `global $db` (runtime PDO handle) is still permitted. The sweep is complete (#1207 closed in v3.33.0); the ADR-004 linter (`testing/scripts/lib-module-linter.php`) now enforces this across the whole codebase, not just the extracted `lib/*.php` modules.
 
 ---
 
 ## Current shipped version
 
-**v3.32.0** (see `Simple-PHP-IPAM/version.php`). Anything in the internal docs citing a version ≥ v4.0.0 is forward-looking design — do not apply to current code.
+**v3.33.0** (see `Simple-PHP-IPAM/version.php`). Anything in the internal docs citing a version ≥ v4.0.0 is forward-looking design — do not apply to current code.
 
 ---
 
