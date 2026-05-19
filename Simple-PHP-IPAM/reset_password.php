@@ -23,7 +23,7 @@ if ($rawToken !== '') {
     $peekSt   = $db->prepare(
         "SELECT id FROM password_reset_tokens
           WHERE token_hash = :hash AND used_at IS NULL
-            AND expires_at > datetime('now')"
+            AND expires_at > " . ipam_dialect()->now()
     );
     $peekSt->execute([':hash' => $peekHash]);
     $tokenValid = (bool)$peekSt->fetch();

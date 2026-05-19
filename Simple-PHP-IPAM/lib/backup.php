@@ -1819,8 +1819,7 @@ function ipam_restore_dry_run(PDO $db, string $stagedPath): array
         return ipam_restore_logical_dry_run($db, $stagedPath);
     }
 
-    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $driver = is_string($driverAttr) ? $driverAttr : '';
+    $driver = ipam_dialect()->driver_name();
     if ($driver !== 'sqlite') {
         throw new RuntimeException('ipam_restore: dry-run only supports sqlite in v3.17.0');
     }
@@ -2043,8 +2042,7 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
         ];
     }
 
-    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $driver = is_string($driverAttr) ? $driverAttr : '';
+    $driver = ipam_dialect()->driver_name();
     if ($driver !== 'sqlite') {
         throw new RuntimeException('ipam_restore: apply only supports sqlite in v3.17.0');
     }
@@ -3519,8 +3517,7 @@ function ipam_logical_timestamp_for_mysql(string $value): string
  */
 function ipam_logical_q(PDO $db, string $ident): string
 {
-    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $driver = is_string($driverAttr) ? $driverAttr : '';
+    $driver = ipam_dialect()->driver_name();
     if ($driver === 'mysql') {
         return '`' . str_replace('`', '``', $ident) . '`';
     }
@@ -4145,8 +4142,7 @@ function ipam_logical_replay_row(
     // INSERT with named placeholders. Postgres can't use lastInsertId() without
     // a sequence name, so it gets a RETURNING clause appended and reads back
     // the generated PK directly. SQLite and MySQL keep the lastInsertId() path.
-    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $driver     = is_string($driverAttr) ? $driverAttr : '';
+    $driver = ipam_dialect()->driver_name();
     $cols   = array_keys($decoded);
     $colList = implode(', ', array_map(fn($c) => ipam_logical_q($db, (string) $c), $cols));
     $phList  = implode(', ', array_map(fn($c) => ':' . $c, $cols));

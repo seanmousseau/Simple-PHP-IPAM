@@ -6777,7 +6777,7 @@ function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool 
         "SELECT id, code_hash FROM totp_backup_codes WHERE user_id = :uid AND used_at IS NULL"
     );
     $stmt->execute([':uid' => $userId]);
-    $nowExpr = $db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? "datetime('now')" : "NOW()";
+    $nowExpr = ipam_dialect()->now();
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         if (password_verify($code, (string)$row['code_hash'])) {
             $consume = $db->prepare(
@@ -7153,13 +7153,7 @@ function ipam_passkey_find_by_credential_id(PDO $db, string $credentialIdBin): ?
 
 function ipam_passkey_update_sign_count(PDO $db, int $credentialDbId, int $signCount): void
 {
-    /** @var string $driver */
-    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
-    $nowExpr = match($driver) {
-        'sqlite' => "datetime('now')",
-        'mysql'  => "UTC_TIMESTAMP()",
-        default  => "(NOW() AT TIME ZONE 'utc')",
-    };
+    $nowExpr = ipam_dialect()->now();
     $db->prepare("UPDATE webauthn_credentials SET sign_count = :sc, last_used_at = $nowExpr WHERE id = :id")
        ->execute([':sc' => $signCount, ':id' => $credentialDbId]);
 }

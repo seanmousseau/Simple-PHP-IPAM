@@ -44,7 +44,7 @@ if ($data === null) {
     }
     $dbVersion = '';
     try {
-        $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $driver = ipam_dialect()->driver_name();
         if ($driver === 'sqlite') {
             $vRow = ipam_fetch_assoc($db->query("SELECT sqlite_version() AS v") ?: null);
             if ($vRow !== []) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');

@@ -287,10 +287,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $result  = ipam_webhook_deliver($row, to_str($row['event_type']), to_str($row['payload']), to_str($row['signature']));
             $attempt = to_int($row['attempt']) + 1;
             $ok      = $result['status'] !== null && $result['status'] >= 200 && $result['status'] < 300;
+            $nowExpr = ipam_dialect()->now();
             $upd = $db->prepare(
                 "UPDATE webhook_deliveries
                  SET attempt=:att, http_status=:st, response_body=:body, error=:err,
-                     delivered_at=CASE WHEN :ok THEN datetime('now') ELSE NULL END
+                     delivered_at=CASE WHEN :ok THEN {$nowExpr} ELSE NULL END
                  WHERE id=:id"
             );
             $upd->execute([
@@ -301,7 +302,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':ok'   => $ok ? 1 : 0,
                 ':id'   => $delId,
             ]);
-            $db->prepare("UPDATE webhooks SET last_delivery_at=datetime('now'), last_delivery_status=:st WHERE id=:id")
+            $db->prepare("UPDATE webhooks SET last_delivery_at={$nowExpr}, last_delivery_status=:st WHERE id=:id")
                ->execute([':st' => $result['status'], ':id' => $row['webhook_id']]);
             audit($db, 'webhook.retry', 'webhook', to_int($row['webhook_id']), "delivery_id=$delId status=" . to_str((string)($result['status'] ?? 'null')));
             flash_set($ok ? 'Delivery retried successfully.' : 'Retry attempted — delivery still failed.');

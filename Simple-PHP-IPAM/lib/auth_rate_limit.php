@@ -390,7 +390,7 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
        ->execute([':cutoff' => $cutoff]);
 
     // Increment current window
-    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = ipam_dialect()->driver_name();
     if ($driver === 'mysql') {
         $db->prepare(
             "INSERT INTO rate_limit_buckets (bucket_key, window_start, count) VALUES (:k, :w, 1)
