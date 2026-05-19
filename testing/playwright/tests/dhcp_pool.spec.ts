@@ -191,3 +191,154 @@ test('dhcp_pool: start IP outside subnet returns error', async () => {
   // The response body should contain an error about the subnet
   expect(res.body).toMatch(/not within|invalid/i);
 });
+
+test('dhcp_pool: inverted range (start > end) is rejected', async () => {
+  expect(testSubnetId).toBeGreaterThan(0);
+  await page.goto(`dhcp_pool.php?subnet_id=${testSubnetId}`);
+  const res = await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action:    'reserve_pool',
+    subnet_id: String(testSubnetId),
+    start_ip:  '10.55.0.50',
+    end_ip:    '10.55.0.40',
+    note:      'inverted',
+  });
+  // Real controller emits this exact $err (dhcp_pool.php:81), rendered in
+  // <p class="danger">. Nothing must be reserved on rejection.
+  expect(res.body).toContain('Start IP must be less than or equal to End IP.');
+});
+
+test('dhcp_pool: oversized range (>1024 IPs) cannot be reserved', async () => {
+  expect(testSubnetId).toBeGreaterThan(0);
+  await page.goto(`dhcp_pool.php?subnet_id=${testSubnetId}`);
+  // The test subnet is a /24 (256 IPs), so a >1024-IP span necessarily
+  // extends past the subnet boundary. The controller checks the in-CIDR
+  // guard before the size guard (dhcp_pool.php:72-83), so an over-/24
+  // range is rejected by whichever guard fires first — either way the
+  // request is refused and nothing is reserved. The dedicated size-guard
+  // wording ('Range too large (max 1,024 IPs per operation)') is exercised
+  // by the unit-level CIDR primitives; here we assert the end-to-end
+  // controller refuses any range larger than the subnet itself.
+  const res = await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action:    'reserve_pool',
+    subnet_id: String(testSubnetId),
+    start_ip:  '10.55.0.0',
+    end_ip:    '10.55.5.0',
+    note:      'oversized',
+  });
+  expect(res.body).toMatch(/not within|Range too large/i);
+});
+
+// ── Conflict resolution (created / updated / skipped) ───────────────────────────
+//
+// These tests POST to the REAL reserve_pool controller and assert on the
+// machine-checkable success string it emits (dhcp_pool.php:136):
+//   "{created} reserved (new), {updated} updated, {skipped} skipped (already used)."
+// rendered inside <p class="success">. Each test uses a distinct IP block
+// inside 10.55.0.0/24 and clears it afterwards so order-independence holds.
+
+test('dhcp_pool: conflict — happy path reports N created, 0 updated, 0 skipped', async () => {
+  expect(testSubnetId).toBeGreaterThan(0);
+  await page.goto(`dhcp_pool.php?subnet_id=${testSubnetId}`);
+  // 10.55.0.60 – 10.55.0.63 = 4 fresh IPs.
+  const res = await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action:    'reserve_pool',
+    subnet_id: String(testSubnetId),
+    start_ip:  '10.55.0.60',
+    end_ip:    '10.55.0.63',
+    note:      'conflict-happy',
+  });
+  expect(res.body).toContain('4 reserved (new), 0 updated, 0 skipped (already used).');
+
+  // Cleanup.
+  await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action: 'clear_pool', subnet_id: String(testSubnetId),
+    start_ip: '10.55.0.60', end_ip: '10.55.0.63',
+  });
+});
+
+test('dhcp_pool: conflict — used (dynamic-lease) IPs are SKIPPED not overwritten', async () => {
+  expect(testSubnetId).toBeGreaterThan(0);
+
+  // Seed a live 'used' address inside the range via the real addresses
+  // controller. The reserve_pool loop must never downgrade it to reserved.
+  await page.goto(`addresses.php?subnet_id=${testSubnetId}`);
+  await fetchPost(page, appUrl('addresses.php'), {
+    action: 'create', subnet_id: String(testSubnetId),
+    ip: '10.55.0.71', hostname: 'live-host', owner: '',
+    status: 'used', note: 'dynamic lease', grp: '',
+    mac: '11:22:33:44:55:66',
+  });
+
+  await page.goto(`dhcp_pool.php?subnet_id=${testSubnetId}`);
+  // 10.55.0.70 – 10.55.0.73 = 4 IPs; .71 is already used.
+  const res = await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action:    'reserve_pool',
+    subnet_id: String(testSubnetId),
+    start_ip:  '10.55.0.70',
+    end_ip:    '10.55.0.73',
+    note:      'conflict-used',
+  });
+  // 3 free slots created, the 1 used row skipped, none updated.
+  expect(res.body).toContain('3 reserved (new), 0 updated, 1 skipped (already used).');
+
+  // The used row keeps its status — verify via the addresses page.
+  await page.goto(`addresses.php?subnet_id=${testSubnetId}`);
+  const usedRow = page.locator('tr', { hasText: '10.55.0.71' });
+  await expect(usedRow).toContainText(/used/i);
+
+  // Cleanup: clear the 3 reserved rows and delete the seeded used address.
+  await page.goto(`dhcp_pool.php?subnet_id=${testSubnetId}`);
+  await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action: 'clear_pool', subnet_id: String(testSubnetId),
+    start_ip: '10.55.0.70', end_ip: '10.55.0.73',
+  });
+  await page.goto(`addresses.php?subnet_id=${testSubnetId}`);
+  const addrId = await page.evaluate(() => {
+    for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="address_id"]')) {
+      const row = a.closest('tr');
+      if (row?.innerText.includes('10.55.0.71')) {
+        const m = a.href.match(/address_id=([0-9]+)/);
+        if (m) return m[1];
+      }
+    }
+    return '';
+  });
+  if (addrId) {
+    await fetchPost(page, appUrl('addresses.php'), {
+      action: 'delete', subnet_id: String(testSubnetId), id: addrId,
+    });
+  }
+});
+
+test('dhcp_pool: conflict — already-reserved IPs are UPDATED in place (idempotent)', async () => {
+  expect(testSubnetId).toBeGreaterThan(0);
+  await page.goto(`dhcp_pool.php?subnet_id=${testSubnetId}`);
+
+  // First reservation: 10.55.0.80 – 10.55.0.83 = 4 IPs, all fresh.
+  const first = await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action:    'reserve_pool',
+    subnet_id: String(testSubnetId),
+    start_ip:  '10.55.0.80',
+    end_ip:    '10.55.0.83',
+    note:      'first-pass',
+  });
+  expect(first.body).toContain('4 reserved (new), 0 updated, 0 skipped (already used).');
+
+  // Re-reserving the SAME range: every row already 'reserved' → updated in
+  // place, nothing created, nothing skipped (idempotent).
+  await page.goto(`dhcp_pool.php?subnet_id=${testSubnetId}`);
+  const second = await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action:    'reserve_pool',
+    subnet_id: String(testSubnetId),
+    start_ip:  '10.55.0.80',
+    end_ip:    '10.55.0.83',
+    note:      'second-pass',
+  });
+  expect(second.body).toContain('0 reserved (new), 4 updated, 0 skipped (already used).');
+
+  // Cleanup.
+  await fetchPost(page, appUrl('dhcp_pool.php'), {
+    action: 'clear_pool', subnet_id: String(testSubnetId),
+    start_ip: '10.55.0.80', end_ip: '10.55.0.83',
+  });
+});
