@@ -47,6 +47,22 @@ Any change that alters the runtime database structure on an existing install: ne
 
 8. **Bump `version.php`** and add the migration mention to the release `## [X.Y.Z]` entry in `CHANGELOG.md` under either `Added` (new tables/columns) or `Changed` (modified existing).
 
+## Policies
+
+### One CREATE TABLE per migration closure
+
+Every **new** migration closure must create at most one logical table (one `CREATE TABLE` statement per engine arm, i.e. one call to `migration_create_table()`).
+
+**Rationale.** MySQL issues an implicit commit on DDL statements. The `START TRANSACTION` that `apply_migrations()` opens is therefore a no-op for DDL on MySQL — it provides no rollback protection. A closure that creates two or more tables and fails partway through leaves partial schema on MySQL with no way to roll back.
+
+**Anti-pattern.** `'3.17.0-backup'` in `migrations.php` (≈ 200 lines, creates `backup_destinations`, `backup_schedules`, and `backup_log` in a single closure) is the canonical example of what not to do. Each of those tables should have been a separate migration key.
+
+**Forward-looking only.** Already-shipped multi-table closures are **not** re-split. Splitting a shipped closure would require renaming or removing its key from `schema_migrations`, corrupting upgrade history on every existing install. Add a `// NOTE: this closure pre-dates the one-table-per-closure policy` comment if you touch such a closure (see the `3.3.0-devices` comments for the pattern).
+
+**Enforcement checkpoint.** The `migration-reviewer` subagent (`.claude/agents/`) reviews every edit to `migrations.php`. It will flag a new closure that calls `migration_create_table()` more than once.
+
+**Preferred implementation.** Use `migration_create_table(PDO $db, array $ddlByEngine)` — the three-arm driver-dispatch helper defined at the top of `migrations.php` — to execute the single `CREATE TABLE` per engine. This collapses the copy-pasted `if ($driver === 'sqlite') ... elseif ('mysql') ...` pattern into one call.
+
 ## Pitfalls (already burned)
 
 - **`DROP TABLE` with FKs ON cascades to children.** SQLite executes a row-by-row DELETE before dropping. v2.2.1 wiped every IP address on upgrade because of this. `apply_migrations()` now disables FKs around each migration; do not re-enable them inside your closure.
