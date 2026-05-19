@@ -168,7 +168,8 @@ function ipam_migrations(): array
                 // Backfill existing local accounts so they aren't immediately expired.
                 // SSO-only accounts (unusable hash starting with '!') are left NULL
                 // since expiry doesn't apply to them.
-                $db->exec("UPDATE users SET password_changed_at = datetime('now')
+                $now = ipam_dialect()->now();
+                $db->exec("UPDATE users SET password_changed_at = {$now}
                            WHERE password_hash NOT LIKE '!%'");
             }
         },
@@ -970,17 +971,19 @@ function ipam_migrations(): array
                    ->execute([':v' => is_string($payload) ? $payload : '[]']);
                 // Audit the auto-migration so it appears in audit.php and the
                 // admin sees what happened.
+                $auditNow = ipam_dialect()->now();
                 $db->prepare(
                     "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
-                     VALUES ('settings.auto_migrate_alert_email', 'setting', NULL, NULL, 'system', '', '', :d, datetime('now'))"
+                     VALUES ('settings.auto_migrate_alert_email', 'setting', NULL, NULL, 'system', '', '', :d, {$auditNow})"
                 )->execute([':d' => "from={$legacy} matched_user_id={$uid}"]);
             } else {
                 // Either zero matches or ambiguous (>1 active user with the
                 // same email). Don't drop the value silently — emit an audit
                 // row so the admin can re-pick recipients on settings.php.
+                $auditNow = ipam_dialect()->now();
                 $db->prepare(
                     "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
-                     VALUES ('settings.alert_email_unmigrated', 'setting', NULL, NULL, 'system', '', '', :d, datetime('now'))"
+                     VALUES ('settings.alert_email_unmigrated', 'setting', NULL, NULL, 'system', '', '', :d, {$auditNow})"
                 )->execute([':d' => "from={$legacy} matched_count=" . count($matches)]);
             }
         },
@@ -4155,11 +4158,7 @@ function ipam_migrations(): array
             //    table without the theme column (they mark 1.11 as already
             //    applied but don't actually run it). Skip the backfill when
             //    the column is absent rather than fail.
-            $nowExpr = match ($driver) {
-                'mysql' => 'UTC_TIMESTAMP()',
-                'pgsql' => "NOW() AT TIME ZONE 'utc'",
-                default => "datetime('now')", // sqlite
-            };
+            $nowExpr = ipam_dialect()->now();
             $keyCol = match ($driver) {
                 'mysql' => '`key`',
                 'pgsql' => '"key"',
