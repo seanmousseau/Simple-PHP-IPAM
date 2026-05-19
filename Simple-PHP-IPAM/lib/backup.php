@@ -926,8 +926,8 @@ function ipam_backup_dump_to_tmp(PDO $db): string
         }
 
         if ($driver === 'mysql' || $driver === 'pgsql') {
-            global $config;
-            $cfg = is_array($config ?? null) ? $config : [];
+            // ADR-003 (#1207): config read via ipam_config(), not `global`.
+            $cfg = ipam_config();
             $tmpSql = $tmp . '.sql';
             $native = ipam_backup_native_cmd($driver, $cfg);
             try {

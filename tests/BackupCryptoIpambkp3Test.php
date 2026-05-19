@@ -695,12 +695,17 @@ class BackupCryptoIpambkp3Test extends TestCase
         global $config;
         $original = $config['backup_vault_key'] ?? null;
         unset($config['backup_vault_key']);
+        // ADR-003: ipam_backup_vault_key_get_raw() reads config via the
+        // ipam_config() accessor, which caches; invalidate after an
+        // in-place $config mutation so the read sees the new value.
+        ipam_config_invalidate_cache();
         try {
             $this->assertNull(ipam_backup_vault_key_get_raw());
         } finally {
             if ($original !== null) {
                 $config['backup_vault_key'] = $original;
             }
+            ipam_config_invalidate_cache();
         }
     }
 
@@ -709,6 +714,7 @@ class BackupCryptoIpambkp3Test extends TestCase
         global $config;
         $original = $config['backup_vault_key'] ?? null;
         $config['backup_vault_key'] = '';
+        ipam_config_invalidate_cache();
         try {
             $this->assertNull(ipam_backup_vault_key_get_raw());
         } finally {
@@ -717,6 +723,7 @@ class BackupCryptoIpambkp3Test extends TestCase
             } else {
                 $config['backup_vault_key'] = $original;
             }
+            ipam_config_invalidate_cache();
         }
     }
 
@@ -725,6 +732,7 @@ class BackupCryptoIpambkp3Test extends TestCase
         global $config;
         $original = $config['backup_vault_key'] ?? null;
         $config['backup_vault_key'] = 'not-base64-of-32-bytes';
+        ipam_config_invalidate_cache();
         try {
             $this->assertNull(ipam_backup_vault_key_get_raw());
         } finally {
@@ -733,6 +741,7 @@ class BackupCryptoIpambkp3Test extends TestCase
             } else {
                 $config['backup_vault_key'] = $original;
             }
+            ipam_config_invalidate_cache();
         }
     }
 
@@ -742,6 +751,7 @@ class BackupCryptoIpambkp3Test extends TestCase
         $original = $config['backup_vault_key'] ?? null;
         $rawKey = random_bytes(BACKUP_VAULT_KEY_LEN);
         $config['backup_vault_key'] = base64_encode($rawKey);
+        ipam_config_invalidate_cache();
         try {
             $this->assertSame($rawKey, ipam_backup_vault_key_get_raw());
         } finally {
@@ -750,6 +760,7 @@ class BackupCryptoIpambkp3Test extends TestCase
             } else {
                 $config['backup_vault_key'] = $original;
             }
+            ipam_config_invalidate_cache();
         }
     }
 
@@ -762,6 +773,7 @@ class BackupCryptoIpambkp3Test extends TestCase
         global $config;
         $original = $config['backup_vault_key'] ?? null;
         unset($config['backup_vault_key']);
+        ipam_config_invalidate_cache();
         try {
             ipam_backup_vault_key_get_raw();
             // We can't directly observe absence of a file write across an
@@ -774,6 +786,7 @@ class BackupCryptoIpambkp3Test extends TestCase
             if ($original !== null) {
                 $config['backup_vault_key'] = $original;
             }
+            ipam_config_invalidate_cache();
         }
     }
 

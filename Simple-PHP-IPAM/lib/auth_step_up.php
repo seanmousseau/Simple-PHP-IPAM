@@ -423,8 +423,7 @@ function ipam_sudo_verify(\PDO $db, int $userId, array $proof, string $clientIp 
                 // and decrypted with $config['app_secret']. Same shape as
                 // totp_verify.php:128 — keep these two call sites in sync.
                 $code      = (string) preg_replace('/\D/', '', to_str($proof['code'] ?? ''));
-                $cfg       = $GLOBALS['config'] ?? null;
-                $appSecret = is_array($cfg) ? to_str($cfg['app_secret'] ?? '') : '';
+                $appSecret = to_str(ipam_config('app_secret', ''));
                 $plain     = ($appSecret !== '')
                     ? ipam_totp_decrypt_secret(to_str($row['totp_secret_enc'] ?? ''), $appSecret)
                     : '';

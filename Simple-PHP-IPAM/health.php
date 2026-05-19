@@ -37,7 +37,7 @@ if ($data === null) {
     $driver  = ipam_dialect()->driver_name();
     $dbSize  = 0;
     /** @var IpamConfig $gConf */
-    $gConf = $GLOBALS['config'];
+    $gConf = ipam_config();
     if ($driver === 'sqlite') {
         $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
         $dbSize = is_file($dbPath) ? (int)filesize($dbPath) : 0;

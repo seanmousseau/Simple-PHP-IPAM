@@ -15,8 +15,7 @@
  */
 declare(strict_types=1);
 
-/** @var array<string,mixed> $config */
-$config = is_array($GLOBALS['config'] ?? null) ? $GLOBALS['config'] : [];
+// ADR-003 (#1207): config read via ipam_config(), not $GLOBALS.
 
 /**
  * Look up the most recent auto-gen audit timestamp for an install key.
@@ -48,7 +47,8 @@ $lookupAutoGenDate = static function (\PDO $db, string $action): ?string {
 // generated value that an operator subsequently cleared or corrupted must
 // not report "auto-generated YYYY-MM-DD" as if it were healthy). Only then
 // annotate a healthy value with the auto-gen timestamp.
-$appSecretCfg = is_string($config['app_secret'] ?? null) ? (string)$config['app_secret'] : '';
+$appSecretCfgRaw = ipam_config('app_secret');
+$appSecretCfg = is_string($appSecretCfgRaw) ? $appSecretCfgRaw : '';
 $appSecretValid = false;
 if ($appSecretCfg !== '') {
     // ipam_app_secret() emits base64_encode(random_bytes(32)) — 32 raw bytes.
@@ -74,7 +74,8 @@ if ($appSecretCfg === '') {
 
 // bootstrap_key state. Same ordering: current-value validity wins over
 // audit-history annotation.
-$bootstrapCfg = is_string($config['bootstrap_key'] ?? null) ? (string)$config['bootstrap_key'] : '';
+$bootstrapCfgRaw = ipam_config('bootstrap_key');
+$bootstrapCfg = is_string($bootstrapCfgRaw) ? $bootstrapCfgRaw : '';
 $bootstrapValid = false;
 if ($bootstrapCfg !== '') {
     try {

@@ -3709,13 +3709,10 @@ function ipam_migrations(): array
                 return;
             }
 
-            /** @var array<string,mixed>|null $config */
-            $config = $GLOBALS['config'] ?? null;
-            if (!is_array($config)) {
-                return;
-            }
-
-            $legacyB64 = $config['backup_vault_key'] ?? null;
+            // ADR-003 (#1207): config read via ipam_config(), not $GLOBALS.
+            // backup_vault_key is a legacy/optional config key outside the
+            // IpamConfig shape, so read it via the single-key accessor.
+            $legacyB64 = ipam_config('backup_vault_key');
             if (!is_string($legacyB64) || $legacyB64 === '') {
                 return;
             }
@@ -3916,11 +3913,9 @@ function ipam_migrations(): array
             $rows = $db->query("SELECT id, secret FROM webhooks");
             if ($rows === false) return;
 
-            $appSecret = '';
-            global $config;
-            if (is_array($config) && isset($config['app_secret']) && is_string($config['app_secret'])) {
-                $appSecret = $config['app_secret'];
-            }
+            // ADR-003 (#1207): config read via ipam_config(), not `global`.
+            $appSecretCfg = ipam_config('app_secret');
+            $appSecret = is_string($appSecretCfg) ? $appSecretCfg : '';
 
             $upd = $db->prepare("UPDATE webhooks SET secret = :s WHERE id = :id");
             $reencrypted = 0;
@@ -4506,8 +4501,9 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
         return;
     }
 
-    /** @var array<string, mixed>|null $config */
-    $config = $GLOBALS['config'] ?? null;
+    // ADR-003 (#1207): config read via ipam_config(), not $GLOBALS.
+    /** @var IpamConfig $config */
+    $config = ipam_config();
     $definitions = ipam_setting_definitions();
 
     // Detect whether the 3.13.0-settings-cascade migration has already run
@@ -4569,12 +4565,10 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
 
         $storageType = is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string';
         $value = $def['default'] ?? null;
-        if (is_array($config)) {
-            $cfgKey = $def['config_key'] ?? null;
-            if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
-                $cfgVal = ipam_setting_config_fallback($config, $cfgKey);
-                if ($cfgVal !== null) $value = $cfgVal;
-            }
+        $cfgKey = $def['config_key'] ?? null;
+        if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
+            $cfgVal = ipam_setting_config_fallback($config, $cfgKey);
+            if ($cfgVal !== null) $value = $cfgVal;
         }
 
         // v3.30.0 Task 3.3 (ADR-001): no :t bind — settings.type was dropped.

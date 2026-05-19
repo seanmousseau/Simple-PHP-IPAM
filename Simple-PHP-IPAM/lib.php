@@ -263,11 +263,13 @@ function ipam_install_key_announce_record(string $key): void
     // the event. When `$db` is not yet a PDO (very early bootstrap, or a
     // CLI seed script that opens its own connection), fall back to a
     // fresh `ipam_db($config)` connection rather than silently no-op.
-    global $db, $config;
+    // ADR-003 (#1207): config read via ipam_config(), not `global $config;`.
+    // `global $db;` (the runtime PDO handle) is still permitted.
+    global $db;
     $conn = $db instanceof PDO ? $db : null;
-    if ($conn === null && isset($config) && function_exists('ipam_db')) {
+    if ($conn === null && function_exists('ipam_db')) {
         try {
-            $conn = ipam_db($config);
+            $conn = ipam_db(ipam_config());
         } catch (\Throwable $e) {
             error_log('[ipam_install_key_announce_record] ' . $key . ': fallback ipam_db() failed: ' . $e->getMessage());
             $conn = null;
@@ -1569,8 +1571,7 @@ function ipam_argon2id_derive(
  */
 function ipam_backup_vault_key_get_raw(): ?string
 {
-    /** @var array<string,mixed> $config */
-    global $config;
+    // ADR-003 (#1207): config read via ipam_config(), not `global $config;`.
 
     // v3.26.0 (#1098 + CR #1100): DB-resident wrapped envelope is the
     // primary store. Falls back to the legacy config field for one
@@ -1616,7 +1617,8 @@ function ipam_backup_vault_key_get_raw(): ?string
             $raw = '';
         }
         if ($raw !== '' && strlen($raw) === BACKUP_VAULT_KEY_LEN) {
-            if (isset($config['backup_vault_key']) && $config['backup_vault_key'] !== '') {
+            $cfgVaultKey = ipam_config('backup_vault_key');
+            if (is_string($cfgVaultKey) && $cfgVaultKey !== '') {
                 error_log(
                     'backup_vault_key present in BOTH config.php and the settings table; '
                     . 'using the DB row. Remove the config.php field once you have confirmed '
@@ -1627,7 +1629,7 @@ function ipam_backup_vault_key_get_raw(): ?string
         }
     }
 
-    $b64 = $config['backup_vault_key'] ?? null;
+    $b64 = ipam_config('backup_vault_key');
     if (!is_string($b64) || $b64 === '') {
         return null;
     }
@@ -3883,7 +3885,7 @@ function parse_contact_assignments(array $post): array
 function demo_mode_enabled(): bool
 {
     /** @var IpamConfig $gConf */
-    $gConf = $GLOBALS['config'];
+    $gConf = ipam_config();
     return !empty($gConf['demo_mode']['enabled']);
 }
 
@@ -5098,9 +5100,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             // available — it's a config.php-only key, never in the
             // settings table, per CLAUDE.md.
             $appSecret = to_str($config['app_secret']
-                ?? (is_array($GLOBALS['config'] ?? null)
-                    ? ($GLOBALS['config']['app_secret'] ?? '')
-                    : ''));
+                ?? ipam_config('app_secret', ''));
             try {
                 $secretPlain = ipam_webhook_decrypt_secret(
                     (string)$hook['secret'],
@@ -6462,8 +6462,7 @@ function ipam_app_base_url(): string
     if ($memo !== null) {
         return $memo;
     }
-    $cfg    = $GLOBALS['config'] ?? null;
-    $base   = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
+    $base   = rtrim(to_str(ipam_config('base_url', '')), '/');
     $parsed = $base !== '' ? parse_url($base) : false;
     if ($base === '' || !is_array($parsed)
         || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {

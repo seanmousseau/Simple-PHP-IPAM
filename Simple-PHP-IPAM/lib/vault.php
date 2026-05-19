@@ -54,12 +54,9 @@ function ipam_bootstrap_key(): string
         return $cached;
     }
 
-    /** @var array<string,mixed> $config */
-    global $config;
-
-    $existingB64 = (isset($config['bootstrap_key']) && is_string($config['bootstrap_key']))
-        ? $config['bootstrap_key']
-        : '';
+    // ADR-003 (#1207): config read via ipam_config(), not `global $config;`.
+    $cfgBootstrapKey = ipam_config('bootstrap_key');
+    $existingB64 = is_string($cfgBootstrapKey) ? $cfgBootstrapKey : '';
 
     if ($existingB64 !== '') {
         $decoded = base64_decode($existingB64, true);

@@ -299,8 +299,7 @@ function ipam_vault_key_status(\PDO $db): array
     $createdAt     = null;
     $present       = false;
 
-    /** @var array<string,mixed> $config */
-    global $config;
+    // ADR-003 (#1207): config read via ipam_config(), not `global $config;`.
 
     // v3.27.8 Bug E: single source of truth for the three-state report.
     // The DB-envelope branch below mirrors `state`; the legacy config
@@ -346,7 +345,7 @@ function ipam_vault_key_status(\PDO $db): array
 
     // Legacy config fallback.
     if (!$present) {
-        $b64 = $config['backup_vault_key'] ?? null;
+        $b64 = ipam_config('backup_vault_key');
         if (is_string($b64) && $b64 !== '') {
             $rawCfg = base64_decode($b64, true);
             if (is_string($rawCfg) && strlen($rawCfg) === BACKUP_VAULT_KEY_LEN) {

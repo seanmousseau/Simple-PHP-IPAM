@@ -220,10 +220,27 @@ ADR-004 already declared `lib/utils.php` and `lib/db.php` as v3.30.0 modules. A 
 - All existing `global $config;` patterns inside the modules being extracted in v3.30.0 (utils, ip, db, audit, settings, user_preferences, presentation, auth ×4) are converted to `ipam_config()` calls as part of each extraction. Net effect on v3.30.0: ~120 mechanical edits spread across 11 modules. Each extraction PR includes "and convert the moved code's config access to `ipam_config()`."
 - Lib module linter (ADR-004's accompaniment) gains a rule: `global $config;` is forbidden everywhere; `$GLOBALS['config']` direct access is forbidden.
 
-### v3.32.0 — Sweep through remaining files
+### v3.32.0 / v3.33.0 — Sweep through remaining files — COMPLETE (#1207)
 
-- api.php, page handlers, and the remaining lib functions (in modules extracted in v3.32.0) have their config access converted.
-- After v3.32.0 the codebase has zero `global $config;` declarations.
+- api.php, page handlers, views, `migrations.php`, and the remaining lib
+  functions had their config access converted to `ipam_config()` /
+  `ipam_config_nested()`.
+- The sweep landed in the v3.33.0 refactor wave (Task CFG, #1207). After it
+  the codebase has **zero `global $config;` declarations and zero direct
+  `$GLOBALS['config']` reads** outside the genuinely-exempt bootstrap files.
+- **Linter scope widened.** `testing/scripts/lib-module-linter.php` gained a
+  fourth rule — the ADR-003 config-access ban — and that rule now walks the
+  **whole `Simple-PHP-IPAM/` tree** (every `*.php`, recursively), not just
+  `lib/*.php`. A reintroduced `global $config;` or `$GLOBALS['config']`
+  access anywhere — api.php, a page handler, a view — now fails CI via
+  `LibModuleLinterTest`. Detection is tokenizer-based, so the banned text
+  inside a comment or string literal is not flagged.
+- **Exempt files** (`ADR003_CONFIG_BAN_EXEMPT` in the linter): `lib/config.php`
+  (the `ipam_config()` accessor — the single legitimate reader of
+  `$GLOBALS['config']`), `config.php` / `config.php.example` (operator-edited
+  bootstrap files that *define* the config array via `return [...]`), and
+  `init.php` (the bootstrap that populates `$GLOBALS['config']` before
+  `lib/config.php` is loaded).
 
 ### GH issues to open
 
@@ -243,10 +260,18 @@ v3.30.0:
 - `Simple-PHP-IPAM/lib/config.php` — new.
 - `Simple-PHP-IPAM/lib/utils.php`, `lib/ip.php`, `lib/db.php`, `lib/audit.php`, `lib/settings.php`, `lib/user_preferences.php`, `lib/presentation.php`, `lib/auth.php`, `lib/auth_password.php`, `lib/auth_rate_limit.php`, `lib/auth_recaptcha.php` — all see the conversion as part of their extraction.
 - `Simple-PHP-IPAM/init.php` — populates the cache via the existing `$config` global; no behavioural change to the loading sequence.
-- `testing/scripts/lib-module-linter.php` — gains `global $config;` and `$GLOBALS['config']` rules.
+- `testing/scripts/lib-module-linter.php` — gains `global $config;` and `$GLOBALS['config']` rules. (Landed instead in the v3.33.0 #1207 sweep — see the v3.32.0 / v3.33.0 "Files changed" entry below — once the whole-tree conversion made a whole-tree linter rule enforceable.)
 
-v3.32.0:
-- `Simple-PHP-IPAM/api.php`, `import_csv.php`, plus the wave-2 extracted modules.
+v3.32.0 / v3.33.0 (#1207 — sweep complete):
+- `Simple-PHP-IPAM/health.php`, `restore.php`, `migrations.php`, `lib.php`,
+  `lib/app_secret.php`, `lib/vault.php`, `lib/auth_step_up.php`,
+  `lib/backup.php`, `lib/backup_admin_destinations.php`,
+  `views/install_keys_panel.php`, `views/settings_group_form.php` — converted
+  to `ipam_config()`.
+- `testing/scripts/lib-module-linter.php` — config-access ban added as a
+  fourth rule, widened to scan the whole `Simple-PHP-IPAM/` tree.
+- `tests/Unit/LibModuleLinterTest.php` — two regression tests for the
+  whole-tree config-access ban.
 
 ### Schema migrations needed
 
