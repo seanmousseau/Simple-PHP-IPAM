@@ -31,6 +31,7 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
   - [Bulk create addresses](#bulk-create-addresses)
   - [Bulk create subnets](#bulk-create-subnets)
 - [Pagination](#pagination)
+  - [List response shape](#list-response-shape)
 - [Managing API keys](#managing-api-keys)
 - [Examples](#examples)
 - [API versioning](#api-versioning)
@@ -89,18 +90,11 @@ Content-Type: application/json; charset=utf-8
 X-Total-Count: 1247
 ```
 
-The default response shape stays flat for backwards compatibility:
+### List response shape
 
-```json
-{
-  "total": 1247,
-  "page": 1,
-  "limit": 200,
-  "subnets": [ ... ]
-}
-```
+Every list endpoint can return one of two body shapes. **The `{data, meta}` envelope is the canonical, recommended shape** — new integrations should request it on every list call.
 
-Pass `?envelope=1` to switch to a generic `{data, meta}` envelope. The list key is replaced with `data` so a single client can iterate every paginated resource with one shape:
+**Canonical — `{data, meta}` envelope (recommended).** Pass `?envelope=1`. The list key is replaced with `data` so a single client can iterate every paginated resource with one shape:
 
 ```json
 {
@@ -114,7 +108,22 @@ Pass `?envelope=1` to switch to a generic `{data, meta}` envelope. The list key 
 }
 ```
 
-Both shapes always include the `X-Total-Count` header, so a polling client can use HEAD-style introspection without parsing the body.
+**Deprecated — flat shape (default).** When `?envelope=1` is not passed, the response is the legacy flat shape: items under a resource-named key alongside `total`/`page`/`limit`.
+
+```json
+{
+  "total": 1247,
+  "page": 1,
+  "limit": 200,
+  "subnets": [ ... ]
+}
+```
+
+> **Deprecated.** The flat shape is soft-deprecated as of **v3.33.0**. Responses in this shape carry a `Deprecation: true` response header (RFC 8594) and a `Link: </docs/api.md#list-response-shape>; rel="deprecation"` header pointing here.
+>
+> **Sunset:** the flat shape will be **removed in v4.0.0**. Tracked as issue [#1252](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1252). Migrate by adding `?envelope=1` to every list request and reading `data` / `meta` instead of the resource key / top-level pagination fields.
+
+Both shapes always include the `X-Total-Count` header, so a polling client can use HEAD-style introspection without parsing the body. The example responses for individual list endpoints below show the flat shape for historical continuity; append `?envelope=1` to receive the canonical envelope instead.
 
 ---
 

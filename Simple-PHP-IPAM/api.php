@@ -353,10 +353,12 @@ function api_validate_tag_ids(PDO $db, array $rawTagIds): array
 /**
  * #314: build a paginated response shape and emit the X-Total-Count header.
  *
- * Default flat shape (BC) wraps the items under $listKey alongside total/page/
- * limit. When the caller passes ?envelope=1, the shape switches to a generic
- * `{data, meta}` wrapper so paginating UIs can parse one shape across every
- * resource.
+ * The `{data, meta}` envelope (?envelope=1) is the canonical shape: a generic
+ * wrapper paginating UIs can parse across every resource. The legacy flat
+ * shape — items under $listKey alongside total/page/limit — remains the
+ * default for backward compatibility but is soft-deprecated as of v3.33.0:
+ * it emits a `Deprecation: true` response header and is slated for removal in
+ * v4.0.0. See docs/api.md#list-response-shape.
  *
  * @param array<int|string, mixed> $items
  * @param array<string, mixed>     $extra extra top-level keys to merge into the
@@ -384,6 +386,12 @@ function api_paginated_response(string $listKey, array $items, int $total, int $
             ]),
         ];
     }
+    // The flat list shape is soft-deprecated as of v3.33.0: the {data,meta}
+    // envelope (?envelope=1, the branch above) is now the canonical shape.
+    // The flat shape keeps working unchanged but advertises its deprecation
+    // via these headers so clients can migrate before the hard removal.
+    header('Deprecation: true');
+    header('Link: </docs/api.md#list-response-shape>; rel="deprecation"');
     return array_merge($extra, [
         'total'  => $total,
         'page'   => $page,
