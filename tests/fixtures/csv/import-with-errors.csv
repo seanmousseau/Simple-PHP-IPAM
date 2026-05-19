@@ -1,0 +1,9 @@
+ip,hostname,owner,cidr,custom_fields
+10.50.60.10,good-a,alice,10.50.60.0/24,{}
+not-an-ip,bad-ip,bob,10.50.60.0/24,{}
+10.50.60.11,good-b,carol,10.50.60.0/24,{}
+10.50.60.12,bad-cidr,dave,not-a-cidr,{}
+10.50.60.13,wrong-net,erin,10.99.99.0/24,{}
+10.50.60.14,bad-json,frank,10.50.60.0/24,{not valid json
+10.50.60.10,dup-row,grace,10.50.60.0/24,{}
+10.50.60.15,good-c,heidi,10.50.60.0/24,{}
