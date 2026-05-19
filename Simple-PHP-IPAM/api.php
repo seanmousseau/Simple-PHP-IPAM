@@ -1637,10 +1637,28 @@ function api_unassigned(PDO $db): never
  * @param array<string, mixed> $apiKey
  * @param array<mixed> $body
  */
-function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bulkLimit): never
+/**
+ * Generic per-row bulk-create driver shared by api_*_bulk_create handlers.
+ *
+ * Behaviour shared by every bulk-create endpoint: the body must be a non-empty
+ * JSON list within the configured bulk limit; each row is processed
+ * independently (no surrounding transaction — a row failing does NOT roll back
+ * earlier rows); successes and per-row errors are collected into a uniform
+ * `results` list; the response is `created`/`failed`/`results` with status
+ * 201 (all ok), 207 (partial), or 400 (none). The resource-specific per-row
+ * work — validation, the INSERT, audit/history logging — is supplied by the
+ * $process callable.
+ *
+ * @param array<mixed>                                   $body         decoded request body
+ * @param int                                            $bulkLimit    max rows per request
+ * @param string                                         $itemLabel    noun for the non-list error, e.g. "address objects"
+ * @param callable(array<string, mixed>): array<string, mixed> $process  per-row handler; returns
+ *        ['success' => true, 'id' => int] or ['success' => false, 'error' => string]
+ */
+function api_bulk_create(PDO $db, array $body, int $bulkLimit, string $itemLabel, callable $process): never
 {
     if (!array_is_list($body)) {
-        api_error(400, 'Bulk create expects a JSON array of address objects.');
+        api_error(400, "Bulk create expects a JSON array of $itemLabel.");
     }
     if (count($body) === 0) {
         api_error(400, 'Array must not be empty.');
@@ -1655,7 +1673,24 @@ function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bul
             $results[] = ['success' => false, 'error' => 'Item must be an object.'];
             continue;
         }
+        /** @var array<string, mixed> $item */
+        $results[] = $process($item);
+    }
 
+    $succeeded = count(array_filter($results, fn($r) => $r['success'] === true));
+    $failed    = count($results) - $succeeded;
+    $code = $succeeded > 0 ? ($failed > 0 ? 207 : 201) : 400;
+    http_response_code($code);
+    api_json(['created' => $succeeded, 'failed' => $failed, 'results' => $results]);
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<mixed> $body
+ */
+function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bulkLimit): never
+{
+    api_bulk_create($db, $body, $bulkLimit, 'address objects', function (array $item) use ($db, $apiKey): array {
         $subnetId  = isset($item['subnet_id']) ? to_int($item['subnet_id']) : 0;
         $ip        = trim(to_str($item['ip'] ?? ''));
         $hostname  = trim(to_str($item['hostname'] ?? ''));
@@ -1667,30 +1702,27 @@ function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bul
         if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) $expiresAt = '';
         $status = strtolower(trim(to_str($item['status'] ?? 'used')));
 
-        if ($subnetId <= 0) { $results[] = ['success' => false, 'error' => 'subnet_id is required.']; continue; }
-        if ($ip === '')     { $results[] = ['success' => false, 'error' => 'ip is required.']; continue; }
+        if ($subnetId <= 0) { return ['success' => false, 'error' => 'subnet_id is required.']; }
+        if ($ip === '')     { return ['success' => false, 'error' => 'ip is required.']; }
         if (!in_array($status, ['used', 'reserved', 'free'], true)) {
-            $results[] = ['success' => false, 'error' => 'status must be used, reserved, or free.'];
-            continue;
+            return ['success' => false, 'error' => 'status must be used, reserved, or free.'];
         }
 
         $subnetSt = $db->prepare("SELECT id, cidr, ip_version FROM subnets WHERE id = :id");
         $subnetSt->execute([':id' => $subnetId]);
         /** @var array<string, mixed>|false $subnet */
         $subnet = $subnetSt->fetch();
-        if (!$subnet) { $results[] = ['success' => false, 'error' => "Subnet $subnetId not found."]; continue; }
+        if (!$subnet) { return ['success' => false, 'error' => "Subnet $subnetId not found."]; }
 
         $n = normalize_ip($ip);
-        if (!$n) { $results[] = ['success' => false, 'error' => 'Invalid IP address.']; continue; }
+        if (!$n) { return ['success' => false, 'error' => 'Invalid IP address.']; }
         if (to_int($n['version']) !== to_int($subnet['ip_version'])) {
-            $results[] = ['success' => false, 'error' => 'IP version does not match subnet.'];
-            continue;
+            return ['success' => false, 'error' => 'IP version does not match subnet.'];
         }
 
         $p = parse_cidr(to_str($subnet['cidr']));
         if ($p === null || !ip_in_cidr($n['ip'], $p['network'], $p['prefix'])) {
-            $results[] = ['success' => false, 'error' => 'IP is not within the subnet.'];
-            continue;
+            return ['success' => false, 'error' => 'IP is not within the subnet.'];
         }
 
         // #410/#388: bind ip_bin via ipam_bind_binary() — see the
@@ -1699,7 +1731,7 @@ function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bul
         $dupSt->bindValue(':sid', $subnetId, PDO::PARAM_INT);
         ipam_bind_binary($dupSt, ':b', to_str($n['bin']));
         $dupSt->execute();
-        if ($dupSt->fetch()) { $results[] = ['success' => false, 'error' => 'Address already exists in this subnet.']; continue; }
+        if ($dupSt->fetch()) { return ['success' => false, 'error' => 'Address already exists in this subnet.']; }
 
         try {
             $bulkIns = $db->prepare(
@@ -1729,17 +1761,11 @@ function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bul
                 'status' => $status,
             ]);
 
-            $results[] = ['success' => true, 'id' => $newId];
+            return ['success' => true, 'id' => $newId];
         } catch (Throwable $ex) {
-            $results[] = ['success' => false, 'error' => 'Database error: ' . $ex->getMessage()];
+            return ['success' => false, 'error' => 'Database error: ' . $ex->getMessage()];
         }
-    }
-
-    $succeeded = count(array_filter($results, fn($r) => $r['success'] === true));
-    $failed    = count($results) - $succeeded;
-    $code = $succeeded > 0 ? ($failed > 0 ? 207 : 201) : 400;
-    http_response_code($code);
-    api_json(['created' => $succeeded, 'failed' => $failed, 'results' => $results]);
+    });
 }
 
 /**
@@ -1748,23 +1774,7 @@ function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bul
  */
 function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkLimit): never
 {
-    if (!array_is_list($body)) {
-        api_error(400, 'Bulk create expects a JSON array of subnet objects.');
-    }
-    if (count($body) === 0) {
-        api_error(400, 'Array must not be empty.');
-    }
-    if (count($body) > $bulkLimit) {
-        api_error(400, "Too many items. Maximum is $bulkLimit per request.");
-    }
-
-    $results = [];
-    foreach ($body as $item) {
-        if (!is_array($item)) {
-            $results[] = ['success' => false, 'error' => 'Item must be an object.'];
-            continue;
-        }
-
+    api_bulk_create($db, $body, $bulkLimit, 'subnet objects', function (array $item) use ($db, $apiKey): array {
         $cidr        = trim(to_str($item['cidr'] ?? ''));
         $description = trim(to_str($item['description'] ?? ''));
         $notes       = trim(to_str($item['notes'] ?? ''));
@@ -1772,26 +1782,25 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
         $vlanId      = isset($item['vlan_id']) ? to_int($item['vlan_id']) : null;
         $vrfId       = isset($item['vrf_id'])  ? to_int($item['vrf_id'])  : null;
 
-        if ($cidr === '') { $results[] = ['success' => false, 'error' => 'cidr is required.']; continue; }
+        if ($cidr === '') { return ['success' => false, 'error' => 'cidr is required.']; }
 
         $p = parse_cidr($cidr);
-        if (!$p) { $results[] = ['success' => false, 'error' => 'Invalid CIDR notation.']; continue; }
+        if (!$p) { return ['success' => false, 'error' => 'Invalid CIDR notation.']; }
 
         if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
-            $results[] = ['success' => false, 'error' => 'vlan_id must be between 1 and 4094.'];
-            continue;
+            return ['success' => false, 'error' => 'vlan_id must be between 1 and 4094.'];
         }
 
         if ($siteId !== null) {
             $siteSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
             $siteSt->execute([':id' => $siteId]);
-            if (!$siteSt->fetch()) { $results[] = ['success' => false, 'error' => "Site $siteId not found."]; continue; }
+            if (!$siteSt->fetch()) { return ['success' => false, 'error' => "Site $siteId not found."]; }
         }
 
         $normalized = $p['network'] . '/' . $p['prefix'];
         $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . "");
         $dupSt->execute([':cidr' => $normalized, ':vrf' => $vrfId]);
-        if ($dupSt->fetch()) { $results[] = ['success' => false, 'error' => "Subnet $normalized already exists."]; continue; }
+        if ($dupSt->fetch()) { return ['success' => false, 'error' => "Subnet $normalized already exists."]; }
 
         $inheritedSiteId = find_parent_site_id($db, $normalized, null, $vrfId);
         if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
@@ -1818,17 +1827,11 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
 
             api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId, "bulk cidr={$normalized}");
 
-            $results[] = ['success' => true, 'id' => $newId];
+            return ['success' => true, 'id' => $newId];
         } catch (Throwable $ex) {
-            $results[] = ['success' => false, 'error' => 'Database error: ' . $ex->getMessage()];
+            return ['success' => false, 'error' => 'Database error: ' . $ex->getMessage()];
         }
-    }
-
-    $succeeded = count(array_filter($results, fn($r) => $r['success'] === true));
-    $failed    = count($results) - $succeeded;
-    $code = $succeeded > 0 ? ($failed > 0 ? 207 : 201) : 400;
-    http_response_code($code);
-    api_json(['created' => $succeeded, 'failed' => $failed, 'results' => $results]);
+    });
 }
 
 // ---- Write: Sites ----
