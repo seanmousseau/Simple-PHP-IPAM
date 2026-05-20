@@ -2462,33 +2462,6 @@ var IpamDrawer = (function () {
     }
 }());
 
-// IpamVirtualTable — utility for future viewport-based row rendering
-function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
-    var container = document.getElementById(containerId);
-    if (!container) return;
-    var scroller = container.querySelector(".vt-scroll");
-    var tbody = container.querySelector("tbody");
-    if (!scroller || !tbody) return;
-
-    var OVERSCAN = 5;
-    scroller.style.height = (rows.length * rowHeight) + "px";
-
-    function render() {
-        var scrollTop = container.scrollTop;
-        var clientHeight = container.clientHeight;
-        var start = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
-        var end = Math.min(rows.length, Math.ceil((scrollTop + clientHeight) / rowHeight) + OVERSCAN);
-        tbody.style.transform = "translateY(" + (start * rowHeight) + "px)";
-        while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
-        for (var i = start; i < end; i++) {
-            tbody.appendChild(renderRow(rows[i], i));
-        }
-    }
-
-    container.addEventListener("scroll", render, { passive: true });
-    render();
-}
-
 // ─── Site filter strip (#629) ─────────────────────────────────────────────────
 // Pill-based client-side filter for subnets.php.
 // Filter state is stored in sessionStorage so a page reload restores the last
