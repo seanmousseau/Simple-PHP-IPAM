@@ -557,7 +557,13 @@
   });
 }());
 
-// ─── Main IIFE — concerns C07–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C07 — Search + IP validation + wheel-hijack guard (Phase 2a, #939) ──────
+// Three small adjacent search/input concerns: (1) search-page site →
+// subnet cascade filter (hides subnet <option>s whose data-site doesn't
+// match the chosen site); (2) data-validate="ip" / "cidr" client-side
+// regex check on form submit; (3) #1133 wheel-hijack guard that
+// preventDefault()'s on a wheel event over a focused number input so
+// the page scrolls instead of the number silently counting up/down.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Search page: site → subnet cascade filter ---
@@ -626,7 +632,12 @@
         t.blur();
       }
     }, { passive: false });
+  });
+}());
 
+// ─── Main IIFE — concerns C08–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Sidebar hamburger toggle (#512) ---
     (function () {
       var sidebar = document.getElementById("sidebar");
