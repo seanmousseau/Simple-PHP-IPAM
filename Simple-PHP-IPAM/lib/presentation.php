@@ -378,7 +378,6 @@ function page_header(string $title, array $opts = []): void
     // v3.29.0 #897: cache-buster values centralised in ipam_asset_buster().
     $av   = e(ipam_asset_buster());
     $cssV = e(ipam_asset_buster('assets/app.css'));
-    $jsV  = e(ipam_asset_buster('assets/app.js'));
     echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v={$av}'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v={$av}'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v={$av}'>";
@@ -390,7 +389,20 @@ function page_header(string $title, array $opts = []): void
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
     // Expose CSRF token for fetch-based POSTs from app.js (e.g. user_preference.php).
     echo "<meta name='ipam-csrf' content='" . e(csrf_token()) . "'>";
-    echo "<script defer src='assets/app.js?v={$jsV}'></script>";
+    // v3.34.0 #939 Phase 0: assets/app.js was moved to assets/modules/_monolith.js
+    // as a transitional intermediate. Future phases extract per-concern modules
+    // alongside _monolith.js (which shrinks as concerns move out) and finally
+    // delete the monolith. The emit loop here is the contract that each
+    // subsequent extraction commit appends one entry to — load order is
+    // alphabetic; numeric-prefixed filenames (00-…, 20-…) pin it.
+    // See docs/internal/app-js-modularization-plan.md.
+    $jsModules = [
+        '_monolith',  // ← transitional; deleted in Phase 4 of the rollout
+    ];
+    foreach ($jsModules as $mod) {
+        $v = e(ipam_asset_buster("assets/modules/{$mod}.js"));
+        echo "<script defer src='assets/modules/{$mod}.js?v={$v}'></script>";
+    }
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';

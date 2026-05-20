@@ -70,7 +70,12 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
 // one place.
 $av   = e(ipam_asset_buster());
 $cssV = e(ipam_asset_buster('assets/app.css'));
-$jsV  = e(ipam_asset_buster('assets/app.js'));
+// v3.34.0 #939 Phase 0: assets/app.js → assets/modules/_monolith.js (and
+// eventually per-concern modules). demo_gate.php is a gate page with its
+// own <head> and only needs the bootstrap-and-banners surface, but to stay
+// in lockstep with page_header() it loads the same module set. Future
+// phases append to this list — keep in sync with lib/presentation.php.
+$jsModules = ['_monolith'];
 ?>
 <!doctype html>
 <html>
@@ -83,7 +88,9 @@ $jsV  = e(ipam_asset_buster('assets/app.js'));
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png?v=<?= $av ?>">
   <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=<?= $av ?>">
   <link rel="stylesheet" href="assets/app.css?v=<?= $cssV ?>">
-  <script defer src="assets/app.js?v=<?= $jsV ?>"></script>
+  <?php foreach ($jsModules as $mod): $v = e(ipam_asset_buster("assets/modules/{$mod}.js")); ?>
+  <script defer src="assets/modules/<?= e($mod) ?>.js?v=<?= $v ?>"></script>
+  <?php endforeach; ?>
 </head>
 <body>
 <div class="gate-wrap">
