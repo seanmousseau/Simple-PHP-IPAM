@@ -213,12 +213,17 @@
   });
 }());
 
-// ─── Main IIFE — concerns C05–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C05 — Forms-core (Phase 2a, #939) ───────────────────────────────────────
+// Auto-submit on select change + the password show/hide toggle complex
+// (eye-icon button + reveal-from-stored secret fetch + OIDC step-up
+// round-trip replay marker). The pw-toggle is the bulk of this concern.
+// Uses `window.__ipamPwReplayInProgress` as a one-shot anti-loop flag
+// (window-scoped because the marker survives a page navigation through
+// step_up.php and back). The eye SVG sprites live in icons.svg as
+// icon-eye / icon-eye-slash and are wired into the markup by
+// `lib/presentation.php`'s settings_group_form partial (#942/PR-1).
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
-    // Sticky headers are handled by CSS (thead th { position:sticky; top:0 } within
-    // .table-wrap { overflow:auto; max-height:65vh }). No JS offset needed.
-
     // --- Auto-submit selects (data-auto-submit) ---
     document.querySelectorAll("[data-auto-submit]").forEach(function(el) {
       el.addEventListener("change", function() { el.form.submit(); });
@@ -403,7 +408,18 @@
         document.body.classList.add("pw-toggle-hidden");
       }
     } catch (_) { /* localStorage may be blocked; non-fatal */ }
+  });
+}());
 
+// ─── C06 — Forms-confirm-bulk (Phase 2a, #939) ───────────────────────────────
+// data-confirm dialogs on forms + buttons/inputs + non-form links;
+// data-submit-on-change auto-submit; data-stop-propagation guard;
+// loading-state class on POST submitters (#507); data-select-addrs
+// bulk-select helper; SSO-only toggle on users.php; reCAPTCHA v3
+// pre-submit token fetch. Many small CSP-safe replacements for the
+// inline-onclick / nested-checkbox patterns retired in v3.27.7.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Confirm dialogs on forms (data-confirm on <form>) ---
     document.addEventListener("submit", function(e) {
       var form = e.target;
@@ -538,7 +554,18 @@
         });
       }
     }
+  });
+}());
 
+// ─── C07 — Search + IP validation + wheel-hijack guard (Phase 2a, #939) ──────
+// Three small adjacent search/input concerns: (1) search-page site →
+// subnet cascade filter (hides subnet <option>s whose data-site doesn't
+// match the chosen site); (2) data-validate="ip" / "cidr" client-side
+// regex check on form submit; (3) #1133 wheel-hijack guard that
+// preventDefault()'s on a wheel event over a focused number input so
+// the page scrolls instead of the number silently counting up/down.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Search page: site → subnet cascade filter ---
     var filterSite = document.getElementById("filter-site");
     var filterSubnet = document.getElementById("filter-subnet");
@@ -605,7 +632,12 @@
         t.blur();
       }
     }, { passive: false });
+  });
+}());
 
+// ─── Main IIFE — concerns C08–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Sidebar hamburger toggle (#512) ---
     (function () {
       var sidebar = document.getElementById("sidebar");
