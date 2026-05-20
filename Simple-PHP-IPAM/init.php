@@ -308,12 +308,12 @@ if (!$isHttps) {
 //
 // The default for every layer is "derive from __DIR__", which makes
 // isolation automatic on every install without requiring any config edit.
-$configuredSessionName = to_str($config['session_name']);
-if ($configuredSessionName === '' || $configuredSessionName === 'IPAMSESSID') {
-    // Default path: suffix with 8 hex chars of the install-dir hash so
-    // two installs at different filesystem paths never collide.
-    $configuredSessionName = 'IPAMSESSID_' . substr(hash('sha256', __DIR__), 0, 8);
-}
+// B.P3 (#950): the fallback logic (config_session_name === ''
+// || 'IPAMSESSID' → 'IPAMSESSID_' . hash(__DIR__)) is shared with
+// api.php's own session-bootstrap path. Helper lives in lib/auth.php
+// — keyed on the lib/ parent directory so it resolves to this same
+// install root that __DIR__ resolves to here.
+$configuredSessionName = ipam_session_name($config);
 session_name($configuredSessionName);
 
 // Derive the cookie path from the running script so an install at

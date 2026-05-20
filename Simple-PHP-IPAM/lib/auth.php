@@ -358,6 +358,32 @@ function client_ip(): string
 }
 
 // ============================================================
+// Session name derivation (#950 B.P3)
+// ============================================================
+
+/**
+ * Derive the session cookie name from `$config['session_name']`, falling
+ * back to a per-install-directory-hashed default when unset or set to the
+ * legacy `'IPAMSESSID'` literal. Two installs at different filesystem paths
+ * never collide.
+ *
+ * The fallback logic is identical to the bootstrap at `init.php`; this
+ * helper exists so `api.php`'s own session-bootstrap path (used for
+ * browser-session-authenticated GET endpoints when no Bearer key is
+ * supplied) can derive the same value without duplicating the logic.
+ *
+ * @param IpamConfig $config
+ */
+function ipam_session_name(array $config): string
+{
+    $name = to_str($config['session_name']);
+    if ($name === '' || $name === 'IPAMSESSID') {
+        $name = 'IPAMSESSID_' . substr(hash('sha256', dirname(__DIR__)), 0, 8);
+    }
+    return $name;
+}
+
+// ============================================================
 // Session absolute lifetime (v3.6.0, #420)
 // ============================================================
 

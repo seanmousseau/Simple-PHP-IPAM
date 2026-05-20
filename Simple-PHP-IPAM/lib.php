@@ -5521,8 +5521,19 @@ function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
         throw new RuntimeException('Invalid JWKS from ' . $jwksUri);
     }
 
-    file_put_contents($cache, json_encode($d));
-    @chmod($cache, 0600);
+    // A.P3 (#949): if the cache write silently fails (full disk, permission
+    // change on tmp/, EROFS), we re-fetch the JWKS from the IdP on every
+    // subsequent request — wasteful and a soft availability hit on the
+    // OIDC login path. Surface the failure to error_log so an operator
+    // can see it without us hard-failing this request (we already have
+    // a valid in-memory $d to return).
+    $encoded = json_encode($d);
+    if ($encoded === false || @file_put_contents($cache, $encoded) === false) {
+        error_log('oidc_jwks: failed to write JWKS cache to ' . $cache
+            . ' — JWKS will be re-fetched on each request until the write succeeds');
+    } else {
+        @chmod($cache, 0600);
+    }
     return array_values((array)$d['keys']);
 }
 
