@@ -75,7 +75,7 @@ $cssV = e(ipam_asset_buster('assets/app.css'));
 // own <head> and only needs the bootstrap-and-banners surface, but to stay
 // in lockstep with page_header() it loads the same module set. Future
 // phases append to this list — keep in sync with lib/presentation.php.
-$jsModules = ['_monolith'];
+$jsModules = ['20-drawer', '_monolith'];
 ?>
 <!doctype html>
 <html>

@@ -397,6 +397,7 @@ function page_header(string $title, array $opts = []): void
     // alphabetic; numeric-prefixed filenames (00-…, 20-…) pin it.
     // See docs/internal/app-js-modularization-plan.md.
     $jsModules = [
+        '20-drawer',  // C19 — IpamDrawer (v3.34.0 #939 Phase 1); must load before consumers in _monolith
         '_monolith',  // ← transitional; deleted in Phase 4 of the rollout
     ];
     foreach ($jsModules as $mod) {
