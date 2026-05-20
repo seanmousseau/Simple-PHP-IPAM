@@ -43,6 +43,8 @@ Should each concern's per-concern IIFE in Phase 2a use the *closure pattern* (`(
 - skip the in-place restructure — accept that every Phase 2 extract is a "concern + helpers" multi-line move, larger per-commit diffs
 - defer Phase 2/3/4 entirely until a future release; ship v3.34.0 with `_monolith.js` + `20-drawer.js` as the final layout for now
 
+**✅ Decided 2026-05-20 (Sean):** **Phase 2a + 2b as above.** Proceed with in-place per-concern IIFE restructure inside `_monolith.js` first (~18 commits, intra-file), then mechanical cut-and-paste extract to `assets/modules/<NN>-<name>.js` (~18 commits, all moves). Closure-pattern per-concern IIFEs (matches existing style). Next-session start: pick the first concern (recommend C01 — bootstrap, the smallest and most independent) and run a per-concern Phase 2a sample commit to validate the pattern before doing the rest in batch.
+
 ---
 
 ## 1. Goal
