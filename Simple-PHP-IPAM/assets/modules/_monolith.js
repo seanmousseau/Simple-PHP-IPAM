@@ -213,12 +213,17 @@
   });
 }());
 
-// ─── Main IIFE — concerns C05–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C05 — Forms-core (Phase 2a, #939) ───────────────────────────────────────
+// Auto-submit on select change + the password show/hide toggle complex
+// (eye-icon button + reveal-from-stored secret fetch + OIDC step-up
+// round-trip replay marker). The pw-toggle is the bulk of this concern.
+// Uses `window.__ipamPwReplayInProgress` as a one-shot anti-loop flag
+// (window-scoped because the marker survives a page navigation through
+// step_up.php and back). The eye SVG sprites live in icons.svg as
+// icon-eye / icon-eye-slash and are wired into the markup by
+// `lib/presentation.php`'s settings_group_form partial (#942/PR-1).
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
-    // Sticky headers are handled by CSS (thead th { position:sticky; top:0 } within
-    // .table-wrap { overflow:auto; max-height:65vh }). No JS offset needed.
-
     // --- Auto-submit selects (data-auto-submit) ---
     document.querySelectorAll("[data-auto-submit]").forEach(function(el) {
       el.addEventListener("change", function() { el.form.submit(); });
@@ -403,7 +408,12 @@
         document.body.classList.add("pw-toggle-hidden");
       }
     } catch (_) { /* localStorage may be blocked; non-fatal */ }
+  });
+}());
 
+// ─── Main IIFE — concerns C06–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Confirm dialogs on forms (data-confirm on <form>) ---
     document.addEventListener("submit", function(e) {
       var form = e.target;
