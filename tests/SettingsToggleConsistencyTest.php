@@ -44,10 +44,15 @@ final class SettingsToggleConsistencyTest extends TestCase
     protected function setUp(): void
     {
         $this->groupForm   = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/views/settings_group_form.php');
-        $this->appJs       = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/assets/app.js');
+        // v3.34.0 #939 Phase 0: assets/app.js → assets/modules/_monolith.js.
+        // Reads the transitional monolith for now; once the forms-core concern
+        // (C05) is extracted into 30-forms-core.js in Phase 2, update this
+        // path to match. The #1121 assertions in this test all check strings
+        // that currently live in the monolith.
+        $this->appJs       = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/assets/modules/_monolith.js');
         $this->settingsPhp = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/settings.php');
         $this->assertNotEmpty($this->groupForm,   'settings_group_form.php must be readable');
-        $this->assertNotEmpty($this->appJs,       'app.js must be readable');
+        $this->assertNotEmpty($this->appJs,       'assets/modules/_monolith.js must be readable');
         $this->assertNotEmpty($this->settingsPhp, 'settings.php must be readable');
     }
 
