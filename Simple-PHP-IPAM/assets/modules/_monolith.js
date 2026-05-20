@@ -25,7 +25,15 @@
   }
 }());
 
-// ─── Main IIFE — concerns C02–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C02 — Theme + dismissable banners (Phase 2a, #939) ──────────────────────
+// Theme toggle (auto/light/dark) + update-banner dismiss + per-banner
+// dismissable admin notices. Helpers and DOM wire-up live together so the
+// concern is self-contained for Phase 2b move. Persists theme via
+// user_preference.php (server) AND localStorage (client seed for next page
+// load); the C01 bootstrap reads the localStorage value before paint to
+// avoid flash-of-unstyled-content. The "ipam_theme" key is the contract
+// between this concern and C01 — inlined as a literal at every site so
+// neither concern depends on the other's closure scope.
 (function(){
   function currentTheme() {
     return document.documentElement.getAttribute("data-theme") || "auto";
@@ -70,9 +78,6 @@
   }
 
   document.addEventListener("DOMContentLoaded", function() {
-    // Sticky headers are handled by CSS (thead th { position:sticky; top:0 } within
-    // .table-wrap { overflow:auto; max-height:65vh }). No JS offset needed.
-
     updateThemeButton();
 
     // --- Theme toggle button ---
@@ -116,6 +121,14 @@
         localStorage.setItem("ipam_dismissed_banner_" + name, "1");
       });
     });
+  });
+}());
+
+// ─── Main IIFE — concerns C03–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
+    // Sticky headers are handled by CSS (thead th { position:sticky; top:0 } within
+    // .table-wrap { overflow:auto; max-height:65vh }). No JS offset needed.
 
     // --- Site group collapse/expand ---
     document.querySelectorAll(".site-group-toggle").forEach(function(btn) {
