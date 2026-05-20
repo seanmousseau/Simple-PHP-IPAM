@@ -806,7 +806,11 @@
   });
 }());
 
-// \u2500\u2500\u2500 Main IIFE \u2014 concerns C10\u2013C18 (Phase 2a in progress, #939) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// \u2500\u2500\u2500 C10 \u2014 Contact typeahead (Phase 2a, #939) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// data-contact-typeahead wires a `<input>` to the contacts API with a 250 ms
+// debounce; query renders suggestions in a sibling <ul>, click stamps the
+// chosen contact's id into the hidden owner_contact_id field. Escape /
+// blur clears suggestions. Self-contained per-input closure.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Contact typeahead (data-contact-typeahead) ---
@@ -862,7 +866,12 @@
         if (e.key === "Escape") { clearSuggestions(); }
       });
     });
+  });
+}());
 
+// ─── Main IIFE — concerns C11–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Dashboard pinnable widgets + site filter (#257) ---
     (function() {
       var HIDDEN_KEY = "ipam_hidden_widgets";
