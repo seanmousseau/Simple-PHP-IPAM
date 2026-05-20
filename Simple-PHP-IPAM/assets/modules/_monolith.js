@@ -635,7 +635,14 @@
   });
 }());
 
-// ─── Main IIFE — concerns C08–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C08 — Sidebar + inline status toggle (Phase 2a, #939) ───────────────────
+// Two unrelated concerns grouped because both rebind a visible navigation
+// surface: (1) #512 sidebar hamburger toggle (mobile slide-in with overlay,
+// keyboard escape, aria-hidden state synced to viewport width); (2) #252
+// inline status toggle (click a status-badge to cycle used → reserved →
+// free → used with an XHR write-back via addresses.php update_status).
+// The sidebar dispatches `ipam:sidebar-toggle` so chart resizers can
+// re-measure after the slide animation settles.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Sidebar hamburger toggle (#512) ---
@@ -727,7 +734,12 @@
           .catch(function(){ badge.classList.remove("status-updating"); });
       });
     });
+  });
+}());
 
+// ─── Main IIFE — concerns C09–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- "Use next IP" fill helper (data-fill-ip on addresses.php) ---
     // The link can appear inside the global drawer body (Add Address /
     // Reserve Infra IPs) or alongside a sibling card on the page.
