@@ -158,6 +158,10 @@ jobs:
         if: always()
         run: php testing/scripts/migration-linter.php
 
+      - name: icons.svg audit (#942)
+        if: always()
+        run: php tools/audit-icons-svg.php
+
       # ----- MySQL slot only: test_api.sh against php -S backed by MySQL -----
       #
       # Runs the full ~150-assertion API regression suite against a fresh
