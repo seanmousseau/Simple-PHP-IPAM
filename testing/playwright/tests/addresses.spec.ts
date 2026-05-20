@@ -58,26 +58,28 @@ test('addresses page loads for subnet', async () => {
   expect(title.toLowerCase()).toContain('address');
 });
 
-// Regression: the "Reserve Infra IPs" pill is a form-drawer (#247) trigger
-// (data-open-drawer) that also carries data-drawer-title. The IpamDrawer
-// global-drawer delegate used to claim every [data-drawer-title] element, so a
-// single click opened TWO drawers — an empty global-drawer on top of the real
-// form-drawer. The pill must open exactly one (the form-drawer).
-test('Reserve Infra IPs pill opens exactly one drawer', async () => {
+// Regression: in v3.33.0 and earlier, the "Reserve Infra IPs" pill triggered
+// a separate slide-in form-drawer (#247). v3.34.0 (#1243) consolidated that
+// onto IpamDrawer's #global-drawer. Before the consolidation, IpamDrawer's
+// delegate had to NOT claim [data-drawer-title] on form-drawer triggers,
+// because a single click would open TWO drawers — an empty global-drawer on
+// top of the real form-drawer. Now that there's only one drawer, the test
+// just checks the pill opens the global-drawer with the reserve-infra form
+// inside it.
+test('Reserve Infra IPs pill opens the global drawer with the reserve form', async () => {
   expect(subnetId, 'need subnet from beforeAll').not.toBeNull();
   // A freshly-created subnet has no addresses, so network/broadcast are
   // unreserved and the pill renders.
   await page.goto(`addresses.php?subnet_id=${subnetId}`);
 
-  const pill = page.locator('[data-open-drawer="reserve-infra"]');
+  const pill = page.locator('[data-drawer-tpl="tpl-reserve-infra"]');
   await expect(pill).toBeVisible();
   await pill.click();
 
-  // The slide-in form-drawer opens, carrying the real reserve-infra form.
-  await expect(page.locator('#form-drawer.drawer--open')).toHaveCount(1);
-  await expect(page.locator('#form-drawer #reserve-infra')).toHaveCount(1);
-  // ...and the global-drawer must NOT have opened (empty-drawer regression).
-  await expect(page.locator('#global-drawer.is-open')).toHaveCount(0);
+  // The global drawer opens with the reserve-infra form's fields inside.
+  await expect(page.locator('#global-drawer.is-open')).toHaveCount(1);
+  await expect(page.locator('#global-drawer-body input[name="action"][value="reserve_infra"]')).toHaveCount(1);
+  await expect(page.locator('#global-drawer-body input[name="gateway_ip"]')).toBeVisible();
 });
 
 test('create address with mac and expires_at', async () => {
@@ -282,9 +284,11 @@ test('addresses: form drawer opens on Add Address click', async () => {
 });
 
 // Regression: the "Use" link beside "Next available" had a click handler that
-// scoped its input lookup to .card / .drawer-form-card only. The add-address
-// form renders into a bare .drawer-body, so closest() returned null and the
-// link was dead. Fix widened the scope selector to include .drawer-body.
+// originally scoped its input lookup to .card only. The add-address form
+// renders into a bare .drawer-body inside the global drawer, so closest()
+// returned null and the link was dead. Fix widened the scope selector to
+// include .drawer-body (#1243 — form-drawer retirement updated this further
+// by removing the historical .drawer-form-card from the selector).
 test('addresses: Next-available "Use" link fills IP in the drawer', async () => {
   if (!subnetId) { test.skip(); return; }
   await page.goto(`addresses.php?subnet_id=${subnetId}`);

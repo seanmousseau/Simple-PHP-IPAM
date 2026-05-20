@@ -979,35 +979,8 @@ body.nav-open .nav-drawer-overlay{display:block}
 .status-badge.status-reserved{color:var(--warn)}
 .status-badge.status-free{color:var(--muted)}
 
-/* ---- Slide-in form drawer (#247) ---- */
-#form-drawer{
-  position:fixed;top:0;right:0;bottom:0;width:440px;max-width:95vw;
-  background:var(--card);border-left:1px solid var(--border);
-  z-index:var(--z-drawer);overflow-y:auto;padding:var(--space-10);
-  transform:translateX(100%);transition:transform .22s ease;
-  display:flex;flex-direction:column;gap:var(--space-8);
-  visibility:hidden;pointer-events:none;
-}
-#form-drawer.drawer--open{transform:translateX(0);visibility:visible;pointer-events:auto}
-.form-drawer-overlay{
-  display:none;position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:var(--z-drawer-overlay);
-}
-.form-drawer-overlay.visible{display:block}
-#form-drawer .drawer-header{
-  display:flex;align-items:center;justify-content:space-between;
-  border-bottom:1px solid var(--border);padding-bottom:var(--space-6);
-}
-#form-drawer .drawer-title{margin:0;font-size:var(--font-size-6xl);font-weight:700}
-#form-drawer .drawer-close-btn{
-  background:none;border:none;cursor:pointer;font-size:1.3rem;
-  color:var(--muted);padding:var(--space-1) var(--space-3);
-}
-.drawer-form-card{display:none}
-body.drawer-ready .drawer-form-card{display:none}
-@media(max-width:600px){
-  #form-drawer{width:100vw;top:auto;height:85vh;transform:translateY(100%)}
-  #form-drawer.drawer--open{transform:translateY(0)}
-}
+/* Slide-in form-drawer (#247) was retired in v3.34.0 (#1243); all drawer
+   styles now live under IpamDrawer's `.drawer` / `#global-drawer` rules. */
 
 /* ---- Tag badges ---- */
 /* #869: background fed via the --tag-bg custom property set on the inline
@@ -1227,9 +1200,6 @@ td[data-editable].cell-saving{opacity:.5;}
 
 /* Contact typeahead: parent needs position:relative for absolute dropdown */
 .contact-typeahead-wrap{position:relative;}
-
-/* Form visible inside drawer (overrides body.drawer-ready .drawer-form-card{display:none}) */
-#form-drawer-body .drawer-form-card{display:block;}
 
 /* Utilization bar widths via data-pct attribute (replaces JS el.style.width) */
 .util-bar-fill[data-pct="0"]{width:0%}
