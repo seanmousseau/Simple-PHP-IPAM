@@ -7,6 +7,11 @@ require_role('admin');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
+// B.P3 (#950): the role set is a fixed-shape compile-time constant. Lifting
+// it to a file-scope `const` removes the per-POST-handler re-declaration and
+// avoids re-allocating the array on every request hot path.
+const USERS_VALID_ROLES = ['admin', 'netops', 'readonly'];
+
 $errors = [];
 $msg    = '';
 $self   = current_user();
@@ -22,7 +27,6 @@ $formData = ['username' => '', 'name' => '', 'email' => '', 'role' => 'readonly'
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
-    $validRoles = ['admin', 'netops', 'readonly'];
     $pwPolicy   = [
         'min_length'            => to_int(ipam_setting('password_policy.min_length')),
         'require_uppercase'     => (bool)ipam_setting('password_policy.require_uppercase'),
@@ -52,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($username === '' || !preg_match('~^[a-zA-Z0-9_.\-@]{3,64}$~', $username)) {
             $errors[] = 'Username must be 3–64 chars (letters, numbers, _ . - @).';
-        } elseif (!in_array($role, $validRoles, true)) {
+        } elseif (!in_array($role, USERS_VALID_ROLES, true)) {
             $errors[] = 'Invalid role.';
         }
         $password = '';
@@ -126,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $role = to_str($_POST['role'] ?? '');
         if ($id === $selfId) {
             $errors[] = 'You cannot change your own role.';
-        } elseif (!in_array($role, $validRoles, true)) {
+        } elseif (!in_array($role, USERS_VALID_ROLES, true)) {
             $errors[] = 'Invalid role.';
         } else {
             // Last-active-admin guard: prevent demoting the last active admin
