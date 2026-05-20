@@ -1,11 +1,47 @@
 # `assets/app.js` modularization plan (#939 + #1047)
 
-> **Status:** draft 2026-05-20.
+> **Status:** draft 2026-05-20 (amended 2026-05-20 same day — see Amendment 1 below).
 > **Scope:** v3.34.0 Refactor Wave 3 anchor work.
 > **Slot:** wraps #939 (the split) and #1047 (the test umbrella) into a single PR per project invariant ("every helper lands with ≥1 caller", "tests land with the code they cover").
 > **Source docs:** `docs/internal/archive/code_quality_review.md` finding D4; `docs/internal/coding-guide.md` frontend conventions; `docs/internal/design-guide.md` UI section; v3.34.0 PRs #1261 (icons + dead code), #1262 (drawer consolidation), #1265 (api.php P2).
 
 This plan is the prerequisite for the actual code work. The code work is **not** in scope for this document — it lands in a follow-up PR after this plan is reviewed and approved. The "operating mode" rules in `lessons-learned.md` §8 explicitly require this for architectural splits.
+
+---
+
+## ⚠️ Amendment 1 (2026-05-20) — main-IIFE helper hoisting
+
+After Phases 0 + 1 landed (PR #1268: scaffold + IpamDrawer extraction — the standalone IIFE case), the start of Phase 2 — extracting main-IIFE concerns C01–C18 — revealed a structural problem the §2.1 inventory missed:
+
+**The main IIFE is not a clean container of independent concerns.** Inspection of the first concern (C02 — theme/banners, line range 68–91 in the post-Phase-0 monolith) showed:
+
+- C02's call-site code at L68–91 invokes helpers `updateThemeButton()`, `cycleTheme()`, `dismissUpdate()`.
+- Those helpers are defined at the **TOP** of the main IIFE (L41–60), above the single big `DOMContentLoaded` handler that wraps every concern from C02 through C18.
+- Those helpers themselves reference further IIFE-local helpers (`currentTheme()`, `applyTheme()`) — likely at the very top of the file (lines 1–40).
+- The `DOMContentLoaded` event wires up every concern's listeners; concerns share the closure scope.
+
+**Implication for the rollout:** extracting just the L68–91 range to its own module would lose access to the helpers it depends on. The §2.1 concern table assumed clean line ranges, but the helpers and call sites are interleaved with several other concerns' helpers and call sites in a way the line-range view doesn't show.
+
+**Revised Phase 2 strategy (replaces the §5 Phase 2 entry below):**
+
+The original §5 Phase 2 ("extract main-IIFE concerns one at a time in numeric order, ~18 commits") is not directly viable. Replace with a two-step sub-phase:
+
+- **Phase 2a — In-place restructure.** Before any code moves out of `_monolith.js`, wrap each concern in its own per-concern IIFE *inside the file*. Move each concern's helpers down to live with the concern's call site, rather than at the top. The `DOMContentLoaded` handler splits into N independent per-concern IIFEs. No code leaves the file in this phase; the diff is intra-file restructure only. Per-concern IIFEs that need cross-concern helpers either inline them or, if shared by ≥2 concerns, hoist them to the file's top-level as named functions on `window.IpamUtils.*` (new). Run the full Playwright suite after each per-concern restructure. **~18 commits, all intra-file.**
+
+- **Phase 2b — Extract.** Now that each concern is a self-contained IIFE in `_monolith.js`, the mechanical per-concern move to `assets/modules/<NN>-<name>.js` (the original §5 Phase 2 spirit) becomes a pure cut-and-paste. **~18 commits, all moves.**
+
+**Phases 3 (trailing-IIFE concerns), 4 (delete `_monolith.js`), 5 (test umbrella), 6 (delete `assets/app.js`) are unchanged** — trailing concerns C20–C33 are already standalone IIFEs in the original file, so they don't need a 2a step.
+
+**Total commit count revised:** ~18 (Phase 2a) + ~18 (Phase 2b) + ~14 (Phase 3) + 4 (Phases 4/5/6) ≈ **~54 commits** vs the original ~36. The increase is the cost of doing the boundary work in-place first instead of trying to do it during the move.
+
+**Open question for scope-lock:**
+
+Should each concern's per-concern IIFE in Phase 2a use the *closure pattern* (`(function(){ … }())` with locals hidden) or the *module pattern with no IIFE* (top-level `var` declarations, relies on browser script-scope semantics like IpamDrawer does today)? Closure pattern preserves the current monolith's encapsulation; no-IIFE pattern flattens to one logical block per module without the wrapping ceremony. Recommendation at scope-lock: closure pattern, because (a) it matches the existing IIFE style across the file, (b) it's the documented approach in §2.2's load-order analysis, (c) future contributors are more likely to add new code via the existing pattern than the new one.
+
+**Decision needed before Phase 2a starts:** Sean confirms one of:
+- proceed with Phase 2a / 2b as above (recommended)
+- skip the in-place restructure — accept that every Phase 2 extract is a "concern + helpers" multi-line move, larger per-commit diffs
+- defer Phase 2/3/4 entirely until a future release; ship v3.34.0 with `_monolith.js` + `20-drawer.js` as the final layout for now
 
 ---
 
@@ -221,7 +257,7 @@ Each phase is a separate commit. Tests rerun after each.
 
 2. **Phase 1 — Extract `b0-ipam-drawer.js`** (now `20-drawer.js`) **first.** It's the cross-module dependency anchor; getting it right early unblocks the rest. Run gate. Commit.
 
-3. **Phase 2 — Extract main-IIFE concerns (C01 → C18) one at a time** in numeric order. After each extract, `00-monolith.js` shrinks by the corresponding range; the new module loads at its assigned slot. Each extract is one commit. ~18 commits.
+3. **Phase 2 — Extract main-IIFE concerns (C01 → C18).** **⚠️ Superseded by Amendment 1 at the top of this document.** The original "one at a time in numeric order" approach is not viable as written because the main-IIFE concerns share hoisted helpers. Amendment 1 splits this into Phase 2a (in-place restructure to per-concern IIFEs inside `_monolith.js`) then Phase 2b (the cut-and-paste extraction). Re-read the amendment before starting Phase 2.
 
 4. **Phase 3 — Extract trailing-IIFE concerns (C20 → C33).** Same per-concern-one-commit pattern. ~14 commits.
 
