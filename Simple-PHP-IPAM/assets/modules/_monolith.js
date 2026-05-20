@@ -411,7 +411,13 @@
   });
 }());
 
-// ─── Main IIFE — concerns C06–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C06 — Forms-confirm-bulk (Phase 2a, #939) ───────────────────────────────
+// data-confirm dialogs on forms + buttons/inputs + non-form links;
+// data-submit-on-change auto-submit; data-stop-propagation guard;
+// loading-state class on POST submitters (#507); data-select-addrs
+// bulk-select helper; SSO-only toggle on users.php; reCAPTCHA v3
+// pre-submit token fetch. Many small CSP-safe replacements for the
+// inline-onclick / nested-checkbox patterns retired in v3.27.7.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Confirm dialogs on forms (data-confirm on <form>) ---
@@ -548,7 +554,12 @@
         });
       }
     }
+  });
+}());
 
+// ─── Main IIFE — concerns C07–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Search page: site → subnet cascade filter ---
     var filterSite = document.getElementById("filter-site");
     var filterSubnet = document.getElementById("filter-subnet");
