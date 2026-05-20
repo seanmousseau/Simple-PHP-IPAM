@@ -30,7 +30,30 @@
         ],
         "post-update-cmd": [
             "bash testing/scripts/check-composer-lock-drift.sh"
+        ],
+        "test": "phpunit",
+        "phpstan": "phpstan analyse --memory-limit=1G",
+        "phpcs": "phpcs",
+        "phpcbf": "phpcbf",
+        "audit-icons": "php tools/audit-icons-svg.php",
+        "lint": [
+            "@phpstan",
+            "@phpcs",
+            "@audit-icons"
+        ],
+        "ci-gate": [
+            "@test",
+            "@lint"
         ]
+    },
+    "scripts-descriptions": {
+        "test": "Run the PHPUnit test suite.",
+        "phpstan": "Static analysis at the project-configured level (currently L9).",
+        "phpcs": "PSR-12 style check with project exclusions (see phpcs.xml.dist).",
+        "phpcbf": "Auto-fix PSR-12 style violations where safe.",
+        "audit-icons": "Verify icons.svg sprite has no dead symbols or missing references (#942).",
+        "lint": "Run all static-quality gates: phpstan + phpcs + audit-icons.",
+        "ci-gate": "Full local CI gate: PHPUnit + lint. Run before pushing. Does not include the dockerized 3-driver bootstrap (see testing/bootstrap-app.sh)."
     },
     "config": {
         "platform": {
