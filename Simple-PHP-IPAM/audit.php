@@ -14,14 +14,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (to_str($_POST['action'] ?? '') === 'prune_now') {
         $retDays = to_int(ipam_setting('housekeeping.audit_log_retention_days'));
         if ($retDays > 0) {
-            $pruned = prune_audit_log($db, $retDays);
+            $pruned     = prune_audit_log($db, $retDays);
+            $entryWord  = $pruned === 1 ? 'entry' : 'entries';
             if ($pruned > 0) {
                 audit($db, 'audit.pruned', 'system', null,
-                    "Manually pruned {$pruned} audit log " . ($pruned === 1 ? 'entry' : 'entries')
-                    . " older than {$retDays} days.");
+                    "Manually pruned {$pruned} audit log {$entryWord} older than {$retDays} days.");
             }
-            $msg = "Pruned " . number_format($pruned) . " audit log "
-                 . ($pruned === 1 ? 'entry' : 'entries') . " (retention: {$retDays} days).";
+            $msg = "Pruned " . number_format($pruned) . " audit log {$entryWord} (retention: {$retDays} days).";
         } else {
             $errors[] = 'Retention is set to 0 (keep forever). Update the setting to enable pruning.';
         }
