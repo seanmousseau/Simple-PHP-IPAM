@@ -654,50 +654,14 @@
       });
     });
 
-    // --- Slide-in form drawer (#247) ---
-    var formDrawer = document.getElementById("form-drawer");
-    var formDrawerOverlay = document.querySelector(".form-drawer-overlay");
-    if (formDrawer) {
-      document.body.classList.add("drawer-ready");
-      function openFormDrawer(triggerId) {
-        var src = document.getElementById(triggerId);
-        if (!src) return;
-        var body = document.getElementById("form-drawer-body");
-        if (!body) return;
-        // Clear drawer body safely, then move source content in
-        while (body.firstChild) body.removeChild(body.firstChild);
-        body.appendChild(src);
-        formDrawer.classList.add("drawer--open");
-        if (formDrawerOverlay) formDrawerOverlay.classList.add("visible");
-      }
-      function closeFormDrawer() {
-        formDrawer.classList.remove("drawer--open");
-        if (formDrawerOverlay) formDrawerOverlay.classList.remove("visible");
-      }
-      if (formDrawerOverlay) formDrawerOverlay.addEventListener("click", closeFormDrawer);
-      var drawerCloseBtn = formDrawer.querySelector(".drawer-close-btn");
-      if (drawerCloseBtn) drawerCloseBtn.addEventListener("click", closeFormDrawer);
-      document.addEventListener("keydown", function(e) { if (e.key === "Escape") closeFormDrawer(); });
-      // Wire up any [data-open-drawer] triggers
-      document.querySelectorAll("[data-open-drawer]").forEach(function(trigger) {
-        trigger.addEventListener("click", function(e) {
-          e.preventDefault();
-          var titleEl = formDrawer.querySelector(".drawer-title");
-          if (titleEl && trigger.dataset.drawerTitle) titleEl.textContent = trigger.dataset.drawerTitle;
-          openFormDrawer(trigger.dataset.openDrawer);
-        });
-      });
-    }
-
     // --- "Use next IP" fill helper (data-fill-ip on addresses.php) ---
-    // The link also appears in the Add Address drawer, whose body is a
-    // bare .drawer-body (no .card / .drawer-form-card wrapper), so accept
-    // that as a scoping container too.
+    // The link can appear inside the global drawer body (Add Address /
+    // Reserve Infra IPs) or alongside a sibling card on the page.
     document.addEventListener("click", function(e) {
       var el = e.target.closest("[data-fill-ip]");
       if (!el) return;
       e.preventDefault();
-      var card = el.closest(".drawer-form-card, .card, .drawer-body");
+      var card = el.closest(".card, .drawer-body");
       if (!card) return;
       var inp = card.querySelector('input[name="ip"]');
       if (inp) { inp.value = el.dataset.fillIp; inp.focus(); }
@@ -1301,7 +1265,7 @@
     /* ---- Subnet edit drawer (#567) ---- */
     (function() {
       var editDrawer = document.getElementById("subnet-edit-drawer");
-      if (!editDrawer || !formDrawer) return;
+      if (!editDrawer) return;
 
       var siteWrap = document.getElementById("subnet-edit-site-wrap");
       var siteLocked = document.getElementById("subnet-edit-site-locked");
@@ -1398,17 +1362,7 @@
           });
         }
 
-        editDrawer.hidden = false;
-        var titleEl = formDrawer.querySelector(".drawer-title");
-        if (titleEl) titleEl.textContent = "Edit " + d.cidr;
-        var body = document.getElementById("form-drawer-body");
-        if (body) {
-          while (body.firstChild) body.removeChild(body.firstChild);
-          body.appendChild(editDrawer);
-        }
-        formDrawer.classList.add("drawer--open");
-        var overlay = document.querySelector(".form-drawer-overlay");
-        if (overlay) overlay.classList.add("visible");
+        IpamDrawer.openNode("Edit " + d.cidr, editDrawer);
       });
     }());
 
@@ -2189,6 +2143,31 @@ var IpamDrawer = (function () {
         else drawer.focus();
     }
 
+    // openNode — like open(), but accepts a DOM node and MOVES it (rather
+    // than copying innerHTML). Use when the content has JS-attached
+    // behaviour that must survive the drawer open: bound event listeners,
+    // imperatively populated values, references held in closures (e.g. the
+    // subnets edit drawer's tag select, custom-field inputs, and typeahead
+    // pickers). innerHTML cloning would lose all of that. Caller may pass
+    // either an Element or an id string. The node is set non-hidden after
+    // it lands in the drawer; previous body content is discarded.
+    function openNode(title, nodeOrId) {
+        _init();
+        var node = (typeof nodeOrId === 'string') ? document.getElementById(nodeOrId) : nodeOrId;
+        if (!node) return;
+        _lastFocus = document.activeElement;
+        while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
+        node.hidden = false;
+        bodyEl.appendChild(node);
+        titleEl.textContent = title;
+        overlay.classList.add('is-visible');
+        drawer.classList.add('is-open');
+        drawer.setAttribute('aria-hidden', 'false');
+        var focusable = _getFocusable();
+        if (focusable.length) focusable[0].focus();
+        else drawer.focus();
+    }
+
     function close() {
         if (!drawer) return;
         drawer.classList.remove('is-open');
@@ -2199,11 +2178,11 @@ var IpamDrawer = (function () {
 
     // Event delegation — handle [data-drawer-tpl] buttons (CSP-safe, no onclick).
     // Match on data-drawer-tpl (the template-id content source), NOT on
-    // data-drawer-title: a bare data-drawer-title is just a label and is also
-    // consumed by the slide-in form-drawer (#247) for its own title. Claiming
-    // every [data-drawer-title] element opened an empty global-drawer on top of
-    // those triggers' real drawer (e.g. the "Reserve Infra IPs" pill, which is a
-    // data-open-drawer/form-drawer trigger that also carries data-drawer-title).
+    // data-drawer-title: data-drawer-title is just a label and may appear on
+    // any element. Historical note (#1243): a second slide-in form-drawer
+    // (#247) was retired in v3.34.0; before that, data-drawer-title could
+    // appear on triggers belonging to either drawer, and matching on it
+    // would have double-opened.
     document.addEventListener('click', function (e) {
         var btn = e.target.closest ? e.target.closest('[data-drawer-tpl]') : null;
         if (!btn) return;
@@ -2310,7 +2289,7 @@ var IpamDrawer = (function () {
             });
     }
 
-    return { open: open, close: close };
+    return { open: open, openNode: openNode, close: close };
 }());
 
 // Backup History drawer action handlers (#803).

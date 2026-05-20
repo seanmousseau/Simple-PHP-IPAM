@@ -631,15 +631,10 @@ function page_footer(): void
         echo "</div></footer></div></div>"; // close footer-meta div + footer + layout-main (div) + layout-root
     }
 
-    // Slide-in form drawer container (populated by JS openFormDrawer())
-    echo "<div id='form-drawer' role='dialog' aria-modal='true' aria-labelledby='drawer-title-text'>";
-    echo "<div class='drawer-header'>";
-    echo "<span class='drawer-title' id='drawer-title-text'></span>";
-    echo "<button class='drawer-close-btn' aria-label='Close'>&times;</button>";
-    echo "</div>";
-    echo "<div id='form-drawer-body'></div>";
-    echo "</div>";
-    echo "<div class='form-drawer-overlay'></div>";
+    // Note: the slide-in form-drawer (#247) was retired in v3.34.0 (#1243).
+    // All drawer rendering now goes through IpamDrawer (`#global-drawer`,
+    // built lazily on first use by `assets/app.js`). No container is
+    // emitted server-side.
 
     echo "</body></html>";
 }
