@@ -1,9 +1,35 @@
 # ADR-007: Adopt Open Props as the CSS design-token base
 
-**Status:** draft
+**Status:** draft (amended 2026-05-20 — see correction below)
 **Decided:** —
 **Scope:** UX foundation milestone #59 + UX nav milestone #60. Gates the migration of `assets/app.css` from a hand-rolled token scale to Open Props as the source of truth for spacing, radii, font sizes, colors, easings, and animations. Affects every CSS variable read across `app.css` (84 KB) and every PHP view that inlines a `style=""` (≤30 sites).
 **Stamped by:** —
+
+---
+
+## ⚠️ Correction (2026-05-20)
+
+This ADR was drafted on the premise that Open Props was **not** loaded by the project. **That premise was wrong.**
+
+While doing the v3.34.0 modularization Phase 0 inspection of `lib/presentation.php`, the `<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=…'>` tag was discovered at line 386, and the vendor file already exists at `Simple-PHP-IPAM/assets/vendor/open-props.min.css` (committed in `e433f134 feat(#506): design token scales + Open Props vendor`).
+
+What the original ADR §2 inventory missed: it searched `views/` + `assets/` + `lib/presentation.php` for the literal text `open-props` but the search did not reach the right line range. The vendor file + the load `<link>` have been in the tree since well before this ADR was filed.
+
+**Effect on the ADR-007 issue arc:**
+
+| # | Title | Original status | Corrected status |
+|---|---|---|---|
+| #1255 | vendor Open Props + load ahead of app.css | new work | **already done** — closed with explanation |
+| #1256 | migrate spacing + radii + font-size tokens to OP | new work | still pending |
+| #1257 | migrate neutral color tokens to OP grays | new work | still pending |
+| #1258 | adopt OP shadows + easings + animations | new work | still pending |
+| #1259 | cleanup + delete hand-rolled blocks + close #941 | new work | still pending |
+
+`assets/app.css` does NOT actually consume OP tokens today — only one stray `var(--font-size-1)` matches an OP-defined token (likely coincidence). The remaining four migration issues (#1256–#1259) are still real, still scoped correctly, and still slotted to v3.35.0 + v3.36.0.
+
+**Effect on the ADR's reasoning:** the recommendation (Option A) stands. The "vendor + drop-in" step was already done; the migrations are still the value-add. The ADR §3 "Decision drivers" section (no-build-step, milestone-#59 coupling, etc.) still applies. The ADR §5 "Implications" file list still applies (minus the new vendor file, which already exists).
+
+**No other ADR text below has been edited.** The original "Open Props is NOT loaded" language in §2 stays as-is — it is the historical record of the (incorrect) understanding at the time of drafting.
 
 ---
 

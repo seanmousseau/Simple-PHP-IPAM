@@ -301,11 +301,11 @@ Audit scope **explicitly excludes** backup/restore UX — that's `archive/backup
 
 ### 7.1 ADR-007 Open Props adoption arc (straddles v3.35.0 + v3.36.0)
 
-Captured 2026-05-20. Adopts [Open Props](https://open-props.style) as the project's CSS design-token base over two releases, paired with the natural UX work in #59 and #60.
+Captured 2026-05-20; **corrected 2026-05-20 (later same day)** — see ADR-007 amendment header. The "vendor + load" step is already done (the OP vendor file has been in the tree since `e433f134 feat(#506)` and `lib/presentation.php:386` already loads it). The remaining four issues are real and scoped correctly.
 
 | Slot | Phase | Issues | Effort |
 |---|---|---|---|
-| **v3.35.0** (#59) | **Phase 1 — Foundation:** vendor Open Props + migrate spacing/radii/font-size + neutral colors. Hand-rolled tokens kept as aliases for one-release compat. | #1255 (vendor + load), #1256 (sizing migration), #1257 (color migration) | ~3.5d |
+| **v3.35.0** (#59) | **Phase 1 — Foundation:** migrate spacing/radii/font-size + neutral colors. Hand-rolled tokens kept as aliases for one-release compat. (#1255 vendor + load is **already done** — pre-v3.34.0.) | #1256 (sizing migration), #1257 (color migration) | ~3d |
 | **v3.36.0** (#60) | **Phase 2 — Polish:** adopt OP shadows + easings + animation primitives. Delete alias block. Audit `!important`. Close #941. | #1258 (secondary tokens), #1259 (cleanup), reframed #941 (closes via #1259) | ~1.5d |
 
 **Why this slotting:**
