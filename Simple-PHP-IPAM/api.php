@@ -370,6 +370,12 @@ function api_validate_tag_ids(PDO $db, array $rawTagIds): array
 function api_paginated_response(string $listKey, array $items, int $total, int $page, int $limit, array $extra = []): array
 {
     header('X-Total-Count: ' . $total);
+    // B14 (#952) was filed as an "envelope vs counts parsing inconsistency"
+    // P2 polish item. Investigation found the difference is intentional:
+    // ApiEnvelopeTest::testEnvelopeDisabledByFalseyValuesStillDeprecates
+    // pins both `?envelope=0` AND bare `?envelope=` (empty string) to the
+    // flat-shape-with-Deprecation-header path. `?counts=` (empty) is a
+    // separate, looser knob that does opt into counts. Do not unify.
     $envelope = isset($_GET['envelope']) && $_GET['envelope'] !== '0' && $_GET['envelope'] !== '';
     if ($envelope) {
         $pages = $limit > 0 ? (int)ceil($total / $limit) : 1;
