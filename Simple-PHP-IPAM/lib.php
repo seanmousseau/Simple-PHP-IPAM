@@ -7169,6 +7169,10 @@ function ipam_passkey_dispatch_challenge(PDO $db, int $userId): bool
                 $ac->id = rtrim(strtr(base64_encode($ac->id->getBinaryString()), '+/', '-_'), '=');
             }
         }
+        // A26 (#947): MANDATORY — break the by-reference binding to the last
+        // $ac. Without this unset(), a later assignment to a variable named
+        // $ac anywhere in this function (refactor risk) would clobber the
+        // last element of $pk->allowCredentials via the still-live reference.
         unset($ac);
     }
 
@@ -7348,7 +7352,19 @@ function ipam_user_preferred_mfa(PDO $db, int $userId): ?string
 // ============================================================
 
 /**
- * @return array{subnets:int,addresses:int,used:int,pct_used:float,alerts:int}
+ * Returns dashboard summary counts for the KPI strip.
+ *
+ * `pct_tracked_used` (#948 / A31): the percentage of TRACKED address rows
+ * whose status='used' — i.e. `used / addresses`, where `addresses` is the
+ * count of rows in the addresses table, NOT the total assignable IPs across
+ * all subnets. This is an inventory-health metric (of the addresses we
+ * track, how many are claimed), not a capacity-utilisation metric. Computing
+ * true capacity utilisation would require summing `2^(32-prefix) - 2` across
+ * IPv4 subnets — which is meaningless for IPv6 — so this metric is
+ * intentionally scoped to tracked rows. The field name carries the
+ * disambiguation. Pre-v3.34.0 this was named `pct_used` and ambiguous.
+ *
+ * @return array{subnets:int,addresses:int,used:int,pct_tracked_used:float,alerts:int}
  */
 function ipam_dashboard_kpis(PDO $db): array {
     $stmtTotals = $db->query(
@@ -7371,7 +7387,7 @@ function ipam_dashboard_kpis(PDO $db): array {
         'subnets'   => $subnets,
         'addresses' => $addresses,
         'used'      => $used,
-        'pct_used'  => $addresses > 0 ? round($used / $addresses * 100, 1) : 0.0,
+        'pct_tracked_used' => $addresses > 0 ? round($used / $addresses * 100, 1) : 0.0,
         'alerts'    => is_array($alerts) ? to_int($alerts['cnt']) : 0,
     ];
 }
