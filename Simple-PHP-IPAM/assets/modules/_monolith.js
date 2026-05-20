@@ -25,7 +25,15 @@
   }
 }());
 
-// ─── Main IIFE — concerns C02–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C02 — Theme + dismissable banners (Phase 2a, #939) ──────────────────────
+// Theme toggle (auto/light/dark) + update-banner dismiss + per-banner
+// dismissable admin notices. Helpers and DOM wire-up live together so the
+// concern is self-contained for Phase 2b move. Persists theme via
+// user_preference.php (server) AND localStorage (client seed for next page
+// load); the C01 bootstrap reads the localStorage value before paint to
+// avoid flash-of-unstyled-content. The "ipam_theme" key is the contract
+// between this concern and C01 — inlined as a literal at every site so
+// neither concern depends on the other's closure scope.
 (function(){
   function currentTheme() {
     return document.documentElement.getAttribute("data-theme") || "auto";
@@ -70,9 +78,6 @@
   }
 
   document.addEventListener("DOMContentLoaded", function() {
-    // Sticky headers are handled by CSS (thead th { position:sticky; top:0 } within
-    // .table-wrap { overflow:auto; max-height:65vh }). No JS offset needed.
-
     updateThemeButton();
 
     // --- Theme toggle button ---
@@ -116,8 +121,15 @@
         localStorage.setItem("ipam_dismissed_banner_" + name, "1");
       });
     });
+  });
+}());
 
-    // --- Site group collapse/expand ---
+// ─── C03 — Site-group collapse/expand (Phase 2a, #939) ───────────────────────
+// Sidebar sub-grouping toggle (one button per group). Open/closed state
+// persists per-group in localStorage under "ipam_sg_<key>" so the user's
+// nav layout survives across pages. Independent of every other concern.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     document.querySelectorAll(".site-group-toggle").forEach(function(btn) {
       var sgKey = btn.dataset.sgKey;
       if (sgKey && localStorage.getItem("ipam_sg_" + sgKey) === "closed") {
@@ -129,7 +141,21 @@
         if (sgKey) localStorage.setItem("ipam_sg_" + sgKey, expanded ? "closed" : "open");
       });
     });
+  });
+}());
 
+// ─── C04 — Live Ping + alert-recipients clear-all (Phase 2a, #939) ───────────
+// Two unrelated delegated-click handlers grouped because each is small:
+// (1) the .ping-btn handler on addresses.php that POSTs to ping_host.php
+// and renders up/down/latency in the corresponding .ping-result-<addrId>;
+// (2) the #443 [data-clear-select] handler that deselects every option in
+// a <select multiple> (no native HTML way to do this). Both are event
+// delegates rooted at document, so they activate without needing the
+// targets to exist at script-execute time. The orphan "#317 Cmd/Ctrl+N"
+// section header that previously sat between them was dropped here — the
+// actual Cmd/Ctrl+N implementation lives in C13 (command palette).
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Live Ping buttons (addresses.php) ---
     document.addEventListener("click", function(e) {
       var btn = e.target.closest(".ping-btn");
@@ -169,8 +195,6 @@
         });
     });
 
-    // --- #317: Cmd/Ctrl+N opens the Add Address drawer on addresses.php ---
-
     // --- #443: clear-all button for the alert recipients multi-select ---
     // <button data-clear-select="<select-id>"> deselects every option in the
     // referenced <select multiple>. Without this, HTML offers no built-in
@@ -186,6 +210,14 @@
       Array.from(sel.options).forEach(function(o) { o.selected = false; });
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
+  });
+}());
+
+// ─── Main IIFE — concerns C05–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
+    // Sticky headers are handled by CSS (thead th { position:sticky; top:0 } within
+    // .table-wrap { overflow:auto; max-height:65vh }). No JS offset needed.
 
     // --- Auto-submit selects (data-auto-submit) ---
     document.querySelectorAll("[data-auto-submit]").forEach(function(el) {
