@@ -635,7 +635,14 @@
   });
 }());
 
-// ─── Main IIFE — concerns C08–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C08 — Sidebar + inline status toggle (Phase 2a, #939) ───────────────────
+// Two unrelated concerns grouped because both rebind a visible navigation
+// surface: (1) #512 sidebar hamburger toggle (mobile slide-in with overlay,
+// keyboard escape, aria-hidden state synced to viewport width); (2) #252
+// inline status toggle (click a status-badge to cycle used → reserved →
+// free → used with an XHR write-back via addresses.php update_status).
+// The sidebar dispatches `ipam:sidebar-toggle` so chart resizers can
+// re-measure after the slide animation settles.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Sidebar hamburger toggle (#512) ---
@@ -727,7 +734,21 @@
           .catch(function(){ badge.classList.remove("status-updating"); });
       });
     });
+  });
+}());
 
+// ─── C09 — Fill-IP helper + import/restore spinners (Phase 2a, #939) ─────────
+// Three small interaction helpers grouped because they each provide
+// progress / fill-in affordances around a single click or submit:
+// (1) data-fill-ip clicks copy a next-available IP into a sibling
+// input[name=ip] inside a .card or .drawer-body; (2) the import-form
+// submit overlays a generic spinner; (3) #1135 restore-apply spinner
+// overlays a spinner AND escalates its message at 5 s and 20 s so the
+// operator knows the page hasn't frozen during a long synchronous
+// restore. All three are page-targeted (specific data-* / id), no
+// shared state with any other concern.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- "Use next IP" fill helper (data-fill-ip on addresses.php) ---
     // The link can appear inside the global drawer body (Add Address /
     // Reserve Infra IPs) or alongside a sibling card on the page.
@@ -782,7 +803,16 @@
         }, 20000);
       });
     }
+  });
+}());
 
+// \u2500\u2500\u2500 C10 \u2014 Contact typeahead (Phase 2a, #939) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// data-contact-typeahead wires a `<input>` to the contacts API with a 250 ms
+// debounce; query renders suggestions in a sibling <ul>, click stamps the
+// chosen contact's id into the hidden owner_contact_id field. Escape /
+// blur clears suggestions. Self-contained per-input closure.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Contact typeahead (data-contact-typeahead) ---
     document.querySelectorAll("[data-contact-typeahead]").forEach(function(input) {
       var hiddenInput = input.parentElement.querySelector("input[name=owner_contact_id]");
@@ -836,7 +866,12 @@
         if (e.key === "Escape") { clearSuggestions(); }
       });
     });
+  });
+}());
 
+// ─── Main IIFE — concerns C11–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Dashboard pinnable widgets + site filter (#257) ---
     (function() {
       var HIDDEN_KEY = "ipam_hidden_widgets";
