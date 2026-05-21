@@ -1425,7 +1425,12 @@
   });
 }());
 
-// ─── Main IIFE — remaining sub-concerns + C14-C18 (Phase 2a, #939) ───────────
+// ─── C13d — Subnet edit drawer (#567) (Phase 2a, #939) ───────────────────────
+// Click `.subnet-edit-btn` → hydrate `#subnet-edit-drawer` from row data
+// (vlan/vrf/site/tags/custom-fields/notes) → `IpamDrawer.openNode(...)`.
+// Cross-module dependency: IpamDrawer in `20-drawer.js` loads first.
+// Inner IIFE survives the outer wrap (closure for editDrawer + site*
+// element refs).
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     /* ---- Subnet edit drawer (#567) ---- */
@@ -1531,7 +1536,12 @@
         IpamDrawer.openNode("Edit " + d.cidr, editDrawer);
       });
     }());
+  });
+}());
 
+// ─── Main IIFE — remaining sub-concerns + C14-C18 (Phase 2a, #939) ───────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Subnet stats async load (#565) ---- */
     (function() {
       var placeholders = document.querySelectorAll("[data-subnet-counts]");
