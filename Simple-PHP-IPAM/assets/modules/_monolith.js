@@ -1803,7 +1803,10 @@
   });
 }());
 
-// ─── Main IIFE — C13g + C14-C18 (Phase 2a, #939) ─────────────────────────────
+// ─── C13g — Contact card popover (#561) (Phase 2a, #939) ─────────────────────
+// Hover/focus a `.contact-link` → fetches contact details via api.php and
+// renders a small popover card. Cached per contact id; hidden on Escape
+// or scroll. Inner IIFE survives the wrap.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     /* ---- Contact card popover (#561) ---- */
@@ -1918,7 +1921,12 @@
       });
       window.addEventListener("scroll", hideCard, true);
     }());
+  });
+}());
 
+// ─── Main IIFE — C14-C18 (Phase 2a in progress, #939) ────────────────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Contact picker (v3.0.0 #563) ---
     document.querySelectorAll(".contact-picker").forEach(function(picker) {
       var contacts = [];
