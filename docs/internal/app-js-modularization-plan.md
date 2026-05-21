@@ -1,6 +1,6 @@
 # `assets/app.js` modularization plan (#939 + #1047)
 
-> **Status:** draft 2026-05-20 (amended 2026-05-20 same day — see Amendment 1 below).
+> **Status:** ⏳ pending merge (v3.34.0). All phases implemented; #939 + #1047 close on merge of the Phase 5+6 PR. The historical narrative below is retained for archaeological context — see CHANGELOG `[Unreleased]` for the landing scope (46 modules under `assets/modules/`, regression spec at `testing/playwright/tests/frontend-modules.spec.ts`).
 > **Scope:** v3.34.0 Refactor Wave 3 anchor work.
 > **Slot:** wraps #939 (the split) and #1047 (the test umbrella) into a single PR per project invariant ("every helper lands with ≥1 caller", "tests land with the code they cover").
 > **Source docs:** `docs/internal/archive/code_quality_review.md` finding D4; `docs/internal/coding-guide.md` frontend conventions; `docs/internal/design-guide.md` UI section; v3.34.0 PRs #1261 (icons + dead code), #1262 (drawer consolidation), #1265 (api.php P2).

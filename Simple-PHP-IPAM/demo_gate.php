@@ -70,12 +70,11 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
 // one place.
 $av   = e(ipam_asset_buster());
 $cssV = e(ipam_asset_buster('assets/app.css'));
-// v3.34.0 #939 Phase 0: assets/app.js → assets/modules/_monolith.js (and
-// eventually per-concern modules). demo_gate.php is a gate page with its
-// own <head> and only needs the bootstrap-and-banners surface, but to stay
-// in lockstep with page_header() it loads the same module set. Future
-// phases append to this list — keep in sync with lib/presentation.php.
-// Kept in sync with lib/presentation.php $jsModules — see #939 Phase 2b.
+// v3.34.0 #939 + #1047 (landing in v3.34.0): demo_gate.php has its own
+// <head> (does NOT call page_header), so it carries a parallel $jsModules
+// list. Keep this list byte-identical to the one in lib/presentation.php —
+// the Playwright spec at testing/playwright/tests/frontend-modules.spec.ts
+// asserts both emit sites match its canonical EXPECTED_MODULES array.
 $jsModules = [
     '00-bootstrap',
     '10-theme-banner',
