@@ -1539,7 +1539,11 @@
   });
 }());
 
-// ─── Main IIFE — remaining sub-concerns + C14-C18 (Phase 2a, #939) ───────────
+// ─── C13e — Subnet stats async load (#565) (Phase 2a, #939) ──────────────────
+// Lazy-fills per-subnet utilization counts after page load via
+// `api.php?resource=subnet_stats` so the table renders fast and the
+// counts trickle in. Inner IIFE survives the wrap (closure scope for
+// `placeholders` and the fetched data).
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     /* ---- Subnet stats async load (#565) ---- */
@@ -1650,7 +1654,12 @@
           });
         });
     }());
+  });
+}());
 
+// ─── Main IIFE — remaining sub-concerns + C14-C18 (Phase 2a, #939) ───────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Contact browse overlay (#562) ---- */
     (function() {
       var overlay = null;
