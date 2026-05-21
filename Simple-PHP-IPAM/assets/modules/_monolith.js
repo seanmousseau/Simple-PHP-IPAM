@@ -869,7 +869,16 @@
   });
 }());
 
-// ─── Main IIFE — concerns C11–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C11 — Dashboard prefs + per-user column visibility (Phase 2a, #939) ─────
+// Per-user UI preferences shared by the dashboard and any data-col-table:
+// (1) #257 dashboard pinnable widgets — hide/show via a gear menu, state
+// persisted as `ipam_hidden_widgets` JSON array in localStorage; plus the
+// dashboard's "by-site" filter persisted as `ipam_dash_site`. (2) #256
+// per-user column visibility for any table that opts in via
+// `data-col-table="<key>"` — gear dropdown shows column toggles, state
+// persisted as `ipam_cols_<key>` JSON array. Both concerns are
+// localStorage-backed (no server round-trip) so dashboard and table
+// preferences survive across sessions on the same browser.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Dashboard pinnable widgets + site filter (#257) ---
@@ -1021,7 +1030,12 @@
       // Apply persisted hidden columns
       hidden.forEach(function(col) { setColVisible(col, false); });
     });
+  });
+}());
 
+// ─── Main IIFE — concerns C12–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Subnet list/map view toggle (#255) ---
     (function() {
       var listView = document.getElementById("subnet-list-view");
