@@ -74,8 +74,7 @@ if (login_rate_limited($db, $clientIp, $apiMaxAttempts, $apiLockoutSeconds)) {
     http_response_code(429);
     header('Retry-After: ' . $apiLockoutSeconds);
     header('X-RateLimit-Limit: ' . $apiMaxAttempts);
-    echo json_encode(['error' => 'Too many failed API key attempts. Try again later.']);
-    exit;
+    api_json(['error' => 'Too many failed API key attempts. Try again later.']);
 }
 
 $rawKey = '';
@@ -122,8 +121,7 @@ if ($rawKey === '') {
 
 if ($rawKey === '' && $sessionApiKey === null) {
     http_response_code(401);
-    echo json_encode(['error' => 'API key required. Pass via Authorization: Bearer <key> header.']);
-    exit;
+    api_json(['error' => 'API key required. Pass via Authorization: Bearer <key> header.']);
 }
 
 if ($sessionApiKey !== null) {
@@ -138,8 +136,7 @@ if ($sessionApiKey !== null) {
     if (!$apiKey) {
         record_login_failure($db, $clientIp);
         http_response_code(401);
-        echo json_encode(['error' => 'Invalid or inactive API key.']);
-        exit;
+        api_json(['error' => 'Invalid or inactive API key.']);
     }
 
     // Successful auth — clear any accumulated failures for this IP
@@ -156,8 +153,7 @@ if ($sessionApiKey !== null) {
     if ($rateLimitRetryAfter > 0) {
         http_response_code(429);
         header('Retry-After: ' . $rateLimitRetryAfter);
-        echo json_encode(['error' => 'Rate limit exceeded. Too many requests for this API key.']);
-        exit;
+        api_json(['error' => 'Rate limit exceeded. Too many requests for this API key.']);
     }
 }
 
