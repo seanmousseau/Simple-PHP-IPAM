@@ -1657,7 +1657,11 @@
   });
 }());
 
-// ─── Main IIFE — remaining sub-concerns + C14-C18 (Phase 2a, #939) ───────────
+// ─── C13f — Contact browse overlay (#562) (Phase 2a, #939) ───────────────────
+// Full-page overlay listing contacts; opens when a `[data-browse-contacts]`
+// trigger is clicked, populates via `api.php?resource=contacts`, click a
+// row to stamp the id back into the originating hidden input. Escape to
+// close. Inner IIFE survives the wrap.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     /* ---- Contact browse overlay (#562) ---- */
@@ -1796,7 +1800,12 @@
         }
       });
     }());
+  });
+}());
 
+// ─── Main IIFE — C13g + C14-C18 (Phase 2a, #939) ─────────────────────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Contact card popover (#561) ---- */
     (function() {
       var card = null;
