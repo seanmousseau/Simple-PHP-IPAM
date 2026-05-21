@@ -411,6 +411,15 @@ function page_header(string $title, array $opts = []): void
         '50-sidebar',                    // C08 — sidebar hamburger + inline status toggle
         '60-fill-ip-spinners',           // C09 — fill-IP helper + import/restore spinners
         '65-contact-typeahead',          // C10 — data-contact-typeahead suggestions
+        '70-dashboard-prefs',            // C11 — dashboard widgets + column visibility
+        '75-subnet-addr-grids',          // C12 — list/map toggle + inline cell edit
+        '80-command-palette',            // C13 — ⌘K palette (consumes IpamDrawer)
+        '81-tooltips',                   // C13b — shared #ipam-tooltip
+        '82-audit-expand',               // C13c — audit-details click/keydown
+        '83-subnet-edit-drawer',         // C13d — subnet edit (calls IpamDrawer.openNode)
+        '84-subnet-stats',               // C13e — async [data-subnet-counts] fill
+        '85-contact-browse',             // C13f — contact browse overlay
+        '86-contact-card',               // C13g — contact card popover
         '_monolith',                     // remaining concerns; deleted in Phase 4
     ];
     foreach ($jsModules as $mod) {

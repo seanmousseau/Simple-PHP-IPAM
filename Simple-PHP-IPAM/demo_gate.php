@@ -88,6 +88,15 @@ $jsModules = [
     '50-sidebar',
     '60-fill-ip-spinners',
     '65-contact-typeahead',
+    '70-dashboard-prefs',
+    '75-subnet-addr-grids',
+    '80-command-palette',
+    '81-tooltips',
+    '82-audit-expand',
+    '83-subnet-edit-drawer',
+    '84-subnet-stats',
+    '85-contact-browse',
+    '86-contact-card',
     '_monolith',
 ];
 ?>
