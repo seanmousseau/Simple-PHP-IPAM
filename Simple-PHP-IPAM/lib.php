@@ -655,14 +655,17 @@ function ipam_config_sync(string $configPath, array $loaded): array
  */
 function ipam_validate_config(array $config): array
 {
+    // A39 (#949): every check uses the same `<`-comparison ("warn when
+    // val < min" === "required: val >= min"), so the legacy operator field
+    // in each tuple was dead. Dropped.
     $warnings = [];
     $checks = [
-        ['security.session_idle_seconds',  60, '>=', 'session_idle_seconds'],
-        ['security.login_max_attempts',     1, '>=', 'login_max_attempts'],
-        ['security.login_lockout_seconds',  1, '>=', 'login_lockout_seconds'],
-        ['housekeeping.audit_log_retention_days', 0, '>=', 'audit_log_retention_days'],
+        ['security.session_idle_seconds',         60, 'session_idle_seconds'],
+        ['security.login_max_attempts',            1, 'login_max_attempts'],
+        ['security.login_lockout_seconds',         1, 'login_lockout_seconds'],
+        ['housekeeping.audit_log_retention_days',  0, 'audit_log_retention_days'],
     ];
-    foreach ($checks as [$key, $min, $op, $label]) {
+    foreach ($checks as [$key, $min, $label]) {
         $val = to_int(ipam_setting($key));
         if ($val < $min) {
             $warnings[] = "{$label} is {$val}; minimum is {$min}.";
@@ -697,10 +700,13 @@ function housekeeping_state_path(): string
 }
 
 /**
+ * A39 (#949): the legacy `$config` parameter was unused — settings are
+ * read via `ipam_setting()` since the settings-table migration in v2.6.0.
+ * Dropped here and at the two call sites in lib.php.
+ *
  * @phpstan-impure
- * @param IpamConfig $config
  */
-function housekeeping_should_run(array $config): bool
+function housekeeping_should_run(): bool
 {
     if (!(bool)ipam_setting('housekeeping.enabled')) return false;
 
@@ -1058,10 +1064,14 @@ function alerts_check_if_due(array $config, PDO $db): void
     @chmod($statePath, 0600);
 }
 
-/** @param IpamConfig $config */
-function run_housekeeping_if_due(array $config, ?PDO $db = null): void
+/**
+ * A39 (#949): the legacy `$config` parameter was unused — all settings
+ * are read via `ipam_setting()`, same as `housekeeping_should_run()`.
+ * Dropped here and at the single call site in init.php.
+ */
+function run_housekeeping_if_due(?PDO $db = null): void
 {
-    if (!housekeeping_should_run($config)) return;
+    if (!housekeeping_should_run()) return;
 
     $lockPath = __DIR__ . '/data/housekeeping.lock';
     $lock = @fopen($lockPath, 'c');
@@ -1073,7 +1083,7 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
     }
 
     try {
-        if (!housekeeping_should_run($config)) return;
+        if (!housekeeping_should_run()) return;
 
         $ttl = to_int(ipam_setting('housekeeping.tmp_cleanup_ttl_seconds'));
         if ($ttl < 3600) $ttl = 3600;
@@ -4407,8 +4417,12 @@ function ipv6_enumerate_first_n(PDO $db, int $subnetId, string $networkBin, int 
 
 /* ---------------- CSV import helpers ---------------- */
 
-/** @param IpamConfig $config */
-function import_max_bytes(array $config): int
+/**
+ * A39 (#949): the legacy `$config` parameter was unused — the upper-bound
+ * comes from `limits.import_csv_max_mb` via `ipam_setting()` since v2.6.0.
+ * Dropped here and at the two call sites in import_csv.php.
+ */
+function import_max_bytes(): int
 {
     $mb = to_int(ipam_setting('limits.import_csv_max_mb'));
     if ($mb < 5) $mb = 5;

@@ -400,7 +400,7 @@ if ($_staleConfigKeys) {
 unset($_staleConfigKeys);
 
 // Run best-effort housekeeping at most once/day (configurable)
-run_housekeeping_if_due($config, $db);
+run_housekeeping_if_due($db);
 
 // Utilization alerts — independent interval (default 1 h); no-op if alert_email is empty
 alerts_check_if_due($config, $db);
