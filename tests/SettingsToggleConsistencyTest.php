@@ -44,10 +44,14 @@ final class SettingsToggleConsistencyTest extends TestCase
     protected function setUp(): void
     {
         $this->groupForm   = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/views/settings_group_form.php');
-        $this->appJs       = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/assets/app.js');
+        // v3.34.0 #939 Phase 2b/3/4: assets/app.js was split into per-concern
+        // modules. The password show/hide toggle complex (formerly the C05
+        // forms-core concern) now lives in `assets/modules/30-forms-core.js`.
+        // The #1121 assertions in this test all check strings in that file.
+        $this->appJs       = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/assets/modules/30-forms-core.js');
         $this->settingsPhp = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/settings.php');
         $this->assertNotEmpty($this->groupForm,   'settings_group_form.php must be readable');
-        $this->assertNotEmpty($this->appJs,       'app.js must be readable');
+        $this->assertNotEmpty($this->appJs,       'assets/modules/30-forms-core.js must be readable');
         $this->assertNotEmpty($this->settingsPhp, 'settings.php must be readable');
     }
 

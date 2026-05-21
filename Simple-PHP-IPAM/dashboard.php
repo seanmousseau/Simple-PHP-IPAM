@@ -183,11 +183,11 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
 <!-- KPI cards -->
 <div class="kpi-grid">
 <?php
-$pctStatus   = $kpis['pct_used'] >= 90 ? 'crit' : ($kpis['pct_used'] >= 75 ? 'warn' : 'ok');
+$pctStatus   = $kpis['pct_tracked_used'] >= 90 ? 'crit' : ($kpis['pct_tracked_used'] >= 75 ? 'warn' : 'ok');
 $alertStatus = $kpis['alerts'] > 0 ? 'crit' : 'ok';
 ipam_render('dashboard_kpi_card', ['label' => 'Subnets',     'value' => $kpis['subnets'],        'sub' => '',                                         'status' => 'ok']);
 ipam_render('dashboard_kpi_card', ['label' => 'Addresses',   'value' => $kpis['addresses'],      'sub' => '',                                         'status' => 'ok']);
-ipam_render('dashboard_kpi_card', ['label' => 'Used',        'value' => $kpis['pct_used'] . '%', 'sub' => $kpis['used'] . ' used',                   'status' => $pctStatus]);
+ipam_render('dashboard_kpi_card', ['label' => 'Used',        'value' => $kpis['pct_tracked_used'] . '%', 'sub' => $kpis['used'] . ' used',           'status' => $pctStatus]);
 ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['alerts'],         'sub' => $kpis['alerts'] > 0 ? 'active alerts' : '', 'status' => $alertStatus]);
 ?>
 </div>
@@ -395,7 +395,7 @@ if (current_user()['role'] === 'admin'):
     }
 ?>
 <div class="card" data-widget="backups" style="margin-top:1.25rem">
-  <div class="card-header"><h2><?= icon('archive-box') ?> Backups</h2></div>
+  <div class="card-header"><h2><?= icon('server-stack') ?> Backups</h2></div>
   <?php if ($bdCount === 0): ?>
     <p class="muted">No backup destinations configured yet.</p>
     <a href="backup_admin.php?tab=destinations" class="action-pill">Configure backups</a>

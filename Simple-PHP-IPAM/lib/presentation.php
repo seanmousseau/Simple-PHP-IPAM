@@ -378,19 +378,82 @@ function page_header(string $title, array $opts = []): void
     // v3.29.0 #897: cache-buster values centralised in ipam_asset_buster().
     $av   = e(ipam_asset_buster());
     $cssV = e(ipam_asset_buster('assets/app.css'));
-    $jsV  = e(ipam_asset_buster('assets/app.js'));
     echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v={$av}'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v={$av}'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v={$av}'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v={$av}'>";
     echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v={$av}'>";
     echo "<link rel='stylesheet' href='assets/app.css?v={$cssV}'>";
-    // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
+    // Expose server-side theme via meta tag so 00-bootstrap.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    // Expose CSRF token for fetch-based POSTs from app.js (e.g. user_preference.php).
+    // Expose CSRF token for fetch-based POSTs from frontend modules (e.g. user_preference.php).
     echo "<meta name='ipam-csrf' content='" . e(csrf_token()) . "'>";
-    echo "<script defer src='assets/app.js?v={$jsV}'></script>";
+    // v3.34.0 #939 + #1047 (landing in v3.34.0): the former monolithic
+    // `assets/app.js` was split into 46 per-concern modules under
+    // `assets/modules/`. Each loads as its own `<script defer>` tag;
+    // browsers execute deferred scripts in DOM-emission order, so array
+    // order = load order. Numeric/letter prefix encodes the dependency
+    // chain (20-drawer must run before 80-command-palette which consumes
+    // window.IpamDrawer; etc.). Keep this list in lockstep with the
+    // EXPECTED_MODULES array in testing/playwright/tests/frontend-modules.spec.ts
+    // and with the parallel $jsModules in demo_gate.php.
+    // See docs/internal/app-js-modularization-plan.md for the historical
+    // narrative and docs/internal/design-guide.md for the current contract.
+    $jsModules = [
+        // ── Phase 2a/2b concerns (extracted from the original main IIFE) ──
+        '00-bootstrap',                  // C01 — synchronous theme apply pre-paint
+        '10-theme-banner',               // C02 — theme toggle + banner dismiss
+        '15-site-group-collapse',        // C03 — sidebar group toggle
+        '20-drawer',                     // C19 — IpamDrawer (Phase 1 anchor)
+        '25-ping-shortcuts',             // C04 — live-ping + alert-recipients clear
+        '30-forms-core',                 // C05 — auto-submit + password toggle complex
+        '35-forms-confirm-bulk',         // C06 — confirm dialogs + form CSP delegates
+        '40-search-validation',          // C07 — search cascade + IP/CIDR + wheel-hijack
+        '50-sidebar',                    // C08 — sidebar hamburger + inline status toggle
+        '60-fill-ip-spinners',           // C09 — fill-IP helper + import/restore spinners
+        '65-contact-typeahead',          // C10 — data-contact-typeahead suggestions
+        '70-dashboard-prefs',            // C11 — dashboard widgets + column visibility
+        '75-subnet-addr-grids',          // C12 — list/map toggle + inline cell edit
+        '80-command-palette',            // C13 — ⌘K palette (consumes IpamDrawer)
+        '81-tooltips',                   // C13b — shared #ipam-tooltip
+        '82-audit-expand',               // C13c — audit-details click/keydown
+        '83-subnet-edit-drawer',         // C13d — subnet edit (calls IpamDrawer.openNode)
+        '84-subnet-stats',               // C13e — async [data-subnet-counts] fill
+        '85-contact-browse',             // C13f — contact browse overlay
+        '86-contact-card',               // C13g — contact card popover
+        '87-contact-picker',             // C14 — contact-role grid
+        '90-dhcp-export',                // C15 — DHCP export card
+        '91-custom-fields-preview',      // C15b — type-select preview
+        '92-totp-verify-toggle',         // C17 — TOTP backup-code toggle
+        '93-smtp-test',                  // C18b — SMTP test button
+        // ── Phase 3 concerns (pre-existing standalone IIFEs) ──
+        '95-backups-modals',             // backups.php modal handlers (CSP fix)
+        '96-totp-enroll-qr',             // TOTP enrollment QR code
+        '97-uplot-chart',                // uPlot dashboard growth chart
+        '98-backup-history-actions',     // #803 verify + delete from drawer
+        '99-subnets-site-filter',        // #629 sessionStorage pill filter
+        'b0-addresses-bulk-bar',         // bulk-select bar on addresses table
+        'b1-addresses-site-cascade',     // address page site → subnet cascade
+        'b2-webhooks-page',              // drawer + gen_secret + test-fire
+        'b3-addresses-device-cascade',   // device → interface dropdown
+        'b4-collapsible-rows',           // sites admin collapsible rows
+        'b5-passkey-verify',             // #689 passkey verify page
+        'b6-step-up-prompt',             // #1107 step-up auth prompt + WebAuthn
+        'b7-passkey-register',           // #688 change_password.php passkey reg
+        'b8-settings-anchor-redirect',   // #749 legacy fragment-only bookmark redirect
+        'b9-settings-rail-nav',          // #749 settings rail keyboard nav + mobile
+        'c0-destinations-admin',         // v3.17 destinations admin
+        'c1-restore-confirm-typing',     // v3.17 restore confirm-typing gate
+        'c2-remote-backups-delete',      // v3.17 remote_backups delete-with-confirm
+        'c3-destinations-verify-all',    // v3.25.0 #850 verify-all bulk action
+        'c4-skeleton-toggle',            // v3.25.0 #855 skeleton-toggle helper
+        'c5-sudo-replay-resume',         // #1131 sudo-replay landing auto-submit
+    ];
+    foreach ($jsModules as $mod) {
+        $v = e(ipam_asset_buster("assets/modules/{$mod}.js"));
+        echo "<script defer src='assets/modules/{$mod}.js?v={$v}'></script>";
+    }
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -631,15 +694,10 @@ function page_footer(): void
         echo "</div></footer></div></div>"; // close footer-meta div + footer + layout-main (div) + layout-root
     }
 
-    // Slide-in form drawer container (populated by JS openFormDrawer())
-    echo "<div id='form-drawer' role='dialog' aria-modal='true' aria-labelledby='drawer-title-text'>";
-    echo "<div class='drawer-header'>";
-    echo "<span class='drawer-title' id='drawer-title-text'></span>";
-    echo "<button class='drawer-close-btn' aria-label='Close'>&times;</button>";
-    echo "</div>";
-    echo "<div id='form-drawer-body'></div>";
-    echo "</div>";
-    echo "<div class='form-drawer-overlay'></div>";
+    // Note: the slide-in form-drawer (#247) was retired in v3.34.0 (#1243).
+    // All drawer rendering now goes through IpamDrawer (`#global-drawer`,
+    // built lazily on first use by `assets/app.js`). No container is
+    // emitted server-side.
 
     echo "</body></html>";
 }

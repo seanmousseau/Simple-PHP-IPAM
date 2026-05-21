@@ -7,7 +7,7 @@
  * elements without a `src=` are not). A page that introduces an inline
  * `<script>` or `<style>` block silently breaks under that CSP in production —
  * exactly the v3.27.7-class regression this spec exists to catch. All
- * page-served JS/CSS must live in `assets/app.js` / `assets/app.css`.
+ * page-served JS/CSS must live in `assets/modules/*.js` / `assets/app.css`.
  *
  * `<script type="application/json">` (and `application/ld+json`) data islands
  * are non-executable data blocks, not subject to `script-src`, so they're
@@ -48,7 +48,7 @@ test.describe('CSP regression guard — no inline <script>/<style> (#906)', () =
         const resp = await page.goto(appUrl('login.php'), { waitUntil: 'domcontentloaded' });
         expect(resp).not.toBeNull();
         const html = await resp!.text();
-        expect(INLINE_SCRIPT_RE.test(html), 'login.php has an inline <script> — move it to assets/app.js').toBe(false);
+        expect(INLINE_SCRIPT_RE.test(html), 'login.php has an inline <script> — move it to assets/modules/').toBe(false);
         expect(STYLE_BLOCK_RE.test(html), 'login.php has a <style> block — move it to assets/app.css').toBe(false);
     });
 

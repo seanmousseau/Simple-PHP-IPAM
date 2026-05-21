@@ -76,7 +76,7 @@ if ($step === 1 && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ??
     if ($upload === null || empty($upload['tmp_name']) || !is_uploaded_file(to_str($upload['tmp_name']))) {
         $err = 'No file uploaded.';
     } else {
-        $maxBytes = import_max_bytes($config);
+        $maxBytes = import_max_bytes();
         $size = to_int($upload['size'] ?? 0);
         if ($size > $maxBytes) {
             $err = 'File too large (max ' . (int)round($maxBytes / 1024 / 1024) . 'MB).';
@@ -175,7 +175,7 @@ if ($step === 1) {
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
         <input type="hidden" name="action" value="upload">
         <p><input type="file" name="csv" accept=".csv,text/csv" required></p>
-        <p class="muted">Max upload size: <?= e((string)((int)round(import_max_bytes($config)/1024/1024))) ?>MB</p>
+        <p class="muted">Max upload size: <?= e((string)((int)round(import_max_bytes()/1024/1024))) ?>MB</p>
         <p><button type="submit">Upload</button></p>
       </form>
     </div>

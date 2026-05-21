@@ -1,0 +1,54 @@
+name: 'Set up PHP for Simple PHP IPAM'
+description: >-
+  Composite action wrapping shivammathur/setup-php with the project's pinned
+  SHA, plus optional Composer cache setup. Used by php-qa.yml and
+  playwright.yml so the SHA pin lives in one place (#943).
+
+inputs:
+  extensions:
+    description: >-
+      Comma-separated PHP extensions to enable. Required — pass the engine
+      drivers your job actually needs (e.g. `pdo_sqlite, mbstring, openssl`
+      for sqlite-only jobs; `pdo_sqlite, pdo_mysql, pdo_pgsql, mbstring,
+      openssl` for the full php-qa matrix).
+    required: true
+  composer-cache:
+    description: >-
+      Set to "true" (default) to also set up the Composer cache for the job.
+      Set to "false" when the job does not run `composer install` (e.g. the
+      Docker-image-build slot in playwright.yml that only needs the php
+      binary on the host for tooling, not vendor/).
+    required: false
+    default: 'true'
+  php-version:
+    description: 'PHP version to install. Default 8.2 — the project floor.'
+    required: false
+    default: '8.2'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup PHP (shivammathur/setup-php)
+      uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.extensions }}
+        coverage: none
+
+    # ----- Composer cache (#411) -----
+    # Keyed on composer.lock so a no-dep PR doesn't bust the cache. Saves
+    # ~20–30s per job and compounds across matrix slots.
+    - name: Get Composer cache directory
+      if: inputs.composer-cache == 'true'
+      id: composer-cache
+      shell: bash
+      run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Composer dependencies
+      if: inputs.composer-cache == 'true'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-php-${{ inputs.php-version }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-php-${{ inputs.php-version }}-composer-

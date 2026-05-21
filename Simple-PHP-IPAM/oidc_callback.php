@@ -41,7 +41,13 @@ if ($savedState === '' || !hash_equals($savedState, $returnedState)) {
 
 // ---- IdP error response ----
 if (!empty($_GET['error'])) {
-    $errorCode = substr(to_str(preg_replace('/[^A-Za-z0-9_.:-]/', '', to_str($_GET['error']))), 0, 64);
+    // B20: split the nested to_str(preg_replace(..., to_str(...))) for
+    // readability. Inner cast guards $_GET array-input; preg_replace returns
+    // null on a regex error (PHPStan-flagged but never reached for a valid
+    // static pattern) — the `?? ''` handles it explicitly.
+    $rawErr    = to_str($_GET['error']);
+    $cleanErr  = preg_replace('/[^A-Za-z0-9_.:-]/', '', $rawErr) ?? '';
+    $errorCode = substr($cleanErr, 0, 64);
     $errorDesc = isset($_GET['error_description'])
         ? ' — ' . substr(trim(to_str($_GET['error_description'])), 0, 200)
         : '';

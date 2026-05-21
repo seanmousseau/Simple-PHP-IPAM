@@ -8,7 +8,7 @@
 
 Server-rendered PHP. Every page is one handler that calls `page_header($title)`, emits HTML, calls `page_footer()`. No SPA, no client routing, no hydration.
 
-Vanilla CSS in `assets/app.css` (~3000 lines, CSS custom properties for theming). Vanilla JS in `assets/app.js` (sidebar interactions, command palette, theme toggle, progressive enhancement). No bundlers, no transpilation, no source maps.
+Vanilla CSS in `assets/app.css` (~3000 lines, CSS custom properties for theming). Vanilla JS in `Simple-PHP-IPAM/assets/modules/*.js` — 46 per-concern modules (sidebar interactions, command palette, theme toggle, progressive enhancement, etc.), each loaded as its own `<script defer>` by `page_header()`. Load order is encoded in the numeric/letter filename prefix (`00-bootstrap.js` → `c5-sudo-replay-resume.js`), so the deferred-script execution order matches the documented dependency chain (e.g. `20-drawer.js` runs before `80-command-palette.js`, which consumes `window.IpamDrawer`). No bundlers, no transpilation, no source maps. The v3.34.0 split of the former monolithic `assets/app.js` is locked by `testing/playwright/tests/frontend-modules.spec.ts` (#939 + #1047).
 
 ---
 
@@ -65,7 +65,7 @@ When adding a new icon, prefer an existing Heroicon over a custom path. If you m
 
 ## Command palette (⌘K / Ctrl+K)
 
-Keyboard-driven navigation, record creation, theme toggle. Accessible from any page. Implementation in `assets/app.js`; items are populated from `lib.php` `ipam_command_palette_items()` plus per-page additions echoed into a `<script type="application/json">` block.
+Keyboard-driven navigation, record creation, theme toggle. Accessible from any page. Implementation in `assets/modules/80-command-palette.js`; items are populated from `lib.php` `ipam_command_palette_items()` plus per-page additions echoed into a `<script type="application/json">` block.
 
 When adding a new top-level page or admin action, add a palette entry. Without one the action is keyboard-inaccessible from anywhere except its own nav link.
 

@@ -31,22 +31,6 @@ require_once __DIR__ . '/lib/csv_import.php'; // CSV-import wizard logic (ADR-00
 /* ---------------- Timestamp display ---------------- */
 
 /**
- * Convert a UTC SQLite timestamp string to the configured timezone for display.
- *
- * All timestamps are stored as UTC ('YYYY-MM-DD HH:MM:SS'). This helper converts
- * them to the timezone configured in config.php['timezone'] (default 'UTC').
- * Apply to every timestamp echo in the UI rather than using the raw DB value.
- *
- * @param  string $utcStr  UTC datetime string from the database, or empty string.
- * @param  string $format  PHP date() format string. Defaults to 'Y-m-d H:i:s'.
- * @return string          Formatted datetime in the configured timezone, or '' if input is empty.
- */
-function display_datetime(string $utcStr, string $format = 'Y-m-d H:i:s'): string
-{
-    return ipam_format_datetime($utcStr, $format);
-}
-
-/**
  * Resolve the effective display timezone for a user.
  *
  * Fallback chain: per-user users.timezone → branding.timezone setting → PHP default → UTC.
@@ -671,14 +655,17 @@ function ipam_config_sync(string $configPath, array $loaded): array
  */
 function ipam_validate_config(array $config): array
 {
+    // A39 (#949): every check uses the same `<`-comparison ("warn when
+    // val < min" === "required: val >= min"), so the legacy operator field
+    // in each tuple was dead. Dropped.
     $warnings = [];
     $checks = [
-        ['security.session_idle_seconds',  60, '>=', 'session_idle_seconds'],
-        ['security.login_max_attempts',     1, '>=', 'login_max_attempts'],
-        ['security.login_lockout_seconds',  1, '>=', 'login_lockout_seconds'],
-        ['housekeeping.audit_log_retention_days', 0, '>=', 'audit_log_retention_days'],
+        ['security.session_idle_seconds',         60, 'session_idle_seconds'],
+        ['security.login_max_attempts',            1, 'login_max_attempts'],
+        ['security.login_lockout_seconds',         1, 'login_lockout_seconds'],
+        ['housekeeping.audit_log_retention_days',  0, 'audit_log_retention_days'],
     ];
-    foreach ($checks as [$key, $min, $op, $label]) {
+    foreach ($checks as [$key, $min, $label]) {
         $val = to_int(ipam_setting($key));
         if ($val < $min) {
             $warnings[] = "{$label} is {$val}; minimum is {$min}.";
@@ -713,10 +700,13 @@ function housekeeping_state_path(): string
 }
 
 /**
+ * A39 (#949): the legacy `$config` parameter was unused — settings are
+ * read via `ipam_setting()` since the settings-table migration in v2.6.0.
+ * Dropped here and at the two call sites in lib.php.
+ *
  * @phpstan-impure
- * @param IpamConfig $config
  */
-function housekeeping_should_run(array $config): bool
+function housekeeping_should_run(): bool
 {
     if (!(bool)ipam_setting('housekeeping.enabled')) return false;
 
@@ -1074,10 +1064,14 @@ function alerts_check_if_due(array $config, PDO $db): void
     @chmod($statePath, 0600);
 }
 
-/** @param IpamConfig $config */
-function run_housekeeping_if_due(array $config, ?PDO $db = null): void
+/**
+ * A39 (#949): the legacy `$config` parameter was unused — all settings
+ * are read via `ipam_setting()`, same as `housekeeping_should_run()`.
+ * Dropped here and at the single call site in init.php.
+ */
+function run_housekeeping_if_due(?PDO $db = null): void
 {
-    if (!housekeeping_should_run($config)) return;
+    if (!housekeeping_should_run()) return;
 
     $lockPath = __DIR__ . '/data/housekeeping.lock';
     $lock = @fopen($lockPath, 'c');
@@ -1089,7 +1083,7 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
     }
 
     try {
-        if (!housekeeping_should_run($config)) return;
+        if (!housekeeping_should_run()) return;
 
         $ttl = to_int(ipam_setting('housekeeping.tmp_cleanup_ttl_seconds'));
         if ($ttl < 3600) $ttl = 3600;
@@ -4423,8 +4417,12 @@ function ipv6_enumerate_first_n(PDO $db, int $subnetId, string $networkBin, int 
 
 /* ---------------- CSV import helpers ---------------- */
 
-/** @param IpamConfig $config */
-function import_max_bytes(array $config): int
+/**
+ * A39 (#949): the legacy `$config` parameter was unused — the upper-bound
+ * comes from `limits.import_csv_max_mb` via `ipam_setting()` since v2.6.0.
+ * Dropped here and at the two call sites in import_csv.php.
+ */
+function import_max_bytes(): int
 {
     $mb = to_int(ipam_setting('limits.import_csv_max_mb'));
     if ($mb < 5) $mb = 5;
@@ -5521,8 +5519,19 @@ function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
         throw new RuntimeException('Invalid JWKS from ' . $jwksUri);
     }
 
-    file_put_contents($cache, json_encode($d));
-    @chmod($cache, 0600);
+    // A.P3 (#949): if the cache write silently fails (full disk, permission
+    // change on tmp/, EROFS), we re-fetch the JWKS from the IdP on every
+    // subsequent request — wasteful and a soft availability hit on the
+    // OIDC login path. Surface the failure to error_log so an operator
+    // can see it without us hard-failing this request (we already have
+    // a valid in-memory $d to return).
+    $encoded = json_encode($d);
+    if ($encoded === false || @file_put_contents($cache, $encoded) === false) {
+        error_log('oidc_jwks: failed to write JWKS cache to ' . $cache
+            . ' — JWKS will be re-fetched on each request until the write succeeds');
+    } else {
+        @chmod($cache, 0600);
+    }
     return array_values((array)$d['keys']);
 }
 
@@ -7169,6 +7178,10 @@ function ipam_passkey_dispatch_challenge(PDO $db, int $userId): bool
                 $ac->id = rtrim(strtr(base64_encode($ac->id->getBinaryString()), '+/', '-_'), '=');
             }
         }
+        // A26 (#947): MANDATORY — break the by-reference binding to the last
+        // $ac. Without this unset(), a later assignment to a variable named
+        // $ac anywhere in this function (refactor risk) would clobber the
+        // last element of $pk->allowCredentials via the still-live reference.
         unset($ac);
     }
 
@@ -7348,7 +7361,19 @@ function ipam_user_preferred_mfa(PDO $db, int $userId): ?string
 // ============================================================
 
 /**
- * @return array{subnets:int,addresses:int,used:int,pct_used:float,alerts:int}
+ * Returns dashboard summary counts for the KPI strip.
+ *
+ * `pct_tracked_used` (#948 / A31): the percentage of TRACKED address rows
+ * whose status='used' — i.e. `used / addresses`, where `addresses` is the
+ * count of rows in the addresses table, NOT the total assignable IPs across
+ * all subnets. This is an inventory-health metric (of the addresses we
+ * track, how many are claimed), not a capacity-utilisation metric. Computing
+ * true capacity utilisation would require summing `2^(32-prefix) - 2` across
+ * IPv4 subnets — which is meaningless for IPv6 — so this metric is
+ * intentionally scoped to tracked rows. The field name carries the
+ * disambiguation. Pre-v3.34.0 this was named `pct_used` and ambiguous.
+ *
+ * @return array{subnets:int,addresses:int,used:int,pct_tracked_used:float,alerts:int}
  */
 function ipam_dashboard_kpis(PDO $db): array {
     $stmtTotals = $db->query(
@@ -7371,7 +7396,7 @@ function ipam_dashboard_kpis(PDO $db): array {
         'subnets'   => $subnets,
         'addresses' => $addresses,
         'used'      => $used,
-        'pct_used'  => $addresses > 0 ? round($used / $addresses * 100, 1) : 0.0,
+        'pct_tracked_used' => $addresses > 0 ? round($used / $addresses * 100, 1) : 0.0,
         'alerts'    => is_array($alerts) ? to_int($alerts['cnt']) : 0,
     ];
 }

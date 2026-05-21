@@ -308,12 +308,12 @@ if (!$isHttps) {
 //
 // The default for every layer is "derive from __DIR__", which makes
 // isolation automatic on every install without requiring any config edit.
-$configuredSessionName = to_str($config['session_name']);
-if ($configuredSessionName === '' || $configuredSessionName === 'IPAMSESSID') {
-    // Default path: suffix with 8 hex chars of the install-dir hash so
-    // two installs at different filesystem paths never collide.
-    $configuredSessionName = 'IPAMSESSID_' . substr(hash('sha256', __DIR__), 0, 8);
-}
+// B.P3 (#950): the fallback logic (config_session_name === ''
+// || 'IPAMSESSID' → 'IPAMSESSID_' . hash(__DIR__)) is shared with
+// api.php's own session-bootstrap path. Helper lives in lib/auth.php
+// — keyed on the lib/ parent directory so it resolves to this same
+// install root that __DIR__ resolves to here.
+$configuredSessionName = ipam_session_name($config);
 session_name($configuredSessionName);
 
 // Derive the cookie path from the running script so an install at
@@ -377,7 +377,7 @@ $db = ipam_db($config);
 ipam_db_init($db);
 
 // Now that settings are available, apply the admin-configured timezone. All DB
-// timestamps are stored as UTC; display_datetime() in lib.php converts them
+// timestamps are stored as UTC; ipam_format_datetime() in lib.php converts them
 // for UI output using the effective timezone set here.
 $tz = to_str(ipam_setting('branding.timezone'));
 if ($tz === '' || !@date_default_timezone_set($tz)) {
@@ -400,7 +400,7 @@ if ($_staleConfigKeys) {
 unset($_staleConfigKeys);
 
 // Run best-effort housekeeping at most once/day (configurable)
-run_housekeeping_if_due($config, $db);
+run_housekeeping_if_due($db);
 
 // Utilization alerts — independent interval (default 1 h); no-op if alert_email is empty
 alerts_check_if_due($config, $db);

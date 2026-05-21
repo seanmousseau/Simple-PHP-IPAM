@@ -74,8 +74,7 @@ if (login_rate_limited($db, $clientIp, $apiMaxAttempts, $apiLockoutSeconds)) {
     http_response_code(429);
     header('Retry-After: ' . $apiLockoutSeconds);
     header('X-RateLimit-Limit: ' . $apiMaxAttempts);
-    echo json_encode(['error' => 'Too many failed API key attempts. Try again later.']);
-    exit;
+    api_json(['error' => 'Too many failed API key attempts. Try again later.']);
 }
 
 $rawKey = '';
@@ -90,11 +89,8 @@ if ($rawKey === '') {
     $resourcePeek = strtolower(trim(to_str($_GET['resource'] ?? '')));
     $methodPeek   = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
     if ($methodPeek === 'GET' && in_array($resourcePeek, ['contacts', 'subnet_stats'], true)) {
-        $sesName = to_str($config['session_name']);
-        if ($sesName === '' || $sesName === 'IPAMSESSID') {
-            $sesName = 'IPAMSESSID_' . substr(hash('sha256', __DIR__), 0, 8);
-        }
-        session_name($sesName);
+        // B.P3 (#950): shared with init.php's bootstrap path.
+        session_name(ipam_session_name($config));
         $cookiePath = to_str($config['session_cookie_path'] ?? '');
         if ($cookiePath === '') {
             $sn = to_str($_SERVER['SCRIPT_NAME'] ?? '');
@@ -125,8 +121,7 @@ if ($rawKey === '') {
 
 if ($rawKey === '' && $sessionApiKey === null) {
     http_response_code(401);
-    echo json_encode(['error' => 'API key required. Pass via Authorization: Bearer <key> header.']);
-    exit;
+    api_json(['error' => 'API key required. Pass via Authorization: Bearer <key> header.']);
 }
 
 if ($sessionApiKey !== null) {
@@ -141,8 +136,7 @@ if ($sessionApiKey !== null) {
     if (!$apiKey) {
         record_login_failure($db, $clientIp);
         http_response_code(401);
-        echo json_encode(['error' => 'Invalid or inactive API key.']);
-        exit;
+        api_json(['error' => 'Invalid or inactive API key.']);
     }
 
     // Successful auth — clear any accumulated failures for this IP
@@ -159,8 +153,7 @@ if ($sessionApiKey !== null) {
     if ($rateLimitRetryAfter > 0) {
         http_response_code(429);
         header('Retry-After: ' . $rateLimitRetryAfter);
-        echo json_encode(['error' => 'Rate limit exceeded. Too many requests for this API key.']);
-        exit;
+        api_json(['error' => 'Rate limit exceeded. Too many requests for this API key.']);
     }
 }
 
@@ -370,6 +363,12 @@ function api_validate_tag_ids(PDO $db, array $rawTagIds): array
 function api_paginated_response(string $listKey, array $items, int $total, int $page, int $limit, array $extra = []): array
 {
     header('X-Total-Count: ' . $total);
+    // B14 (#952) was filed as an "envelope vs counts parsing inconsistency"
+    // P2 polish item. Investigation found the difference is intentional:
+    // ApiEnvelopeTest::testEnvelopeDisabledByFalseyValuesStillDeprecates
+    // pins both `?envelope=0` AND bare `?envelope=` (empty string) to the
+    // flat-shape-with-Deprecation-header path. `?counts=` (empty) is a
+    // separate, looser knob that does opt into counts. Do not unify.
     $envelope = isset($_GET['envelope']) && $_GET['envelope'] !== '0' && $_GET['envelope'] !== '';
     if ($envelope) {
         $pages = $limit > 0 ? (int)ceil($total / $limit) : 1;

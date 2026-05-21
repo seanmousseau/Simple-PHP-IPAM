@@ -6,7 +6,7 @@
 >
 > **How to use it.** This doc is the authoritative *suggested ordering* reference — GitHub milestones are now theme-named, not version-named, from v3.30.0 onward (the **2026-05-11 reshape**). When deciding what ships next, this doc maps theme → suggested version slot. Drill into the source doc when you need per-finding detail. Update this doc whenever a stream gets re-chunked, a milestone is renamed, or scope flips.
 >
-> **Current shipped: v3.28.3** (released 2026-05-14, hotfix on top of v3.28.2 install-key lifecycle). v3.28.0 DR + security stabilization, v3.28.1 DR + security overflow, v3.28.2 install-key lifecycle, and v3.28.3 hotfix (anchor + webhook cap + CHANGELOG link) all shipped. **Pass C complete** (2026-05-10). **Security review complete** (2026-05-10). **Roadmap reshape: 2026-05-11.** Last refreshed: 2026-05-14.
+> **Current shipped: v3.33.0** (released 2026-05-19 — Refactor Wave 2, closes milestone #57). Releases since the last roadmap refresh: v3.27.9 hotfix, v3.28.0 DR + security stabilization, v3.28.1 overflow, v3.28.2 install-key lifecycle, v3.28.3 hotfix, v3.29.0 test infrastructure (#80), v3.30.0 Refactor wave 1 + ADR-004 lib.php decomposition (#56), v3.31.0 settings encrypt-at-rest / ADR-001 part 2, v3.32.0 code-quality + hardening (#84), v3.33.0 Refactor wave 2 (#57). **Pass C complete** (2026-05-10). **Security review complete** (2026-05-10). **Roadmap reshape: 2026-05-11.** **ADR-007 (Open Props adoption) drafted: 2026-05-20.** Last refreshed: 2026-05-20.
 
 ---
 
@@ -20,46 +20,50 @@
 
 | Stream | Suggested slot | Milestone | Status |
 |---|---|---|---|
-| **v3.27.x quick-win patches** | shipped | — | ✅ closed (v3.27.4–v3.27.7) |
+| **v3.27.x quick-win patches** | shipped | — | ✅ closed (v3.27.4–v3.27.9) |
 | **Pass C regression sweep** | one-time | — | ✅ complete (2026-05-10), 15 findings triaged |
 | **Security review (semgrep + code-reviewer)** | one-time | — | ✅ complete (2026-05-10), 38 semgrep WARNINGs + 12 code-reviewer findings (0C/0H/4M/4L/4N) |
-| **v3.27.8 — backup/restore bug hotfix** | next | (TBD) | scoped (§3.7) — bugs A/B/C/D/E + drop silent plaintext fallback |
-| **v3.28.0 — DR + security stabilization** | v3.28.0 | `v3.28.0 — DR + security stabilization` (#55, 12 open) | scoped (§4) |
-| **v3.28.1 — DR + security overflow** | v3.28.1 | `v3.28.1 — DR + security overflow` (#81, 8 open) | scoped (§4.1), pre-committed carve |
-| **Architecture-decision sprint** | between v3.28.0 ship and v3.29.0 kickoff | — (decision docs under `docs/internal/architecture-decisions/`) | scoped (§10.1) — 6 decisions gating refactor wave 1 |
-| **v3.29.0 — Test infrastructure** | v3.29.0 | `v3.29.0 — Test infrastructure` (#80, 30 open) | scoped (§5) |
-| **Refactor stream** | v3.30.0–v3.32.0 | #56 / #57 / #58 (theme-named) | 50 open across 3 milestones (§6) |
-| **UX overhaul — straddles v4.0.0** | v3.33.0+ (pre-v4) and post-v4.0.0 | #59 / #60 / #61 / #62 / #63 | 95 open across 5 milestones (§7) |
-| **v4.0.0 — i18n phase 1 + backup cold break** | when ready (decoupled from UX/refactor finish) | v4.0.0 (#19) | scoped (§8 + §8.7) |
+| **v3.27.8 — backup/restore bug hotfix** | shipped | — | ✅ shipped 2026-05-11 |
+| **v3.28.0 — DR + security stabilization** | shipped | #55 | ✅ shipped 2026-05-13 |
+| **v3.28.1 — DR + security overflow** | shipped | #81 | ✅ shipped 2026-05-14 |
+| **v3.28.2 / v3.28.3 — install-key lifecycle + hotfix** | shipped | — | ✅ shipped 2026-05-14 |
+| **Architecture-decision sprint** (ADR-001…006) | between v3.28.0 ship and v3.29.0 kickoff | — | ✅ complete — 5 of 6 accepted + implemented in v3.30.0; ADR-005 (`backup.php` separation) decided 2026-05-15, **implementation deferred** |
+| **v3.29.0 — Test infrastructure** | shipped | #80 | ✅ shipped 2026-05-14 |
+| **v3.30.0 — Refactor wave 1 (lib.php decomposition + ADR-001/-002/-003/-004/-006)** | shipped | #56 | ✅ shipped 2026-05-17 |
+| **v3.31.0 — Settings encrypt-at-rest (ADR-001 part 2) + webhook crypto consolidation** | shipped | — | ✅ shipped 2026-05-18 |
+| **v3.32.0 — Code-quality + hardening + deps refresh** | shipped | #84 | ✅ shipped 2026-05-18 |
+| **v3.33.0 — Refactor wave 2 (api.php + import_csv + migrations)** | shipped | #57 | ✅ shipped 2026-05-19 |
+| **Refactor wave 3 — frontend modularization** | **next refactor slot** | #58 (theme-named, 17 open) | scoped (§6) |
+| **UX overhaul — straddles v4.0.0** | next minor onward (pre-v4) and post-v4.0.0 | #59 / #60 / #61 / #62 / #63 | 95 open across 5 milestones (§7); **+ ADR-007 Open Props adoption arc straddles v3.35.0 + v3.36.0 (#1255–#1259)** — see §7.1 |
+| **v4.0.0 — i18n phase 1 + backup cold break** | when ready (decoupled from UX/refactor finish) | v4.0.0 (#19, 5 open) | scoped (§8 + §8.7) |
 | **v4.x enterprise auth + i18n** | post-v4.0.0 | v4.1.0–v4.11.0 | placeholdered (§8) |
 | **Multi-tenancy** | indefinite | Multi-tenancy (deferred) (#64) | DEFERRED |
 
 **Shape of the next year (without dates):**
 
 ```
-v3.27.7 (shipped) ── v3.27.8 (hotfix: backup bugs + drop silent fallback)
-                          │
-                          └── v3.28.0 (DR + security stabilization)
-                                  │   • legacy writer retirement
-                                  │   • Pass C step-up bundle + scanner items
-                                  │   • Security mediums (S-003/S-006/S-008) + lows
+v3.27.7…v3.27.9 (shipped) ── v3.28.0–3 (DR + security stabilization + hotfixes, shipped)
                                   │
-                                  └── v3.29.0 (test infrastructure)
-                                          │   • round-trip tests + contract-doc linter
-                                          │   • decrypt-tool Pass 2 PHPUnit + CI
-                                          │   • unit-test coverage backfill
+                                  └── v3.29.0 (test infrastructure, shipped 2026-05-14)
                                           │
-                                          └── v3.30.0–v3.32.0 (refactor stream — lib.php / api.php / frontend)
+                                          └── v3.30.0 (Refactor wave 1 — lib.php decomposition + ADRs, shipped 2026-05-17)
                                                   │
-                                                  ├── v3.33.0–v3.34.0 (UX foundation + nav + data-heavy)
-                                                  │           │
-                                                  │           └── v4.0.0 (i18n phase 1 + BACKUP COLD BREAK)
-                                                  │                   │
-                                                  │                   ├── v4.1.0 (i18n extraction)
-                                                  │                   ├── v4.2.0 (OIDC engine swap)
-                                                  │                   └── UX polish + UX cleanup interleaved with v4.3+ (RBAC / SAML / LDAP / OAuth / SCIM / fr-CA)
-                                                  │
-                                                  └── (any stream can pause for hotfixes off main)
+                                                  └── v3.31.0 (Settings encrypt-at-rest + webhook crypto consolidation, shipped 2026-05-18)
+                                                          │
+                                                          └── v3.32.0 (Code-quality + hardening + deps refresh, shipped 2026-05-18)
+                                                                  │
+                                                                  └── v3.33.0 (Refactor wave 2 — api.php + import_csv + migrations, shipped 2026-05-19)
+                                                                          │   ◀── YOU ARE HERE
+                                                                          │
+                                                                          └── v3.34.0+ (Refactor wave 3 — frontend modularization, #58)
+                                                                                  │
+                                                                                  ├── UX foundation + nav + data-heavy (#59 / #60 / #61, interleave pre-v4)
+                                                                                  │
+                                                                                  └── v4.0.0 (i18n phase 1 + BACKUP COLD BREAK, #19)
+                                                                                          │
+                                                                                          ├── v4.1.0 (i18n extraction)
+                                                                                          ├── v4.2.0 (OIDC engine swap)
+                                                                                          └── UX polish + UX cleanup interleaved with v4.3+ (RBAC / SAML / LDAP / OAuth / SCIM / fr-CA)
 ```
 
 ---
@@ -95,11 +99,11 @@ The architectural decisions that produced the v3.21–v3.27 bug cluster were mad
 
 ---
 
-## 3. v3.27.x quick-win patch stream — ✅ CLOSED + v3.27.8 hotfix queued
+## 3. v3.27.x quick-win patch stream — ✅ CLOSED
 
 Off-`main` hotfix releases for narrow fixes that should ship before the next minor. Branches off `main`, merges back, then `dev ← main` (`hotfix-release.md`).
 
-**Cluster status (2026-05-11):** v3.27.4 → v3.27.7 all shipped. v3.27.8 hotfix queued for immediate next slot.
+**Cluster status (2026-05-20):** v3.27.4 → v3.27.9 all shipped. v3.27.8 backup/restore hotfix shipped 2026-05-11; v3.27.9 shipped 2026-05-11 (CR fixes).
 
 ### v3.27.4 — Settings UX polish patch (shipped 2026-05-10)
 Bundled the settings-UX P2s + wheel-scroll regression + lockout banner.
@@ -113,7 +117,7 @@ Restore page architecture redesign + apply-spinner overlay (#1135) + `step_up.ph
 ### v3.27.7 — Pass C F-S3-01 webhook crypto + CSP inline-handler fix (shipped 2026-05-10)
 Webhook signing secret encrypted at rest (`$2W$` AES-GCM envelope, mirrors v3.6.0 TOTP). 10 inline event handlers converted to `data-*` delegated handlers. 14/14 CI green, 13/13 CR threads resolved across 4 review rounds. Deployed to all 7 targets (tag `v3.27.7`, merge `576660a`, bundle SHA `92f01cbe…`).
 
-### v3.27.8 — Backup/restore bug cluster (PROPOSED 2026-05-10 chat)
+### v3.27.8 — Backup/restore bug cluster (shipped 2026-05-11)
 
 **Theme:** "v3.27.7 deploy revealed backup architecture is in worse shape than v3.27.x patches suggested. Stabilize disaster recovery before any further v3.28+ work."
 
@@ -135,7 +139,7 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 **Note:** the *formal* legacy writer retirement (deprecate `app_secret` mode entirely, add banners, write `docs/upgrading.md` §4.0) moved to v3.28.0 (§4) per the 2026-05-11 reshape. v3.27.8 just stops the silent regression to plaintext for current `stored`-mode destinations.
 
-**Status:** **scoped, not yet started.** Predecessor to v3.28.0's bigger DR+security work.
+**Status:** ✅ **shipped 2026-05-11** (merge `311f553b` via PR #1173). Predecessor to v3.28.0's bigger DR+security work, which also shipped (2026-05-13).
 
 ---
 
@@ -185,11 +189,13 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 ---
 
-## 4. v3.28.0 — DR + security stabilization (#55, 12 open)
+## 4. v3.28.0 — DR + security stabilization (#55) — ✅ SHIPPED 2026-05-13
 
 > **Identity flip (2026-05-11 reshape):** old v3.28.0 was "pure test tooling." Test tooling moved to v3.29.0 (§5).
 >
 > **Carve (2026-05-11, after gap-analysis review):** 8 low-friction items split out to a new v3.28.1 milestone (#81) so v3.28.0 stays shippable. See §4.1.
+>
+> **Shipped status:** v3.28.0 closed milestone #55. v3.28.1 (overflow, #81) shipped 2026-05-14. v3.28.2 added an install-key lifecycle fix; v3.28.3 hotfix (anchor + webhook cap + CHANGELOG link) shipped 2026-05-14. Scope below preserved for historical reference.
 
 **Theme:** "Finish the cluster. Stop silent failures. Ship the security mediums. Retire the legacy backup writer."
 
@@ -209,7 +215,7 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 **Out of scope:** test-infrastructure deliverables (round-trip taxonomy, contract-doc linter, fixture-bypass sweep) — those live in v3.29.0. Low-friction Pass C / security-review items — see v3.28.1 below.
 
-### 4.1 v3.28.1 — DR + security overflow (#81, 8 open)
+### 4.1 v3.28.1 — DR + security overflow (#81) — ✅ SHIPPED 2026-05-14
 
 **Theme:** "The low-friction tail of Pass C + security-review Lows that didn't need to gate v3.28.0."
 
@@ -224,9 +230,9 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 ---
 
-## 5. v3.29.0 — Test infrastructure (#80, 30 open)
+## 5. v3.29.0 — Test infrastructure (#80) — ✅ SHIPPED 2026-05-14
 
-> **Slot-bumped (2026-05-11 reshape):** what was old v3.28.0 milestone #55 content. 28 issues re-milestoned to new milestone #80.
+> **Slot-bumped (2026-05-11 reshape):** what was old v3.28.0 milestone #55 content. 28 issues re-milestoned to new milestone #80. Milestone #80 closed on release.
 
 > **Operational plan: `docs/internal/archive/test-improvements.md`.**
 
@@ -249,34 +255,40 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 ---
 
-## 6. Refactor stream (v3.30.0 → v3.33.0)
+## 6. Refactor stream (v3.30.0 → v3.34.0+)
 
-Four milestones, theme-named. Closes 50 of the 87 `archive/code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill). ADR-001 (settings type system) added a fourth slot — **v3.31.0 is dedicated to encrypt-at-rest + webhook crypto consolidation** so the refactor waves keep clean boundaries.
+Originally three refactor waves; ADR-001 (settings type system) added a fourth slot for encrypt-at-rest. Closes 50 of the 87 `archive/code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill).
 
-| Suggested slot | Milestone | Theme | Issues | Closes findings |
-|---|---|---|---|---|
-| v3.30.0 | **Refactor wave 1 — lib.php decomposition** (#56) | `setting_definitions` schema + dispatch refactor (ADR-001 part 1); `lib.php` (~9000 lines) split into focused modules + page-handler refactor | 19 (incl. orphan bugs U/V/Y #1120/#1121/#1122) | A11, A12, A14–A16, A23–A25, A27, A33, B7–B9, B11(re-order), C8 |
-| v3.31.0 | **Settings encrypt-at-rest + webhook crypto consolidation** (new milestone TBD) | `ipam_secret_*` libsodium pipeline (ADR-001 part 2); re-encrypt existing plaintext secrets; collapse v3.3.0 webhook crypto onto shared pipeline | TBD at kickoff | ADR-001 implications only |
-| v3.32.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition; `import_csv` rewrite (also addresses the 38 semgrep WARNINGs from §3.6); migration helpers | 18 | A6, A13, A17–A19, A29, A32, B5, B6, B10, B13, C2, C3-policy, C5–C7, C9–C12 |
-| v3.33.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` module split + P2/P3 polish | 16 | A20, A26, A31, A.P3, B.P3, C.P3, D4-full, D5, D13–D21 |
+**Actual slot mapping (waves slid by one minor against the original 2026-05-11 plan because v3.32.0 became a code-quality/hardening release):**
 
-**Per-milestone test umbrellas:** #1045 (wave 1 + ADR-001 work, both v3.30.0 and v3.31.0), #1046 (wave 2), #1047 (wave 3). Each refactor PR must update or add the matching test in the same commit.
+| Slot | Milestone | Theme | Status |
+|---|---|---|---|
+| v3.30.0 | **Refactor wave 1 — lib.php decomposition** (#56) | `lib.php` (~12.5k lines) decomposed into 12 focused `lib/*.php` modules; settings type registry moves from DB column to PHP (ADR-001 Option D); per-user theme migration; ADR-002/-003/-004/-006 implemented | ✅ shipped 2026-05-17 |
+| v3.31.0 | **Settings encrypt-at-rest + webhook crypto consolidation** (ADR-001 part 2) | Four sensitive `settings` rows now encrypted at rest via shared crypto pipeline; legacy webhook-secret encryption consolidated onto same pipeline; two idempotent re-encryption migrations; two more `lib/*.php` extractions finish wave 1 | ✅ shipped 2026-05-18 |
+| v3.32.0 | **Code-quality + hardening + dependency-maintenance** (#84) | Site-hierarchy server-side guards (previously UI-only); dependency upgrades; bug fixes. No schema migrations. *Note: replaced the original wave-2 slot — wave 2 slid to v3.33.0.* | ✅ shipped 2026-05-18 |
+| v3.33.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition (`api_paginated_query()`, `api_bulk_create()`); `import_csv.php` state machine extracted to `lib/csv_import.php`; migration helpers; ADR-003 `global $config` sweep completed (#1207); 22 issues closed | ✅ shipped 2026-05-19 |
+| v3.34.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` (3,439 lines) split into 46 per-concern `assets/modules/*.js` modules loaded as ordered `<script defer>` tags; test umbrella `#1047` lands the module-load-order + `window.*` contract + `prefers-reduced-motion` smoke; P2/P3 polish (A36/A37/A39, B26/B29/B30/B31, C16–C18); 9 milestone-#58 issues closed (#939 #940 #942 #943 #945 #947 #948 #951 #1047); 3 umbrellas closed with disposition (#949 #950 #952); polish carry-over routed to wave 4 (#85) | **landing** |
+| **v3.X.X+** (wave 4 slot) | **Refactor wave 4 — lib polish + admin refactor** (#85) | Substantial polish carried forward from waves 1–3: `@`-suppressions audit (#1290), `scan_run` ↔ `cron` consolidation (#1291), tag/contact join-table audit coverage (#1292), `init.php` bootstrap extraction (#1293), drawer-system consolidation (#1243), dashboard VR restoration (#775), phpunit suite split (#944), TOTP backup-code lookup perf (#946) | **next** |
 
-**Architecture-review dependency (§10):** ADR-001 (settings type system) accepted 2026-05-15. Pre-wave-1 sprint continues with ADR-002–006 before wave 1 starts.
+**Closes findings (cumulative across waves):** A6, A11–A20, A23–A27, A29, A31–A33, A36–A37, A39, A.P3, B5–B11, B13, B26, B29–B32, B.P3, C2, C3-policy, C5–C12, C16–C18, C.P3, D4-full, D5, D13–D21.
+
+**Per-milestone test umbrellas:** #1045 (wave 1 + ADR-001 work, v3.30.0 + v3.31.0), #1046 (wave 2, v3.33.0), #1047 (wave 3, v3.34.0+). Each refactor PR must update or add the matching test in the same commit.
+
+**Architecture-review dependency (§10):** ADR-001 → ADR-004 + ADR-006 accepted and implemented in v3.30.0. ADR-005 (`backup.php` separation) decided 2026-05-15; implementation deferred to a later release.
 
 ---
 
 ## 7. UX overhaul stream — straddles v4.0.0
 
-> **2026-05-11 reshape:** the 5 UX milestones no longer have to fit before v4.0.0. Foundation + nav + data-heavy ship pre-v4 (v3.33.0 → v3.35.0); polish + cleanup ship post-v4 interleaved with v4.x enterprise auth + i18n releases. **v4.0.0 ships when i18n phase 1 + backup cold break are ready — not gated on UX completion.**
+> **2026-05-11 reshape:** the 5 UX milestones no longer have to fit before v4.0.0. Foundation + nav + data-heavy ship pre-v4 (now suggested v3.35.0 → v3.37.0, slid one minor from the original plan because wave 2 took v3.33.0); polish + cleanup ship post-v4 interleaved with v4.x enterprise auth + i18n releases. **v4.0.0 ships when i18n phase 1 + backup cold break are ready — not gated on UX completion.**
 
 Audit scope **explicitly excludes** backup/restore UX — that's `archive/backup_overhaul.md` territory.
 
 | Suggested slot | Milestone | Theme | Issues | Effort |
 |---|---|---|---|---|
-| v3.33.0 (pre-v4) | **UX foundation — design system** (#59) | Type scale, badge primitive, color-not-only-signal, dark-mode brand-link, mobile font sizing | 12 | ~3–5d |
-| v3.34.0 (pre-v4) | **UX nav — sidebar + command palette + theme** (#60) | Group 22 admin links into 5 sections, command palette, theme toggle, sidebar collapse, post-timeout deep-link return | 11 | ~3–5d |
-| v3.35.0 (pre-v4) | **UX data-heavy — subnets/addresses** (#61) | Pagination/virtualization (subnets renders 3,727 elements today), drawer-edit, action consolidation, status-as-badge, URL-state filters, bulk-action bar, columns persistence | 14 | ~10–14d |
+| v3.35.0 (pre-v4, suggested) | **UX foundation — design system** (#59) | Type scale, badge primitive, color-not-only-signal, dark-mode brand-link, mobile font sizing **+ ADR-007 phase 1: Open Props adoption (vendor + sizing/color migration; aliases kept for compat)** | 15 (12 original + #1255 #1256 #1257) | ~6–8d (was ~3–5d) |
+| v3.36.0 (pre-v4, suggested) | **UX nav — sidebar + command palette + theme** (#60) | Group 22 admin links into 5 sections, command palette, theme toggle, sidebar collapse, post-timeout deep-link return **+ ADR-007 phase 2: OP shadows/easings/animations + hand-rolled token cleanup + closes #941** | 14 (11 original + #1258 #1259 + reframed #941) | ~5–7d (was ~3–5d) |
+| v3.37.0 (pre-v4, suggested) | **UX data-heavy — subnets/addresses** (#61) | Pagination/virtualization (subnets renders 3,727 elements today), drawer-edit, action consolidation, status-as-badge, URL-state filters, bulk-action bar, columns persistence | 14 | ~10–14d |
 | post-v4 interleave | **UX polish — search + audit + dashboard** (#62) | Instant search, pretty-printed audit, relative time, KPI clickable, recent-activity rendering | 20 | ~6–8d |
 | post-v4 interleave | **UX cleanup — admin + a11y + mobile + auth** (#63) | Drawer-CRUD across 12 admin pages, empty states, settings save UX, import-CSV stepper, mobile responsive sweep, a11y sweep, login UX | 38 | ~10–14d |
 
@@ -286,7 +298,25 @@ Audit scope **explicitly excludes** backup/restore UX — that's `archive/backup
 
 **Per-milestone test umbrellas:** #1035, #1036, #1037, #1038, #1039.
 
-**Source:** `archive/ux_overhaul.md` §9.
+**Source:** `archive/ux_overhaul.md` §9 + `architecture-decisions/007-open-props-adoption.md`.
+
+### 7.1 ADR-007 Open Props adoption arc (straddles v3.35.0 + v3.36.0)
+
+Captured 2026-05-20; **corrected 2026-05-20 (later same day)** — see ADR-007 amendment header. The "vendor + load" step is already done (the OP vendor file has been in the tree since `e433f134 feat(#506)` and `lib/presentation.php:386` already loads it). The remaining four issues are real and scoped correctly.
+
+| Slot | Phase | Issues | Effort |
+|---|---|---|---|
+| **v3.35.0** (#59) | **Phase 1 — Foundation:** migrate spacing/radii/font-size + neutral colors. Hand-rolled tokens kept as aliases for one-release compat. (#1255 vendor + load is **already done** — pre-v3.34.0.) | #1256 (sizing migration), #1257 (color migration) | ~3d |
+| **v3.36.0** (#60) | **Phase 2 — Polish:** adopt OP shadows + easings + animation primitives. Delete alias block. Audit `!important`. Close #941. | #1258 (secondary tokens), #1259 (cleanup), reframed #941 (closes via #1259) | ~1.5d |
+
+**Why this slotting:**
+- #59 UX foundation is "type scale, badge primitive, color-not-only-signal, dark-mode brand-link, mobile font sizing" — every item wants a coherent token vocabulary. OP migration during #59 means the token rename does real visual work (paired with the design items), not standalone churn.
+- #60 UX nav includes the theme toggle, which pairs naturally with OP's dark/light pattern + `prefers-reduced-motion` story.
+- Splitting across two releases keeps each PR review-sized and avoids cramming a design-system flip into a single release.
+
+**Fold-in evaluation:** the existing #59 scope items (badge primitive, color-not-only-signal, dark-mode brand-link) already pair perfectly — they consume OP tokens directly. The dark-mode override consolidation across the 4 scattered `html[data-theme=dark]` blocks in `app.css` folds into ADR-007-3 (#1257) since that issue touches every color token anyway. The `prefers-reduced-motion` `!important` audit folds into ADR-007-4 (#1258).
+
+**Backward-compat note:** v3.35.0 keeps the hand-rolled `--space-*` / `--radius-*` / `--font-size-*` block as aliases pointing at OP values, so installs with custom CSS referencing old token names continue to work. Aliases drop in v3.36.0 — CHANGELOG entry required.
 
 ---
 
@@ -400,10 +430,11 @@ SELECT count(*) FROM backup_runs
 | **`lib.php` size** (~9000 lines, all functions in one namespace) | Module separation overdue; refactor wave 1 (v3.30.0) is the first surface. | ~~Decision before refactor wave 1 starts.~~ ✅ ADR-004 accepted; **implemented in v3.30.0** (12 modules extracted, `lib.php` ~12.5k→~7.9k lines). |
 | **Per-key vs group-form bifurcation in `settings.php`** | Bug V's root cause. | ~~Decision before refactor wave 1.~~ ✅ ADR-002 accepted (corrected + re-stamped); **implemented in v3.30.0**. |
 | **`backup.php` orchestrator/codec/dispatcher separation** | Enabled the encrypt-write-path bug. | ADR-005 **decided 2026-05-15; implementation deferred to a later release.** |
-| **`$config` global as the only config conduit** | Hides the dependency graph. | ~~Decision before refactor wave 2 (v3.31.0).~~ ✅ ADR-003 accepted; **implemented in v3.30.0** for extracted `lib/*.php` modules. Full sweep tracked as #1207. |
+| **`$config` global as the only config conduit** | Hides the dependency graph. | ~~Decision before refactor wave 2 (v3.31.0).~~ ✅ ADR-003 accepted; **implemented in v3.30.0** for extracted `lib/*.php` modules. Full-codebase sweep completed in **v3.33.0 (#1207 closed)** with ADR-004 linter widened to enforce repo-wide. |
 | **Settings table type system** | bool/int/string/json is impoverished; sensitive flag bolted on. | ~~Decision before refactor wave 1.~~ ✅ ADR-001 accepted (**amended/reversed to Option D** — registry stays in PHP, no DB table); **implemented in v3.30.0**. |
 | **Memory MCP discipline as the only cross-session continuity** | Useful but didn't prevent today's bugs (no observations linking v3.24 codec → v3.26 storage → v3.27 step-up). | ~~Decision in v3.28.0→v3.29.0 sprint.~~ ✅ ADR-006 accepted; **implemented in v3.30.0**. |
 | **Contract-doc-as-source-of-truth model** | When `auth-model.md` "Step-up auth" section says X and code does Y, X "wins" by convention — drift produces bugs. v3.29.0 contract-doc linter is the first response. | Decided 2026-05-11: code-first, lint docs against code. |
+| **CSS design-token base** | `app.css` hand-rolls its own `--space-*` / `--radius-*` / `--font-size-*` scales; `--font-size-*` and `--text-*` self-duplicate; #941 ("reconcile with Open Props") was filed under a wrong premise (OP not actually loaded). | **ADR-007 drafted 2026-05-20.** Recommends adopting Open Props as the token base, migrating over v3.35.0 (#59) + v3.36.0 (#60). 5 tracking issues opened (#1255–#1259). #941 reframed and re-milestoned to #60 (closes via #1259). |
 
 ### 10.1 Architecture-decision sprint (between v3.28.0 and v3.29.0)
 
@@ -413,7 +444,7 @@ SELECT count(*) FROM backup_runs
 
 1. ✅ **ADR-001 — Settings type system** — small surface, informs the next two. Amended/reversed to **Option D**: registry stays in PHP, no DB table. Implemented v3.30.0.
 2. ✅ **ADR-002 — Per-key vs group-form bifurcation in `settings.php`** — Bug V root cause. Corrected + re-stamped. Implemented v3.30.0.
-3. ✅ **ADR-003 — `$config` global as the only config conduit** — pairs with #1 and #2. Implemented v3.30.0 for extracted modules; full sweep tracked as #1207.
+3. ✅ **ADR-003 — `$config` global as the only config conduit** — pairs with #1 and #2. Implemented v3.30.0 for extracted modules; full-codebase sweep completed v3.33.0 (#1207 closed).
 4. ✅ **ADR-004 — `lib.php` size + module shape** — the big one, refactor wave 1's blueprint. Implemented v3.30.0.
 5. **ADR-005 — `backup.php` orchestrator/codec/dispatcher separation** — also gates v4.0.0 cold break. Decided 2026-05-15; **implementation deferred to a later release.**
 6. ✅ **ADR-006 — Memory MCP discipline as the only cross-session continuity** — process decision, not code. Implemented v3.30.0.
@@ -423,6 +454,14 @@ SELECT count(*) FROM backup_runs
 **Cadence:** one session per decision. ~6 sessions before v3.29.0 work begins. Worth the queue time — refactor wave 1 without these decisions is the kind of unilateral architectural call that produced the v3.21–v3.27 bug cluster.
 
 **Note on contract-doc-vs-code model (#7 in table above):** decided 2026-05-11 — code-first, lint docs against code (the v3.29.0 contract-doc linter is the enforcement). No standalone decision doc needed.
+
+### 10.2 Post-sprint ADRs
+
+ADRs added outside the original 6-decision sprint window. Each gets the same options-+-tradeoffs treatment under `docs/internal/architecture-decisions/`.
+
+| ADR | Subject | Status | Slot |
+|---|---|---|---|
+| **ADR-007** | Adopt Open Props as the CSS design-token base | **draft 2026-05-20** | Implementation across v3.35.0 (#59) + v3.36.0 (#60). See §7.1. |
 
 ---
 

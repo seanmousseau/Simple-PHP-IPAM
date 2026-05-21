@@ -70,7 +70,59 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
 // one place.
 $av   = e(ipam_asset_buster());
 $cssV = e(ipam_asset_buster('assets/app.css'));
-$jsV  = e(ipam_asset_buster('assets/app.js'));
+// v3.34.0 #939 + #1047 (landing in v3.34.0): demo_gate.php has its own
+// <head> (does NOT call page_header), so it carries a parallel $jsModules
+// list. Keep this list byte-identical to the one in lib/presentation.php —
+// the Playwright spec at testing/playwright/tests/frontend-modules.spec.ts
+// asserts both emit sites match its canonical EXPECTED_MODULES array.
+$jsModules = [
+    '00-bootstrap',
+    '10-theme-banner',
+    '15-site-group-collapse',
+    '20-drawer',
+    '25-ping-shortcuts',
+    '30-forms-core',
+    '35-forms-confirm-bulk',
+    '40-search-validation',
+    '50-sidebar',
+    '60-fill-ip-spinners',
+    '65-contact-typeahead',
+    '70-dashboard-prefs',
+    '75-subnet-addr-grids',
+    '80-command-palette',
+    '81-tooltips',
+    '82-audit-expand',
+    '83-subnet-edit-drawer',
+    '84-subnet-stats',
+    '85-contact-browse',
+    '86-contact-card',
+    '87-contact-picker',
+    '90-dhcp-export',
+    '91-custom-fields-preview',
+    '92-totp-verify-toggle',
+    '93-smtp-test',
+    '95-backups-modals',
+    '96-totp-enroll-qr',
+    '97-uplot-chart',
+    '98-backup-history-actions',
+    '99-subnets-site-filter',
+    'b0-addresses-bulk-bar',
+    'b1-addresses-site-cascade',
+    'b2-webhooks-page',
+    'b3-addresses-device-cascade',
+    'b4-collapsible-rows',
+    'b5-passkey-verify',
+    'b6-step-up-prompt',
+    'b7-passkey-register',
+    'b8-settings-anchor-redirect',
+    'b9-settings-rail-nav',
+    'c0-destinations-admin',
+    'c1-restore-confirm-typing',
+    'c2-remote-backups-delete',
+    'c3-destinations-verify-all',
+    'c4-skeleton-toggle',
+    'c5-sudo-replay-resume',
+];
 ?>
 <!doctype html>
 <html>
@@ -83,7 +135,9 @@ $jsV  = e(ipam_asset_buster('assets/app.js'));
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png?v=<?= $av ?>">
   <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=<?= $av ?>">
   <link rel="stylesheet" href="assets/app.css?v=<?= $cssV ?>">
-  <script defer src="assets/app.js?v=<?= $jsV ?>"></script>
+  <?php foreach ($jsModules as $mod): $v = e(ipam_asset_buster("assets/modules/{$mod}.js")); ?>
+  <script defer src="assets/modules/<?= e($mod) ?>.js?v=<?= $v ?>"></script>
+  <?php endforeach; ?>
 </head>
 <body>
 <div class="gate-wrap">

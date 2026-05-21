@@ -574,7 +574,7 @@ ipam_skeleton_flush();
       <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address"><?= icon('plus') ?> Add Address <kbd class="kbd-hint">⌘N</kbd></button>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>"><?= icon('pencil') ?> Bulk Update</a>
       <?php if ($missingInfra): ?>
-        <a class="action-pill" href="#reserve-infra" data-open-drawer="reserve-infra" data-drawer-title="Reserve Infrastructure IPs"><?= icon('shield') ?> Reserve Infra IPs</a>
+        <button type="button" class="action-pill" data-drawer-title="Reserve Infrastructure IPs" data-drawer-tpl="tpl-reserve-infra"><?= icon('shield') ?> Reserve Infra IPs</button>
       <?php endif; ?>
     <?php endif; ?>
     <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
@@ -666,8 +666,7 @@ ipam_skeleton_flush();
 ]) ?></div>
 
 <?php if ($missingInfra && $selectedSubnet): ?>
-<div class="card mt-16 drawer-form-card" id="reserve-infra">
-  <h2>Reserve infrastructure IPs</h2>
+<div id="tpl-reserve-infra" style="display:none">
   <p class="muted">Creates reserved address records for the network and broadcast addresses (determined from the CIDR). Gateway is optional — enter an IP if this subnet has a known gateway.</p>
   <form method="post" action="addresses.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">

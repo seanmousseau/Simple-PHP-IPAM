@@ -1,0 +1,31 @@
+# tools/audit-icons-allowlist.txt
+#
+# Symbols defined in Simple-PHP-IPAM/assets/icons.svg that don't yet have
+# callers but are kept on purpose because they're staged for an upcoming
+# UX milestone. Without this allowlist, tools/audit-icons-svg.php would fail
+# CI for these.
+#
+# One symbol per line, including the `icon-` prefix. Blank lines and lines
+# starting with `#` are ignored.
+#
+# When a symbol on this list gets its first caller, remove it from here in
+# the same PR — the audit will pass either way, but keeping the allowlist
+# tight is the point.
+
+# Theme toggle redesign — UX nav milestone #60 (suggested v3.36.0).
+# Both states needed; current theme toggle uses icon-theme as a placeholder.
+icon-moon
+icon-sun
+
+# Notification UI — UX polish milestone #62 (post-v4.0.0).
+icon-bell
+
+# Success-state primitive — UX foundation milestone #59 (suggested v3.35.0).
+# Badge primitive (#1188) will use this for inline success indicators.
+icon-check
+
+# Backup destinations: cloud / database / desktop icons for destination
+# type display. Staged for backup-admin UX work in UX cleanup milestone #63.
+icon-cloud
+icon-computer-desktop
+icon-database

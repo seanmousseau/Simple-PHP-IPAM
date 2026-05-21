@@ -58,9 +58,7 @@
 
 8. **Add the page to the sidebar nav** in `lib.php` (search for the existing `<nav class="sidebar">` block in `page_header()`). Use a Heroicon SVG from `assets/icons.svg` for consistency. Admin-only pages go in the Admin section.
 
-9. **Bump asset cache-buster** if you added or changed CSS/JS in `assets/app.css` or `assets/app.js`. Two places:
-   - `?v=X.Y.Z` in `page_header()` (`lib.php`)
-   - `?v=X.Y.Z` in `demo_gate.php` lines 74–75 (separate `<head>`, does not call `page_header()`)
+9. **Cache-busting is automatic.** `ipam_asset_buster()` hashes each asset's content and appends it as `?v=…`. If you add a new JS file under `assets/modules/`, add the filename (without `.js`) to the `$jsModules` array in BOTH `Simple-PHP-IPAM/lib/presentation.php` (used by `page_header()`) and `Simple-PHP-IPAM/demo_gate.php` (separate `<head>`). Keep numeric/letter prefix in mind: the prefix dictates `<script defer>` execution order. If your module consumes `window.IpamDrawer`, its prefix must sort after `20-drawer`.
 
 10. **Update `docs/internal/page-inventory.md`** — add a row in the table with auth requirement, role, and a one-line description.
 

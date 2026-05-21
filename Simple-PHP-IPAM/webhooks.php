@@ -596,6 +596,6 @@ function wh_status_badge(mixed $status): string
   </div>
 </div>
 
-<?php /* Webhook drawer JS lives in assets/app.js (CSP fix #645) */ ?>
+<?php /* Webhook drawer JS lives in assets/modules/ (formerly assets/app.js; CSP fix #645) */ ?>
 
 <?php page_footer(); ?>

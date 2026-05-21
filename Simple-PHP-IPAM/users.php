@@ -7,16 +7,26 @@ require_role('admin');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
+// B.P3 (#950): the role set is a fixed-shape compile-time constant. Lifting
+// it to a file-scope `const` removes the per-POST-handler re-declaration and
+// avoids re-allocating the array on every request hot path.
+const USERS_VALID_ROLES = ['admin', 'netops', 'readonly'];
+
 $errors = [];
 $msg    = '';
 $self   = current_user();
+// B18: PDO may return integer columns as strings depending on engine + driver
+// options (notably MySQL ATTR_STRINGIFY_FETCHES). The self-protection guards
+// below use strict equality against to_int($_POST['id']), so $self['id'] must
+// also be an int — otherwise '5' === 5 fails and a user could silently
+// disable/unlink/delete their own account.
+$selfId = to_int($self['id']);
 // Form data preserved across failed create attempts (non-sensitive fields only)
 $formData = ['username' => '', 'name' => '', 'email' => '', 'role' => 'readonly', 'sso_only' => false, 'oidc_sub' => ''];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
-    $validRoles = ['admin', 'netops', 'readonly'];
     $pwPolicy   = [
         'min_length'            => to_int(ipam_setting('password_policy.min_length')),
         'require_uppercase'     => (bool)ipam_setting('password_policy.require_uppercase'),
@@ -46,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($username === '' || !preg_match('~^[a-zA-Z0-9_.\-@]{3,64}$~', $username)) {
             $errors[] = 'Username must be 3–64 chars (letters, numbers, _ . - @).';
-        } elseif (!in_array($role, $validRoles, true)) {
+        } elseif (!in_array($role, USERS_VALID_ROLES, true)) {
             $errors[] = 'Invalid role.';
         }
         $password = '';
@@ -90,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'toggle_active') {
         $id = to_int($_POST['id'] ?? 0);
-        if ($id === $self['id']) {
+        if ($id === $selfId) {
             $errors[] = 'You cannot disable your own account.';
         } else {
             // Last-active-admin guard: prevent disabling the last active admin
@@ -118,9 +128,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'set_role') {
         $id   = to_int($_POST['id']   ?? 0);
         $role = to_str($_POST['role'] ?? '');
-        if ($id === $self['id']) {
+        if ($id === $selfId) {
             $errors[] = 'You cannot change your own role.';
-        } elseif (!in_array($role, $validRoles, true)) {
+        } elseif (!in_array($role, USERS_VALID_ROLES, true)) {
             $errors[] = 'Invalid role.';
         } else {
             // Last-active-admin guard: prevent demoting the last active admin
@@ -200,7 +210,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'unlink_oidc') {
         $id = to_int($_POST['id'] ?? 0);
-        if ($id === $self['id']) {
+        if ($id === $selfId) {
             $errors[] = 'You cannot unlink your own SSO account from this page. Use your profile settings.';
         } else {
             $db->prepare("UPDATE users SET oidc_sub = NULL WHERE id = :id")
@@ -236,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'email_otp_reset') {
         $id = to_int($_POST['id'] ?? 0);
-        if ($id === $self['id']) {
+        if ($id === $selfId) {
             flash_set('Use the Account page to manage your own Email OTP.', 'warning');
             header('Location: users.php');
             exit;
@@ -255,7 +265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'passkey_reset') {
         $id = to_int($_POST['id'] ?? 0);
-        if ($id === $self['id']) {
+        if ($id === $selfId) {
             flash_set('Use the Account page to manage your own passkeys.', 'warning');
             header('Location: users.php');
             exit;
@@ -276,7 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'delete') {
         $id = to_int($_POST['id'] ?? 0);
-        if ($id === $self['id']) {
+        if ($id === $selfId) {
             $errors[] = 'You cannot delete your own account.';
         } else {
             $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
@@ -421,7 +431,7 @@ page_header('Users');
           <summary class="muted cursor-pointer font-sm">Actions ▾</summary>
           <div class="flex-col gap-8 mt-8">
 
-            <?php if (to_int($u['id']) !== $self['id']): ?>
+            <?php if (to_int($u['id']) !== $selfId): ?>
             <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
@@ -460,7 +470,7 @@ page_header('Users');
             </form>
 
             <?php if ($u['oidc_sub'] !== null): ?>
-              <?php if (to_int($u['id']) !== $self['id']): ?>
+              <?php if (to_int($u['id']) !== $selfId): ?>
               <form method="post" action="users.php" class="row gap-6"
                     data-confirm="Remove SSO link for <?= e(to_str($u['username'])) ?>?">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
@@ -490,7 +500,7 @@ page_header('Users');
             </form>
             <?php endif; ?>
 
-            <?php if (to_int($u['totp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $self['id']): ?>
+            <?php if (to_int($u['totp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $selfId): ?>
             <form method="post" action="users.php" class="row gap-6"
                   data-confirm="Reset 2FA for <?= e(to_str($u['username'])) ?>?">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
@@ -502,7 +512,7 @@ page_header('Users');
             </form>
             <?php endif; ?>
 
-            <?php if (to_int($u['email_otp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $self['id']): ?>
+            <?php if (to_int($u['email_otp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $selfId): ?>
             <form method="post" action="users.php" class="row gap-6"
                   data-confirm="Reset Email OTP for <?= e(to_str($u['username'])) ?>?">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
@@ -514,7 +524,7 @@ page_header('Users');
             </form>
             <?php endif; ?>
 
-            <?php if (($pkCounts[to_int($u['id'])] ?? 0) > 0 && to_int($u['id']) !== $self['id']): ?>
+            <?php if (($pkCounts[to_int($u['id'])] ?? 0) > 0 && to_int($u['id']) !== $selfId): ?>
             <form method="post" action="users.php" class="row gap-6"
                   data-confirm="Delete ALL passkeys for <?= e(to_str($u['username'])) ?>?">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
@@ -526,7 +536,7 @@ page_header('Users');
             </form>
             <?php endif; ?>
 
-            <?php if (to_int($u['id']) !== $self['id']): ?>
+            <?php if (to_int($u['id']) !== $selfId): ?>
               <form method="post" action="users.php"
                     data-confirm="Permanently delete user <?= e(to_str($u['username'])) ?>?">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">

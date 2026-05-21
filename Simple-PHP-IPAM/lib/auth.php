@@ -86,40 +86,47 @@ function csrf_require(): void
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
 /**
+ * True when `$uri` is a safe same-origin relative path: starts with a single
+ * `/`, no embedded newlines (header-injection), no parent-directory
+ * traversal, no backslashes (some browsers canonicalise `\` → `/`, which
+ * would let `/\evil.com` become `//evil.com` post-normalisation), and
+ * within the 1024-byte budget. Shared by stash and consume so the two
+ * paths can never drift.
+ *
+ * Internal — call ipam_post_login_redirect_stash()/consume() instead.
+ */
+function _redirect_uri_is_safe(string $uri): bool
+{
+    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return false;
+    if (preg_match('/[\r\n]/', $uri))                                   return false;
+    if (str_contains($uri, '..'))                                       return false;
+    if (str_contains($uri, '\\'))                                       return false;
+    if (strlen($uri) > 1024)                                            return false;
+    return true;
+}
+
+/**
  * Stash a same-origin request URI in the session so the user can be
  * redirected back to it after they finish logging in (including any MFA
- * detour). Only safe relative paths are accepted — schemes, hosts, embedded
- * newlines, and parent-directory traversal are all rejected to prevent
- * open-redirect and header-injection.
+ * detour). Only safe relative paths are accepted — see _redirect_uri_is_safe().
  */
 function ipam_post_login_redirect_stash(string $uri): void
 {
-    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return;
-    if (preg_match('/[\r\n]/', $uri)) return;
-    if (str_contains($uri, '..')) return;
-    // Reject backslashes — some browsers canonicalise them to forward slashes,
-    // which would let "/\evil.com" become "//evil.com" after normalisation.
-    if (str_contains($uri, '\\')) return;
-    if (strlen($uri) > 1024) return;
+    if (!_redirect_uri_is_safe($uri)) return;
     $_SESSION['post_login_redirect'] = $uri;
 }
 
 /**
  * Pull and clear the stashed post-login URI. Returns $default if nothing is
- * stashed or the stashed value fails revalidation (defence in depth — same
- * checks as stash, in case the session was tampered with).
+ * stashed or the stashed value fails revalidation (defence in depth — the
+ * same _redirect_uri_is_safe() gate runs again here in case the session was
+ * tampered with).
  */
 function ipam_post_login_redirect_consume(string $default = 'dashboard.php'): string
 {
     $uri = to_str($_SESSION['post_login_redirect'] ?? '');
     unset($_SESSION['post_login_redirect']);
-    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return $default;
-    if (preg_match('/[\r\n]/', $uri)) return $default;
-    if (str_contains($uri, '..')) return $default;
-    // Reject backslashes — see note in ipam_post_login_redirect_stash().
-    if (str_contains($uri, '\\')) return $default;
-    if (strlen($uri) > 1024) return $default;
-    return $uri;
+    return _redirect_uri_is_safe($uri) ? $uri : $default;
 }
 
 /**
@@ -355,6 +362,32 @@ function client_ip(): string
         }
     }
     return $remote;
+}
+
+// ============================================================
+// Session name derivation (#950 B.P3)
+// ============================================================
+
+/**
+ * Derive the session cookie name from `$config['session_name']`, falling
+ * back to a per-install-directory-hashed default when unset or set to the
+ * legacy `'IPAMSESSID'` literal. Two installs at different filesystem paths
+ * never collide.
+ *
+ * The fallback logic is identical to the bootstrap at `init.php`; this
+ * helper exists so `api.php`'s own session-bootstrap path (used for
+ * browser-session-authenticated GET endpoints when no Bearer key is
+ * supplied) can derive the same value without duplicating the logic.
+ *
+ * @param IpamConfig $config
+ */
+function ipam_session_name(array $config): string
+{
+    $name = to_str($config['session_name']);
+    if ($name === '' || $name === 'IPAMSESSID') {
+        $name = 'IPAMSESSID_' . substr(hash('sha256', dirname(__DIR__)), 0, 8);
+    }
+    return $name;
 }
 
 // ============================================================
