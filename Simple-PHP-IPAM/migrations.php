@@ -97,7 +97,7 @@ function ipam_migrations(): array
         // have network_bin. Multi-driver fresh-install replay (#885)
         // exposed the previously-unguarded PRAGMA as a hard fail on
         // MySQL/Postgres with SQLSTATE 42000 / 42601.
-        '0.3' => function(PDO $db) {
+        '0.3' => static function (PDO $db): void {
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') {
                 return;
@@ -130,7 +130,7 @@ function ipam_migrations(): array
         },
 
         // 0.7: address history + search indexes
-        '0.7' => function(PDO $db) {
+        '0.7' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-era closure. MySQL/Postgres start from
             // schema.{driver}.sql with this state already present.
@@ -162,7 +162,7 @@ function ipam_migrations(): array
         },
 
         // 0.9: sites grouping
-        '0.9'  => function(PDO $db) {
+        '0.9'  => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -190,7 +190,7 @@ function ipam_migrations(): array
         },
 
         // 1.4: password_changed_at timestamp on users (for password rotation policy)
-        '1.4' => function(PDO $db) {
+        '1.4' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -212,7 +212,7 @@ function ipam_migrations(): array
         },
 
         // 0.14: last_login_at timestamp on users
-        '0.14' => function(PDO $db) {
+        '0.14' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -228,7 +228,7 @@ function ipam_migrations(): array
         },
 
         // 0.13: name + email fields on users
-        '0.13' => function(PDO $db) {
+        '0.13' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -248,7 +248,7 @@ function ipam_migrations(): array
         },
 
         // 0.12: OIDC subject claim column on users
-        '0.12' => function(PDO $db) {
+        '0.12' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -269,7 +269,7 @@ function ipam_migrations(): array
         },
 
         // 0.11: login rate-limiting + REST API keys
-        '0.11' => function(PDO $db) {
+        '0.11' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-era closure. MySQL/Postgres start from
             // schema.{driver}.sql with this state already present.
@@ -299,7 +299,7 @@ function ipam_migrations(): array
         },
 
         // 1.11: addresses.grp (group field), subnets.vlan_id, users.theme
-        '1.11' => function(PDO $db) {
+        '1.11' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -339,7 +339,7 @@ function ipam_migrations(): array
         // normalises. The ESCAPE '\' clause in particular is parsed
         // differently across engines (MySQL's NO_BACKSLASH_ESCAPES mode
         // interaction). Gate to SQLite.
-        '1.12' => function(PDO $db) {
+        '1.12' => static function (PDO $db): void {
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             // Indexes for audit_log queries
@@ -361,12 +361,12 @@ function ipam_migrations(): array
             ensure_audit_log_triggers($db);
         },
 
-        '1.9' => function(PDO $db) {
+        '1.9' => static function (PDO $db): void {
             ensure_audit_log_table($db);
         },
 
         // 1.13: api_keys.is_readonly + api_keys.description
-        '1.13' => function(PDO $db): void {
+        '1.13' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -384,7 +384,7 @@ function ipam_migrations(): array
         },
 
         // 1.19.0: addresses.mac + addresses.expires_at
-        '1.19.0' => function(PDO $db): void {
+        '1.19.0' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -405,7 +405,7 @@ function ipam_migrations(): array
         },
 
         // 2.0.0-vlans: VLANs as first-class managed objects
-        '2.0.0-vlans' => function(PDO $db): void {
+        '2.0.0-vlans' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -452,7 +452,7 @@ function ipam_migrations(): array
         },
 
         // 2.0.0-site-hierarchy: parent site / region support
-        '2.0.0-site-hierarchy' => function(PDO $db): void {
+        '2.0.0-site-hierarchy' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -471,7 +471,7 @@ function ipam_migrations(): array
         },
 
         // 2.0.0-tags: tags on subnets and addresses
-        '2.0.0-tags' => function(PDO $db): void {
+        '2.0.0-tags' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-era closure. MySQL/Postgres start from
             // schema.{driver}.sql with this state already present.
@@ -518,7 +518,7 @@ function ipam_migrations(): array
         // CR #1100: SQLite-only legacy closure (uses sqlite_master).
         // MySQL/Postgres start from schema.{driver}.sql with the
         // alert_state table already present.
-        '2.0.0-alert-state' => function(PDO $db): void {
+        '2.0.0-alert-state' => static function (PDO $db): void {
             $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
@@ -541,7 +541,7 @@ function ipam_migrations(): array
         // SQLite cannot DROP CONSTRAINT, so we rebuild the subnets table to change
         // UNIQUE(cidr) → UNIQUE(cidr, vrf_id).  All existing subnets get vrf_id = NULL
         // (= global/default VRF).  Idempotent: guarded by vrf_id column presence.
-        '2.1.0-vrfs' => function(PDO $db): void {
+        '2.1.0-vrfs' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -606,49 +606,49 @@ function ipam_migrations(): array
                     UNIQUE(cidr, vrf_id)
                 )
             ");
-                $db->exec("
-                    INSERT INTO subnets_new
-                        (id, cidr, ip_version, network, network_bin, prefix, description,
-                         site_id, vlan_id, vlan_fk, vrf_id, created_at, updated_at)
-                    SELECT id, cidr, ip_version, network, network_bin, prefix, description,
-                           site_id, vlan_id, vlan_fk, NULL, created_at, updated_at
-                    FROM subnets
-                ");
-                // vlans_before_delete_cleanup_subnets fires ON vlans (not subnets), so
-                // it is NOT auto-dropped when subnets is dropped. SQLite validates trigger
-                // bodies during ALTER TABLE RENAME and will error if subnets doesn't exist
-                // at that point. Drop it explicitly here; it is recreated below.
-                $db->exec("DROP TRIGGER IF EXISTS vlans_before_delete_cleanup_subnets");
+            $db->exec("
+                INSERT INTO subnets_new
+                    (id, cidr, ip_version, network, network_bin, prefix, description,
+                     site_id, vlan_id, vlan_fk, vrf_id, created_at, updated_at)
+                SELECT id, cidr, ip_version, network, network_bin, prefix, description,
+                       site_id, vlan_id, vlan_fk, NULL, created_at, updated_at
+                FROM subnets
+            ");
+            // vlans_before_delete_cleanup_subnets fires ON vlans (not subnets), so
+            // it is NOT auto-dropped when subnets is dropped. SQLite validates trigger
+            // bodies during ALTER TABLE RENAME and will error if subnets doesn't exist
+            // at that point. Drop it explicitly here; it is recreated below.
+            $db->exec("DROP TRIGGER IF EXISTS vlans_before_delete_cleanup_subnets");
 
-                $db->exec("DROP TABLE subnets");
-                $db->exec("ALTER TABLE subnets_new RENAME TO subnets");
+            $db->exec("DROP TABLE subnets");
+            $db->exec("ALTER TABLE subnets_new RENAME TO subnets");
 
-                // Recreate indexes
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin)");
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_vrf_id ON subnets(vrf_id)");
+            // Recreate indexes
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_vrf_id ON subnets(vrf_id)");
 
-                // Recreate subnets_updated_at trigger (dropped with the old table)
-                $db->exec("
-                    CREATE TRIGGER IF NOT EXISTS subnets_updated_at
-                    AFTER UPDATE ON subnets FOR EACH ROW
-                    BEGIN
-                      UPDATE subnets SET updated_at = datetime('now') WHERE id = OLD.id;
-                    END
-                ");
+            // Recreate subnets_updated_at trigger (dropped with the old table)
+            $db->exec("
+                CREATE TRIGGER IF NOT EXISTS subnets_updated_at
+                AFTER UPDATE ON subnets FOR EACH ROW
+                BEGIN
+                  UPDATE subnets SET updated_at = datetime('now') WHERE id = OLD.id;
+                END
+            ");
 
-                // Recreate vlans cleanup trigger
-                $db->exec("
-                    CREATE TRIGGER IF NOT EXISTS vlans_before_delete_cleanup_subnets
-                    BEFORE DELETE ON vlans FOR EACH ROW
-                    BEGIN
-                      UPDATE subnets SET vlan_id = NULL WHERE vlan_fk = OLD.id;
-                    END
-                ");
+            // Recreate vlans cleanup trigger
+            $db->exec("
+                CREATE TRIGGER IF NOT EXISTS vlans_before_delete_cleanup_subnets
+                BEFORE DELETE ON vlans FOR EACH ROW
+                BEGIN
+                  UPDATE subnets SET vlan_id = NULL WHERE vlan_fk = OLD.id;
+                END
+            ");
         },
 
         // 2.3.0-scanning: network discovery & scanning tables
-        '2.3.0-scanning' => function(PDO $db): void {
+        '2.3.0-scanning' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -711,7 +711,7 @@ function ipam_migrations(): array
         },
 
         // 2.1.0-contacts: contacts as first-class objects
-        '2.1.0-contacts' => function(PDO $db): void {
+        '2.1.0-contacts' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -757,7 +757,7 @@ function ipam_migrations(): array
         },
 
         // 2.4.0-vrf-bgp: BGP context fields on VRFs
-        '2.4.0-vrf-bgp' => function(PDO $db): void {
+        '2.4.0-vrf-bgp' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -784,7 +784,7 @@ function ipam_migrations(): array
         },
 
         // 2.4.0-vlan-ranges: 802.1Q VLAN ID range model
-        '2.4.0-vlan-ranges' => function(PDO $db): void {
+        '2.4.0-vlan-ranges' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-era closure. MySQL/Postgres start from
             // schema.{driver}.sql with this state already present.
@@ -812,7 +812,7 @@ function ipam_migrations(): array
         },
 
         // 2.4.0-aggregates: supernet/aggregate tracking
-        '2.4.0-aggregates' => function(PDO $db): void {
+        '2.4.0-aggregates' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-era closure. MySQL/Postgres start from
             // schema.{driver}.sql with this state already present.
@@ -843,7 +843,7 @@ function ipam_migrations(): array
         },
 
         // 2.4.0-pd-pools: IPv6 prefix delegation (RFC 3633)
-        '2.4.0-pd-pools' => function(PDO $db): void {
+        '2.4.0-pd-pools' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-era closure. MySQL/Postgres start from
             // schema.{driver}.sql with this state already present.
@@ -883,11 +883,18 @@ function ipam_migrations(): array
             }
         },
 
-        '2.6.0-settings' => \Closure::fromCallable('ipam_migrate_2_6_0_settings'),
+        // C18 (#951): the migration body is large enough (~130 lines) that
+        // it lives as a named function (ipam_migrate_2_6_0_settings) further
+        // down the file. The closure literal here keeps the registry shape
+        // uniform with every other entry — every value in this array is a
+        // `static function (PDO $db): void` closure.
+        '2.6.0-settings' => static function (PDO $db): void {
+            ipam_migrate_2_6_0_settings($db);
+        },
 
         // v2.8.0 #316: long-form operational notes on subnets, separate from
         // the short-form description column used in table listings.
-        '2.8.0-subnet-notes' => function(PDO $db): void {
+        '2.8.0-subnet-notes' => static function (PDO $db): void {
             // CR #1100 (Critical, multi-engine fresh-install replay):
             // legacy SQLite-only closure. MySQL/Postgres start from
             // schema.{driver}.sql with the column already present, so
@@ -907,7 +914,7 @@ function ipam_migrations(): array
         // active user via case-insensitive email match, and audit either the
         // automatic migration or the unmigratable value so the admin can
         // re-pick recipients on the settings page.
-        '2.8.0-alert-recipients' => function(PDO $db): void {
+        '2.8.0-alert-recipients' => static function (PDO $db): void {
             // settings table only exists on installs that ran 2.6.0-settings.
             // Fresh installs older than v2.6.0 are not supported; this guard
             // is for resilience during test fixtures. Use a portable try/catch
@@ -1042,7 +1049,7 @@ function ipam_migrations(): array
         // loop is skipped. Re-running the migration on a fresh install (or
         // on a v2.9.0+ install that already has BLOB-affinity data) is a
         // no-op.
-        '2.9.0-blob-affinity' => function(PDO $db): void {
+        '2.9.0-blob-affinity' => static function (PDO $db): void {
             // SQLite-only: TEXT-vs-BLOB affinity is a quirk of SQLite's loose
             // typing. MySQL VARBINARY(16) and Postgres BYTEA do not have the
             // same problem — PARAM_LOB binding on those engines is correct
@@ -1133,7 +1140,7 @@ function ipam_migrations(): array
             }
         },
 
-        '2.12.0-account-lockout' => function(PDO $db): void {
+        '2.12.0-account-lockout' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
             // Guard: table may not exist in partial test fixtures
@@ -1177,7 +1184,7 @@ function ipam_migrations(): array
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at)");
             }
         },
-        '3.0.0-config-stub' => function(PDO $db): void {
+        '3.0.0-config-stub' => static function (PDO $db): void {
             $configPath = __DIR__ . '/config.php';
             if (!is_file($configPath)) return;
 
@@ -1235,7 +1242,7 @@ function ipam_migrations(): array
             ];
         },
 
-        '3.0.0-config-stub-rewrite' => function(PDO $db): void {
+        '3.0.0-config-stub-rewrite' => static function (PDO $db): void {
             $pending = $GLOBALS['_ipam_v3_config_stub_pending'] ?? null;
             if (!is_array($pending)) return;
             unset($GLOBALS['_ipam_v3_config_stub_pending']);
@@ -1311,7 +1318,7 @@ function ipam_migrations(): array
             }
         },
 
-        '3.0.0-site-contacts' => function(PDO $db): void {
+        '3.0.0-site-contacts' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'sqlite') {
                 $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='site_contacts'");
@@ -1339,7 +1346,7 @@ function ipam_migrations(): array
             )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
         },
 
-        '3.1.0-user-timezone' => function(PDO $db): void {
+        '3.1.0-user-timezone' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             $hasCol = false;
             if ($driver === 'sqlite') {
@@ -1366,7 +1373,7 @@ function ipam_migrations(): array
             }
         },
 
-        '3.1.0-subnet-alerts-enabled' => function(PDO $db): void {
+        '3.1.0-subnet-alerts-enabled' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             $hasCol = false;
             if ($driver === 'sqlite') {
@@ -1395,7 +1402,7 @@ function ipam_migrations(): array
             }
         },
 
-        '3.1.0-utilization-snapshots' => function(PDO $db): void {
+        '3.1.0-utilization-snapshots' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'sqlite') {
                 $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='utilization_snapshots'");
@@ -1449,7 +1456,7 @@ function ipam_migrations(): array
         // install treat it as unapplied and re-run + re-record the migration.
         // Runtime ordering is unaffected: apply_migrations() ksort()s by key,
         // so physical array position is cosmetic only.
-        '3.0.0-subnet-contacts' => function(PDO $db): void {
+        '3.0.0-subnet-contacts' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'sqlite') {
                 $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='subnet_contacts'");
@@ -1478,7 +1485,7 @@ function ipam_migrations(): array
         },
 
         // 3.2.0-devices: device and device_interface tables, plus FK columns on addresses
-        '3.2.0-devices' => function(PDO $db): void {
+        '3.2.0-devices' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
             // ── 1. Create devices table ──────────────────────────────────────
@@ -1669,7 +1676,7 @@ function ipam_migrations(): array
         },
 
         // 3.2.0-password-reset: password_reset_tokens table + pending email columns on users
-        '3.2.0-password-reset' => function(PDO $db): void {
+        '3.2.0-password-reset' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
             // ── 1. Create password_reset_tokens table ────────────────────────
@@ -1779,7 +1786,7 @@ function ipam_migrations(): array
         },
 
         // 3.3.0-webhooks: webhooks + webhook_deliveries tables
-        '3.3.0-webhooks' => function(PDO $db): void {
+        '3.3.0-webhooks' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
             // Helper: table existence check
@@ -1897,7 +1904,7 @@ function ipam_migrations(): array
         },
 
         // 3.4.0-dhcp-options: add 7 nullable DHCP option columns to subnets (#402)
-        '3.4.0-dhcp-options' => function(PDO $db): void {
+        '3.4.0-dhcp-options' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             $cols = [
                 'dhcp_routers'      => ($driver === 'mysql') ? 'TEXT DEFAULT NULL' : 'TEXT',
@@ -1946,7 +1953,7 @@ function ipam_migrations(): array
         // JSON is stored as plain TEXT on all three engines so SchemaParityTest
         // sees the same type_class ('text') everywhere; json_extract / json_remove
         // work on SQLite 3.38+, MySQL 8.0+, and Postgres 14+.
-        '3.5.0-custom-fields' => function(PDO $db): void {
+        '3.5.0-custom-fields' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
             // ── 1. Create custom_field_defs table ────────────────────────────
@@ -2055,7 +2062,7 @@ function ipam_migrations(): array
         },
 
         // 3.6.0-totp: TOTP 2FA enrollment columns + backup codes table (#418)
-        '3.6.0-totp' => function(PDO $db): void {
+        '3.6.0-totp' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
             // ── 1. Add totp_secret_enc + totp_enabled columns to users ────────
@@ -2148,7 +2155,7 @@ function ipam_migrations(): array
         },
 
         // 3.6.0-rate-limit: sliding-window rate-limit bucket table (#419)
-        '3.6.0-rate-limit' => function(PDO $db): void {
+        '3.6.0-rate-limit' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'mysql') {
                 $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
@@ -2183,7 +2190,7 @@ function ipam_migrations(): array
         },
 
         // 3.7.0-backup-history: backup history table + backup.local_path setting (#423)
-        '3.7.0-backup-history' => function(PDO $db): void {
+        '3.7.0-backup-history' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'mysql') {
                 $db->exec("CREATE TABLE IF NOT EXISTS backup_history (
@@ -2251,7 +2258,7 @@ function ipam_migrations(): array
         // install treat it as unapplied and re-run + re-record the migration.
         // Runtime ordering is unaffected: apply_migrations() ksort()s by key,
         // so physical array position is cosmetic only.
-        '3.6.0-lockout' => function(PDO $db): void {
+        '3.6.0-lockout' => static function (PDO $db): void {
             $driver = ipam_dialect()->driver_name();
 
             // Guard: users table may not exist in test DBs that pre-date it.
