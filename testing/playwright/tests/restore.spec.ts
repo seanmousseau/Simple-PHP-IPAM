@@ -117,8 +117,8 @@ test.describe('Restore wizard', () => {
     // The JS strings asserted below live in the monolith during Phase 0;
     // when the restore-confirm concern (C30) extracts into
     // e1-restore-confirm.js in a later phase, update this URL to match.
-    const resp = await page.request.get(appUrl('assets/modules/_monolith.js'));
-    expect(resp.ok(), 'assets/modules/_monolith.js must be reachable').toBe(true);
+    const resp = await page.request.get(appUrl('assets/modules/c1-restore-confirm-typing.js'));
+    expect(resp.ok(), 'assets/modules/c1-restore-confirm-typing.js must be reachable').toBe(true);
     const src = await resp.text();
     expect(src, 'gate binds restore-confirm-input').toContain("getElementById('restore-confirm-input')");
     expect(src, 'gate binds restore-apply-button').toContain("getElementById('restore-apply-button')");
