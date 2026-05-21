@@ -97,6 +97,11 @@ $jsModules = [
     '84-subnet-stats',
     '85-contact-browse',
     '86-contact-card',
+    '87-contact-picker',
+    '90-dhcp-export',
+    '91-custom-fields-preview',
+    '92-totp-verify-toggle',
+    '93-smtp-test',
     '_monolith',
 ];
 ?>

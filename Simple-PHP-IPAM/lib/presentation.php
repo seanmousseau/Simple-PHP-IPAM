@@ -420,7 +420,12 @@ function page_header(string $title, array $opts = []): void
         '84-subnet-stats',               // C13e — async [data-subnet-counts] fill
         '85-contact-browse',             // C13f — contact browse overlay
         '86-contact-card',               // C13g — contact card popover
-        '_monolith',                     // remaining concerns; deleted in Phase 4
+        '87-contact-picker',             // C14 — contact-role grid
+        '90-dhcp-export',                // C15 — DHCP export card
+        '91-custom-fields-preview',      // C15b — type-select preview
+        '92-totp-verify-toggle',         // C17 — TOTP backup-code toggle
+        '93-smtp-test',                  // C18b — SMTP test button
+        '_monolith',                     // Phase 3 trailing IIFEs; deleted in Phase 4
     ];
     foreach ($jsModules as $mod) {
         $v = e(ipam_asset_buster("assets/modules/{$mod}.js"));
