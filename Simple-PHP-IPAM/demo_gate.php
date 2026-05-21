@@ -70,7 +70,7 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
 // one place.
 $av   = e(ipam_asset_buster());
 $cssV = e(ipam_asset_buster('assets/app.css'));
-// v3.34.0 #939 + #1047 (shipped 2026-05-21): demo_gate.php has its own
+// v3.34.0 #939 + #1047 (landing in v3.34.0): demo_gate.php has its own
 // <head> (does NOT call page_header), so it carries a parallel $jsModules
 // list. Keep this list byte-identical to the one in lib/presentation.php —
 // the Playwright spec at testing/playwright/tests/frontend-modules.spec.ts

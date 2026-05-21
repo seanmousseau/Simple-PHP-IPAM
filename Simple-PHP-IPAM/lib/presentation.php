@@ -389,7 +389,7 @@ function page_header(string $title, array $opts = []): void
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
     // Expose CSRF token for fetch-based POSTs from frontend modules (e.g. user_preference.php).
     echo "<meta name='ipam-csrf' content='" . e(csrf_token()) . "'>";
-    // v3.34.0 #939 + #1047 (shipped 2026-05-21): the former monolithic
+    // v3.34.0 #939 + #1047 (landing in v3.34.0): the former monolithic
     // `assets/app.js` was split into 46 per-concern modules under
     // `assets/modules/`. Each loads as its own `<script defer>` tag;
     // browsers execute deferred scripts in DOM-emission order, so array

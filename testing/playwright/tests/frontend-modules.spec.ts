@@ -128,6 +128,17 @@ test.describe('Frontend modules (#939 + #1047)', () => {
         for (const path of AUTHED_PAGES) {
             const resp = await page.goto(appUrl(path), { waitUntil: 'domcontentloaded' });
             if (!resp) { offenders.push(`${path}: no response`); continue; }
+            if (!resp.ok()) { offenders.push(`${path}: HTTP ${resp.status()}`); continue; }
+            // Guard against a silent auth-redirect masquerading as success:
+            // every authenticated page in the roster must land on its own
+            // URL, NOT on login.php. Without this check, an expired session
+            // would 302 → login.php and the canonical module list (which
+            // login.php also emits) would still satisfy the order assertion.
+            const finalPath = new URL(resp.url()).pathname;
+            if (finalPath.endsWith('/login.php')) {
+                offenders.push(`${path}: redirected to login.php (auth lost)`);
+                continue;
+            }
             const html = await resp.text();
             const seq = extractModuleSequence(html);
             if (seq.length !== EXPECTED_MODULES.length) {
