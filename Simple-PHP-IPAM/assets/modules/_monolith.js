@@ -1924,7 +1924,10 @@
   });
 }());
 
-// ─── Main IIFE — C14-C18 (Phase 2a in progress, #939) ────────────────────────
+// ─── C14 — Contact picker (#563) (Phase 2a, #939) ────────────────────────────
+// Per-page contact-role grid on subnet/site forms. Rebuilds rows on form
+// reset; click delete removes a row; the rows array seeds from
+// `data-existing` JSON. Inner per-picker closure survives the wrap.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Contact picker (v3.0.0 #563) ---
@@ -1990,7 +1993,14 @@
     });
 
   });
+}());
 
+// ─── C15 — DHCP export card on dhcp_pool.php (Phase 2a, #939) ────────────────
+// Builds an export URL from selected-subnets checkboxes for dhcpd / Kea
+// formats; preview button renders the dhcpd config inline via fetch. No
+// DOMContentLoaded needed — script defer guarantees the DOM is parsed
+// before this module runs.
+(function(){
   // DHCP export card on dhcp_pool.php
   var dhcpChecklist = document.getElementById("dhcp-export-checklist");
   if (dhcpChecklist) {
@@ -2046,7 +2056,13 @@
       });
     }
   }
+}());
 
+// ─── C15b — custom_fields.php type-select preview (Phase 2a, #939) ───────────
+// On custom_fields.php, the "Type" <select> drives both the visibility of
+// the per-type options row (only "select" shows it) and which of the
+// per-type preview widgets is shown. Page-targeted; runs once at load.
+(function(){
   // custom_fields.php — type-select → options-row + preview toggle
   var cfTypeSelect = document.getElementById("cf-type-select");
   if (cfTypeSelect) {
@@ -2063,7 +2079,14 @@
     cfTypeSelect.addEventListener("change", syncCfType);
     syncCfType();
   }
+}());
 
+// ─── C17 — TOTP verify-page toggle (Phase 2a, #939) ──────────────────────────
+// On totp_verify.php, "Use a backup code instead" link flips the form
+// between TOTP code and backup code inputs (required/disabled mirroring,
+// label swap, focus management). Not the TOTP enrollment QR — that's a
+// separate concern that already has its own standalone IIFE.
+(function(){
   // TOTP backup code toggle on totp_verify.php
   var toggleBackup = document.getElementById("toggle-backup");
   if (toggleBackup) {
@@ -2086,7 +2109,14 @@
       if (isBackup && totpInput) totpInput.focus();
     });
   }
+}());
 
+// ─── C18b — SMTP test button on settings.php (Phase 2a, #939) ────────────────
+// Single button that POSTs to smtp_test.php with the page CSRF; renders
+// status (Sent / Failed / Request failed) in #smtp-test-result. Page-
+// targeted; not the dashboard uPlot chart that's also numbered C18 in
+// the original plan — that's a separate already-standalone IIFE.
+(function(){
   // SMTP test button on settings.php
   var smtpTestBtn = document.getElementById("smtp-test-btn");
   if (smtpTestBtn) {
@@ -2109,8 +2139,11 @@
         .finally(function() { smtpTestBtn.disabled = false; });
     });
   }
+}());
 
-})();
+// ─── End of Phase 2a (C01-C18 + sub-concerns). Concerns below this line are ──
+// trailing standalone IIFEs that pre-existed Phase 2a (already self-contained)
+// and will be moved to assets/modules/<NN>-<name>.js in Phase 2b / Phase 3.
 
 // backups.php modal handlers — CSP-safe event delegation on data-action attributes
 (function () {
