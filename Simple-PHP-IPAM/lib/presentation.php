@@ -384,21 +384,22 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v={$av}'>";
     echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v={$av}'>";
     echo "<link rel='stylesheet' href='assets/app.css?v={$cssV}'>";
-    // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
+    // Expose server-side theme via meta tag so 00-bootstrap.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    // Expose CSRF token for fetch-based POSTs from app.js (e.g. user_preference.php).
+    // Expose CSRF token for fetch-based POSTs from frontend modules (e.g. user_preference.php).
     echo "<meta name='ipam-csrf' content='" . e(csrf_token()) . "'>";
-    // v3.34.0 #939 Phase 0: assets/app.js was moved to assets/modules/_monolith.js
-    // as a transitional intermediate. Future phases extract per-concern modules
-    // alongside _monolith.js (which shrinks as concerns move out) and finally
-    // delete the monolith. The emit loop here is the contract that each
-    // subsequent extraction commit appends one entry to — load order is
-    // alphabetic; numeric-prefixed filenames (00-…, 20-…) pin it.
-    // See docs/internal/app-js-modularization-plan.md.
-    // Per-concern modules. Numeric/letter prefix encodes load order.
-    // `<script defer>` executes in DOM emission order = array order =
-    // lexicographic by filename. See docs/internal/app-js-modularization-plan.md.
+    // v3.34.0 #939 + #1047 (shipped 2026-05-21): the former monolithic
+    // `assets/app.js` was split into 46 per-concern modules under
+    // `assets/modules/`. Each loads as its own `<script defer>` tag;
+    // browsers execute deferred scripts in DOM-emission order, so array
+    // order = load order. Numeric/letter prefix encodes the dependency
+    // chain (20-drawer must run before 80-command-palette which consumes
+    // window.IpamDrawer; etc.). Keep this list in lockstep with the
+    // EXPECTED_MODULES array in testing/playwright/tests/frontend-modules.spec.ts
+    // and with the parallel $jsModules in demo_gate.php.
+    // See docs/internal/app-js-modularization-plan.md for the historical
+    // narrative and docs/internal/design-guide.md for the current contract.
     $jsModules = [
         // ── Phase 2a/2b concerns (extracted from the original main IIFE) ──
         '00-bootstrap',                  // C01 — synchronous theme apply pre-paint

@@ -267,7 +267,7 @@ Originally three refactor waves; ADR-001 (settings type system) added a fourth s
 | v3.31.0 | **Settings encrypt-at-rest + webhook crypto consolidation** (ADR-001 part 2) | Four sensitive `settings` rows now encrypted at rest via shared crypto pipeline; legacy webhook-secret encryption consolidated onto same pipeline; two idempotent re-encryption migrations; two more `lib/*.php` extractions finish wave 1 | ✅ shipped 2026-05-18 |
 | v3.32.0 | **Code-quality + hardening + dependency-maintenance** (#84) | Site-hierarchy server-side guards (previously UI-only); dependency upgrades; bug fixes. No schema migrations. *Note: replaced the original wave-2 slot — wave 2 slid to v3.33.0.* | ✅ shipped 2026-05-18 |
 | v3.33.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition (`api_paginated_query()`, `api_bulk_create()`); `import_csv.php` state machine extracted to `lib/csv_import.php`; migration helpers; ADR-003 `global $config` sweep completed (#1207); 22 issues closed | ✅ shipped 2026-05-19 |
-| **v3.34.0+** (next refactor slot) | **Refactor wave 3 — frontend modularization** (#58, 17 open) | `assets/app.js` module split + P2/P3 polish | **next** |
+| v3.34.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` (3,439 lines) split into 46 per-concern `assets/modules/*.js` modules loaded as ordered `<script defer>` tags; test umbrella `#1047` lands the module-load-order + `window.*` contract + `prefers-reduced-motion` smoke; P2/P3 polish | **in progress** |
 
 **Closes findings (cumulative across waves):** A6, A11–A20, A23–A27, A29, A31–A33, A.P3, B5–B11, B13, B.P3, C2, C3-policy, C5–C12, C.P3, D4-full, D5, D13–D21.
 
