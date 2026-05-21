@@ -1033,7 +1033,14 @@
   });
 }());
 
-// ─── Main IIFE — concerns C12–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C12 — Subnet list/map view + address inline cell edit (Phase 2a, #939) ──
+// Two interactions specific to subnets/addresses listings: (1) #255
+// subnet list-vs-map view toggle on subnets.php (state persisted as
+// `ipam_subnet_view` in localStorage); (2) #254 inline-cell editing on
+// addresses.php row cells (click → become an input, blur or Enter →
+// XHR write-back via addresses.php update_cell, Tab → advance to next
+// editable cell in same row). Grouped because both target the
+// address/subnet grids surface.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Subnet list/map view toggle (#255) ---
@@ -1140,7 +1147,12 @@
         });
       });
     });
+  });
+}());
 
+// ─── Main IIFE — concerns C13–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Command palette ⌘K (#516) ---
     (function() {
       var bg = document.getElementById("cmd-palette-bg");
