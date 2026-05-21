@@ -397,8 +397,15 @@ function page_header(string $title, array $opts = []): void
     // alphabetic; numeric-prefixed filenames (00-…, 20-…) pin it.
     // See docs/internal/app-js-modularization-plan.md.
     $jsModules = [
-        '20-drawer',  // C19 — IpamDrawer (v3.34.0 #939 Phase 1); must load before consumers in _monolith
-        '_monolith',  // ← transitional; deleted in Phase 4 of the rollout
+        // Phase 2b in progress: per-concern modules sorted by load order
+        // (numeric prefix). Each name maps to assets/modules/<name>.js.
+        // `_monolith` shrinks with each move and gets deleted in Phase 4.
+        '00-bootstrap',                  // C01 — synchronous theme apply pre-paint
+        '10-theme-banner',               // C02 — theme toggle + banner dismiss
+        '15-site-group-collapse',        // C03 — sidebar group toggle
+        '20-drawer',                     // C19 — IpamDrawer (Phase 1 anchor)
+        '25-ping-shortcuts',             // C04 — live-ping + alert-recipients clear
+        '_monolith',                     // remaining concerns; deleted in Phase 4
     ];
     foreach ($jsModules as $mod) {
         $v = e(ipam_asset_buster("assets/modules/{$mod}.js"));
