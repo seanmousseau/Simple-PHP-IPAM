@@ -8,7 +8,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
 ## [3.34.0] - 2026-05-21
 
-Refactor Wave 3 — frontend modularization. A pure code-quality release; no schema migrations, no new config keys, no new operator-facing pages. Closes 9 milestone-#58 issues plus 3 umbrellas (#949 #950 #952) with full per-item disposition. The 4 substantial deferred items are carried forward to milestone #85 (Refactor wave 4).
+Refactor Wave 3 — frontend modularization. A pure code-quality release; no schema migrations, no new config keys, no new operator-facing pages. Closes 9 milestone-#58 issues plus 3 umbrellas (#949 #950 #952) with full per-item disposition. **8 items carry forward to milestone #85 (Refactor wave 4):** 4 newly filed from the wave-3 review (#1290 #1291 #1292 #1293) and 4 pre-existing deferrals (#775 #944 #946 #1243).
 
 ### Refactor Wave 3 — frontend modularization (#58, #939, #1047)
 
@@ -2029,6 +2029,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.34.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.33.0...v3.34.0
 [3.33.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.32.0...v3.33.0
 [3.32.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.31.0...v3.32.0
 [3.31.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.30.0...v3.31.0

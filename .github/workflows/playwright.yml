@@ -23,6 +23,7 @@ on:
       - 'testing/playwright/**'
       - 'testing/scripts/**'
       - '.github/workflows/playwright.yml'
+      - '.github/actions/setup-php-ipam/**'
 
 concurrency:
   group: playwright-${{ github.ref }}
