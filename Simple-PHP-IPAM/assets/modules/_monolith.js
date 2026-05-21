@@ -1404,7 +1404,9 @@
   });
 }());
 
-// ─── Main IIFE — remaining intra-palette siblings + C14-C18 (Phase 2a, #939) ─
+// ─── C13c — Audit log expand (#564) (Phase 2a, #939) ─────────────────────────
+// Click or Enter/Space on `.audit-details` toggles `--expanded` so a
+// truncated row reveals its full payload. Delegated handlers; runs once.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     /* ---- Audit log: expand truncated details (#564) ---- */
@@ -1420,7 +1422,12 @@
       e.preventDefault();
       el.classList.toggle("audit-details--expanded");
     });
+  });
+}());
 
+// ─── Main IIFE — remaining sub-concerns + C14-C18 (Phase 2a, #939) ───────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Subnet edit drawer (#567) ---- */
     (function() {
       var editDrawer = document.getElementById("subnet-edit-drawer");
