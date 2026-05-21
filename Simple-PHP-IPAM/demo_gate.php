@@ -82,6 +82,12 @@ $jsModules = [
     '15-site-group-collapse',
     '20-drawer',
     '25-ping-shortcuts',
+    '30-forms-core',
+    '35-forms-confirm-bulk',
+    '40-search-validation',
+    '50-sidebar',
+    '60-fill-ip-spinners',
+    '65-contact-typeahead',
     '_monolith',
 ];
 ?>

@@ -405,6 +405,12 @@ function page_header(string $title, array $opts = []): void
         '15-site-group-collapse',        // C03 — sidebar group toggle
         '20-drawer',                     // C19 — IpamDrawer (Phase 1 anchor)
         '25-ping-shortcuts',             // C04 — live-ping + alert-recipients clear
+        '30-forms-core',                 // C05 — auto-submit + password toggle complex
+        '35-forms-confirm-bulk',         // C06 — confirm dialogs + form CSP delegates
+        '40-search-validation',          // C07 — search cascade + IP/CIDR + wheel-hijack
+        '50-sidebar',                    // C08 — sidebar hamburger + inline status toggle
+        '60-fill-ip-spinners',           // C09 — fill-IP helper + import/restore spinners
+        '65-contact-typeahead',          // C10 — data-contact-typeahead suggestions
         '_monolith',                     // remaining concerns; deleted in Phase 4
     ];
     foreach ($jsModules as $mod) {
