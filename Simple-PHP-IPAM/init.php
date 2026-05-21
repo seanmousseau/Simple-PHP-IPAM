@@ -377,7 +377,7 @@ $db = ipam_db($config);
 ipam_db_init($db);
 
 // Now that settings are available, apply the admin-configured timezone. All DB
-// timestamps are stored as UTC; display_datetime() in lib.php converts them
+// timestamps are stored as UTC; ipam_format_datetime() in lib.php converts them
 // for UI output using the effective timezone set here.
 $tz = to_str(ipam_setting('branding.timezone'));
 if ($tz === '' || !@date_default_timezone_set($tz)) {

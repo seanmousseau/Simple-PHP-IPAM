@@ -31,22 +31,6 @@ require_once __DIR__ . '/lib/csv_import.php'; // CSV-import wizard logic (ADR-00
 /* ---------------- Timestamp display ---------------- */
 
 /**
- * Convert a UTC SQLite timestamp string to the configured timezone for display.
- *
- * All timestamps are stored as UTC ('YYYY-MM-DD HH:MM:SS'). This helper converts
- * them to the timezone configured in config.php['timezone'] (default 'UTC').
- * Apply to every timestamp echo in the UI rather than using the raw DB value.
- *
- * @param  string $utcStr  UTC datetime string from the database, or empty string.
- * @param  string $format  PHP date() format string. Defaults to 'Y-m-d H:i:s'.
- * @return string          Formatted datetime in the configured timezone, or '' if input is empty.
- */
-function display_datetime(string $utcStr, string $format = 'Y-m-d H:i:s'): string
-{
-    return ipam_format_datetime($utcStr, $format);
-}
-
-/**
  * Resolve the effective display timezone for a user.
  *
  * Fallback chain: per-user users.timezone → branding.timezone setting → PHP default → UTC.
