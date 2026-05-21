@@ -113,12 +113,10 @@ test.describe('Restore wizard', () => {
     // organically still requires a real staged file, which the bootstrap
     // does not provide; this contract test pins the JS instead so a
     // regression that removes or renames the gate fails immediately.
-    // v3.34.0 #939 Phase 0: assets/app.js → assets/modules/_monolith.js.
-    // The JS strings asserted below live in the monolith during Phase 0;
-    // when the restore-confirm concern (C30) extracts into
-    // e1-restore-confirm.js in a later phase, update this URL to match.
-    const resp = await page.request.get(appUrl('assets/modules/_monolith.js'));
-    expect(resp.ok(), 'assets/modules/_monolith.js must be reachable').toBe(true);
+    // v3.34.0 #939 Phase 3+4: the restore-confirm gate code now lives in
+    // its own module at `assets/modules/c1-restore-confirm-typing.js`.
+    const resp = await page.request.get(appUrl('assets/modules/c1-restore-confirm-typing.js'));
+    expect(resp.ok(), 'assets/modules/c1-restore-confirm-typing.js must be reachable').toBe(true);
     const src = await resp.text();
     expect(src, 'gate binds restore-confirm-input').toContain("getElementById('restore-confirm-input')");
     expect(src, 'gate binds restore-apply-button').toContain("getElementById('restore-apply-button')");
@@ -183,12 +181,11 @@ test.describe('Restore wizard', () => {
 
     test('confirm-typing gate JS is loaded on the unified surface', async ({ page }) => {
       // CR feedback PR #1054: see the same assertion above for restore_web.php.
-      // v3.34.0 #939 Phase 0: assets/app.js → assets/modules/_monolith.js.
-      // Same Phase-2 follow-up as the earlier sibling: when C30 extracts to
-      // e1-restore-confirm.js, update this URL.
+      // v3.34.0 #939 Phase 3+4: the restore-confirm gate code now lives in
+      // its own module at `assets/modules/c1-restore-confirm-typing.js`.
       await page.goto(appUrl('backup_admin.php?tab=restore'));
-      const resp = await page.request.get(appUrl('assets/modules/_monolith.js'));
-      expect(resp.ok(), 'assets/modules/_monolith.js must be reachable').toBe(true);
+      const resp = await page.request.get(appUrl('assets/modules/c1-restore-confirm-typing.js'));
+      expect(resp.ok(), 'assets/modules/c1-restore-confirm-typing.js must be reachable').toBe(true);
       const src = await resp.text();
       expect(src).toContain("getElementById('restore-confirm-input')");
       expect(src).toContain("getElementById('restore-apply-button')");

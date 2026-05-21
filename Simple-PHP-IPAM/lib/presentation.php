@@ -396,10 +396,11 @@ function page_header(string $title, array $opts = []): void
     // subsequent extraction commit appends one entry to — load order is
     // alphabetic; numeric-prefixed filenames (00-…, 20-…) pin it.
     // See docs/internal/app-js-modularization-plan.md.
+    // Per-concern modules. Numeric/letter prefix encodes load order.
+    // `<script defer>` executes in DOM emission order = array order =
+    // lexicographic by filename. See docs/internal/app-js-modularization-plan.md.
     $jsModules = [
-        // Phase 2b in progress: per-concern modules sorted by load order
-        // (numeric prefix). Each name maps to assets/modules/<name>.js.
-        // `_monolith` shrinks with each move and gets deleted in Phase 4.
+        // ── Phase 2a/2b concerns (extracted from the original main IIFE) ──
         '00-bootstrap',                  // C01 — synchronous theme apply pre-paint
         '10-theme-banner',               // C02 — theme toggle + banner dismiss
         '15-site-group-collapse',        // C03 — sidebar group toggle
@@ -425,7 +426,28 @@ function page_header(string $title, array $opts = []): void
         '91-custom-fields-preview',      // C15b — type-select preview
         '92-totp-verify-toggle',         // C17 — TOTP backup-code toggle
         '93-smtp-test',                  // C18b — SMTP test button
-        '_monolith',                     // Phase 3 trailing IIFEs; deleted in Phase 4
+        // ── Phase 3 concerns (pre-existing standalone IIFEs) ──
+        '95-backups-modals',             // backups.php modal handlers (CSP fix)
+        '96-totp-enroll-qr',             // TOTP enrollment QR code
+        '97-uplot-chart',                // uPlot dashboard growth chart
+        '98-backup-history-actions',     // #803 verify + delete from drawer
+        '99-subnets-site-filter',        // #629 sessionStorage pill filter
+        'b0-addresses-bulk-bar',         // bulk-select bar on addresses table
+        'b1-addresses-site-cascade',     // address page site → subnet cascade
+        'b2-webhooks-page',              // drawer + gen_secret + test-fire
+        'b3-addresses-device-cascade',   // device → interface dropdown
+        'b4-collapsible-rows',           // sites admin collapsible rows
+        'b5-passkey-verify',             // #689 passkey verify page
+        'b6-step-up-prompt',             // #1107 step-up auth prompt + WebAuthn
+        'b7-passkey-register',           // #688 change_password.php passkey reg
+        'b8-settings-anchor-redirect',   // #749 legacy fragment-only bookmark redirect
+        'b9-settings-rail-nav',          // #749 settings rail keyboard nav + mobile
+        'c0-destinations-admin',         // v3.17 destinations admin
+        'c1-restore-confirm-typing',     // v3.17 restore confirm-typing gate
+        'c2-remote-backups-delete',      // v3.17 remote_backups delete-with-confirm
+        'c3-destinations-verify-all',    // v3.25.0 #850 verify-all bulk action
+        'c4-skeleton-toggle',            // v3.25.0 #855 skeleton-toggle helper
+        'c5-sudo-replay-resume',         // #1131 sudo-replay landing auto-submit
     ];
     foreach ($jsModules as $mod) {
         $v = e(ipam_asset_buster("assets/modules/{$mod}.js"));
