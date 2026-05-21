@@ -1150,7 +1150,17 @@
   });
 }());
 
-// ─── Main IIFE — concerns C13–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C13 — Command palette ⌘K (Phase 2a, #939) ───────────────────────────────
+// The largest single concern in _monolith.js. ⌘K opens a quick-action
+// palette with global commands (Add Subnet, Add Address, Search, navigation
+// links, theme cycle) plus a per-page item set echoed into a JSON island
+// from `ipam_command_palette_items()` in lib.php. Fuzzy filter on input,
+// arrow-key navigation, Enter activates. Recent items persist in
+// localStorage. Cross-module dependency: opens IpamDrawer via
+// `IpamDrawer.open(...)` for Add Subnet / Add Address — IpamDrawer is in
+// `20-drawer.js` which loads before this module per the documented order.
+// Cmd/Ctrl+N shortcut to open Add Address drawer on addresses.php also
+// lives in this block (was orphan-commented in C04, removed there).
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Command palette ⌘K (#516) ---
@@ -1340,7 +1350,16 @@
         }
       });
     }());
+  });
+}());
 
+// ─── Main IIFE — concerns C14–C18 + intra-palette siblings (Phase 2a, #939) ──
+// Block still contains tooltips, audit-log expand, subnet edit drawer,
+// subnet stats async load, contact browse overlay, contact card popover,
+// contact picker, DHCP export, backups modals, TOTP toggle, uPlot chart.
+// Each will move to its own per-concern IIFE in subsequent Phase 2a commits.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // ── Tooltips (#354) ─────────────────────────────────────────────────────
     // A single shared #ipam-tooltip div at position:fixed is used so the bubble
     // is never clipped by overflow:hidden/clip on ancestor containers.
