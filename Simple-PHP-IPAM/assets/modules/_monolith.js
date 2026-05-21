@@ -869,7 +869,16 @@
   });
 }());
 
-// ─── Main IIFE — concerns C11–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C11 — Dashboard prefs + per-user column visibility (Phase 2a, #939) ─────
+// Per-user UI preferences shared by the dashboard and any data-col-table:
+// (1) #257 dashboard pinnable widgets — hide/show via a gear menu, state
+// persisted as `ipam_hidden_widgets` JSON array in localStorage; plus the
+// dashboard's "by-site" filter persisted as `ipam_dash_site`. (2) #256
+// per-user column visibility for any table that opts in via
+// `data-col-table="<key>"` — gear dropdown shows column toggles, state
+// persisted as `ipam_cols_<key>` JSON array. Both concerns are
+// localStorage-backed (no server round-trip) so dashboard and table
+// preferences survive across sessions on the same browser.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Dashboard pinnable widgets + site filter (#257) ---
@@ -1021,7 +1030,19 @@
       // Apply persisted hidden columns
       hidden.forEach(function(col) { setColVisible(col, false); });
     });
+  });
+}());
 
+// ─── C12 — Subnet list/map view + address inline cell edit (Phase 2a, #939) ──
+// Two interactions specific to subnets/addresses listings: (1) #255
+// subnet list-vs-map view toggle on subnets.php (state persisted as
+// `ipam_subnet_view` in localStorage); (2) #254 inline-cell editing on
+// addresses.php row cells (click → become an input, blur or Enter →
+// XHR write-back via addresses.php update_cell, Tab → advance to next
+// editable cell in same row). Grouped because both target the
+// address/subnet grids surface.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Subnet list/map view toggle (#255) ---
     (function() {
       var listView = document.getElementById("subnet-list-view");
@@ -1126,7 +1147,12 @@
         });
       });
     });
+  });
+}());
 
+// ─── Main IIFE — concerns C13–C18 (Phase 2a in progress, #939) ───────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Command palette ⌘K (#516) ---
     (function() {
       var bg = document.getElementById("cmd-palette-bg");
