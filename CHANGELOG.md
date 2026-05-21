@@ -6,13 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
-## [Unreleased]
+## [3.34.0] - 2026-05-21
+
+Refactor Wave 3 — frontend modularization. A pure code-quality release; no schema migrations, no new config keys, no new operator-facing pages. Closes 9 milestone-#58 issues plus 3 umbrellas (#949 #950 #952) with full per-item disposition. The 4 substantial deferred items are carried forward to milestone #85 (Refactor wave 4).
 
 ### Refactor Wave 3 — frontend modularization (#58, #939, #1047)
 
-- **`assets/app.js` split into 46 per-concern modules under `assets/modules/`.** The former 3,439-line monolith — touched by every UI feature since v1.0 and a recurring merge-conflict hotspot — is gone. Each concern (theme toggle, command palette, IpamDrawer, forms, sidebar, dashboard prefs, contact picker, DHCP export, custom fields preview, TOTP, SMTP test, backup admin, restore confirm gate, passkey enroll/verify, step-up prompt, …) now lives in its own file loaded as a `<script defer>` tag in `page_header()` and `demo_gate.php`. Numeric/letter filename prefix (`00-bootstrap.js` → `c5-sudo-replay-resume.js`) encodes the dependency chain: deferred scripts execute in DOM emission order, so the prefix pins load order without a maintained config — `20-drawer.js` lands `window.IpamDrawer` before `80-command-palette.js` consumes it, and so on. CSP unchanged (`script-src 'self'` still); no inline scripts introduced. No behaviour change for end users — strictly an internal refactor.
+- **`assets/app.js` split into 46 per-concern modules under `assets/modules/`.** The former 3,439-line monolith — touched by every UI feature since v1.0 and a recurring merge-conflict hotspot — is gone. Each concern (theme toggle, command palette, IpamDrawer, forms, sidebar, dashboard prefs, contact picker, DHCP export, custom fields preview, TOTP, SMTP test, backup admin, restore confirm gate, passkey enroll/verify, step-up prompt, …) now lives in its own file loaded as a `<script defer>` tag in `page_header()` and `demo_gate.php`. Numeric/letter filename prefix (`00-bootstrap.js` → `c5-sudo-replay-resume.js`) encodes the dependency chain: scripts marked `defer` run in DOM emission order, so the prefix alone pins load order without a maintained config — `20-drawer.js` lands `window.IpamDrawer` before `80-command-palette.js` consumes it, and so on. CSP unchanged (`script-src 'self'` still); no inline scripts introduced. No behaviour change for end users — strictly an internal refactor.
 - **Regression spec `testing/playwright/tests/frontend-modules.spec.ts` locks the split (#1047).** Three invariants asserted on every supported driver: (a) every page in the audited roster emits the canonical 46-module list in canonical order with zero references to the retired `assets/app.js` or transitional `_monolith.js`; (b) the documented `window.*` namespace contract — `window.IpamDrawer` exists with `.open` / `.openNode` / `.close` after DOMContentLoaded, and no surprise `Ipam*` globals leaked; (c) `prefers-reduced-motion: reduce` flattens the global animation-duration to `0.01ms` per the `app.css:1413` `@media` block. Closes #939 (split) and #1047 (test umbrella) together — the project invariant is "tests land with the code they cover."
 - **Doc sweep.** `docs/internal/design-guide.md`, `docs/internal/adding-a-page.md`, `docs/internal/design-document.md`, `docs/internal/roadmap.md`, and `docs/internal/app-js-modularization-plan.md` updated to reference `assets/modules/` and the per-concern files instead of `assets/app.js`. The cache-buster step in `adding-a-page.md` is rewritten — `ipam_asset_buster()` already hashes content, so the only thing to remember when adding a new module is to register it in BOTH `lib/presentation.php` and `demo_gate.php` and pick a prefix that sorts after any module it consumes globals from.
+
+### P2/P3 polish
+
+- **Migration registry style standardised (#951, C16–C18).** 43 legacy `function(PDO $db)` closures rewritten to `static function (PDO $db): void` via mechanical sweep. `2.1.0-vrfs` body dedented from 16→12 spaces. `'2.6.0-settings' => \Closure::fromCallable(...)` (the only entry not written as a closure literal) replaced with a thin `static function` delegating to the named `ipam_migrate_2_6_0_settings()`. Zero semantic change; the migration-reviewer subagent verified.
+- **Lib polish (#949).** Dropped dead `display_datetime()` wrapper (A36, zero callers). Extracted `_redirect_uri_is_safe()` from the duplicated validation logic in `ipam_post_login_redirect_stash()` / `…_consume()` (A37). Dropped unused `$config` parameter from `housekeeping_should_run()`, `run_housekeeping_if_due()`, `import_max_bytes()` plus the dead `$op` field in `housekeeping_warnings()` (A39).
+- **Page polish (#950).** New `tests/JsModulesParityTest.php` asserts byte-identical `$jsModules` arrays in `lib/presentation.php` and `demo_gate.php` (B31). Verified-already-done items closed in disposition comments: B29 `USERS_VALID_ROLES` const, B30 `ipam_session_name()` helper, B32 canonical CSRF→role POST guard order.
+- **API polish (#952).** Four `api.php` early-error paths (rate-limit, missing-key, invalid-key, per-key-rate-limit) converted from raw `echo json_encode + exit` to the canonical `api_json()` helper (B26).
+
+### Deferred to Refactor wave 4 (milestone #85)
+
+- **#1290** — `@`-suppression audit (~157 instances; was A38).
+- **#1291** — `scan_run.php` ↔ `cron.php` scan-loop consolidation (was B21).
+- **#1292** — Browser-form audit coverage for tag/contact join writes (was B22).
+- **#1293** — `init.php` (435L) bootstrap-creep extraction to `lib/bootstrap_*.php` (was B28).
+- **#1243** — Drawer-system consolidation (form-drawer + IpamDrawer onto one implementation).
+- Plus pre-existing deferrals carried to #85: **#775** dashboard VR restoration, **#944** phpunit Unit/Integration suite split, **#946** TOTP backup-code O(N) lookup perf.
 
 ## [3.33.0] - 2026-05-19
 

@@ -12,17 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.33.0
+## What's new in v3.34.0
 
-Refactor Wave 2 — a pure code-quality release, no schema migrations, no new config keys, no new pages, no operator action required. Closes milestone #57 (22 issues).
+Refactor Wave 3 — frontend modularization. A pure code-quality release: no schema migrations, no new config keys, no new pages, no operator action required. Closes 9 milestone-#58 issues plus 3 polish umbrellas (#949 #950 #952) with per-item disposition.
 
-- **`api.php` decomposed into reusable helpers** — pagination and bulk-create logic extracted into `api_paginated_query()` and a generic `api_bulk_create()`, removing duplicated per-resource boilerplate.
-- **CSV import state machine extracted** — `import_csv.php` ingest logic lifted into the testable `lib/csv_import.php` module.
-- **`migrations.php` helpers and cleanup** — new `migration_create_table()` and `ipam_query_or_throw()` helpers, `now()` routed through `Dialect`, legacy closures collapsed, and `audit()` entries added for material migrations.
-- **`lib` helper hardening** — `ipam_app_base_url()` memoised with boot validation, `ipam_setting_set()` decomposed, `Dialect::increment_or_insert()` added, `ipam_http_post_json()` extracted.
-- **ADR-003 `global $config` sweep completed** — remaining `global $config;` reads replaced with the `ipam_config()` accessor; the module linter is widened to block reintroduction.
-- **Three new test suites** — WebAuthn, DHCP reservations, and CSV row-error coverage.
-- **API list-response shape deprecation** — list endpoints now emit a `Deprecation` header; the `{data,meta}` envelope (`?envelope=1`) is canonical. Flat-shape removal is tracked for v4.0.0 (#1252).
+- **`assets/app.js` split into 46 per-concern modules under `assets/modules/`.** The former 3,439-line monolith is gone. Each concern (theme, command palette, drawer, forms, sidebar, dashboard prefs, contact picker, DHCP export, TOTP, SMTP test, backup admin, restore confirm gate, passkey enroll/verify, step-up prompt, …) now lives in its own `<script defer>` file. Numeric/letter filename prefix (`00-bootstrap.js` → `c5-sudo-replay-resume.js`) encodes the dependency chain — `20-drawer.js` lands `window.IpamDrawer` before `80-command-palette.js` consumes it. CSP unchanged.
+- **Frontend regression spec (`testing/playwright/tests/frontend-modules.spec.ts`)** pins three invariants: (a) canonical 46-module emit order, (b) `window.IpamDrawer` surface contract, (c) `prefers-reduced-motion` flatten rule. Closes #939 (split) and #1047 (test umbrella) together.
+- **Migration closure style standardised (#951)** — 43 legacy `function(PDO $db)` closures rewritten to `static function (PDO $db): void`; `2.1.0-vrfs` body dedented; `2.6.0-settings` shape harmonised with the rest of the registry.
+- **Polish landed** — dead `display_datetime()` wrapper removed; `_redirect_uri_is_safe()` extracted from duplicated stash/consume validation; unused `$config` parameters dropped from housekeeping + import helpers; `users.php`/`api.php`/`presentation.php` consistency fixes; api.php early-error paths routed through canonical `api_json()`.
+- **New `tests/JsModulesParityTest.php`** asserts byte-identical module lists in `lib/presentation.php` and `demo_gate.php` — drift gate for the two parallel emit sites.
 
 [Full changelog →](CHANGELOG.md)
 
