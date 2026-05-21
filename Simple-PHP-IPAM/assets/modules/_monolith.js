@@ -1150,7 +1150,17 @@
   });
 }());
 
-// ─── Main IIFE — concerns C13–C18 (Phase 2a in progress, #939) ───────────────
+// ─── C13 — Command palette ⌘K (Phase 2a, #939) ───────────────────────────────
+// The largest single concern in _monolith.js. ⌘K opens a quick-action
+// palette with global commands (Add Subnet, Add Address, Search, navigation
+// links, theme cycle) plus a per-page item set echoed into a JSON island
+// from `ipam_command_palette_items()` in lib.php. Fuzzy filter on input,
+// arrow-key navigation, Enter activates. Recent items persist in
+// localStorage. Cross-module dependency: opens IpamDrawer via
+// `IpamDrawer.open(...)` for Add Subnet / Add Address — IpamDrawer is in
+// `20-drawer.js` which loads before this module per the documented order.
+// Cmd/Ctrl+N shortcut to open Add Address drawer on addresses.php also
+// lives in this block (was orphan-commented in C04, removed there).
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // --- Command palette ⌘K (#516) ---
@@ -1340,7 +1350,16 @@
         }
       });
     }());
+  });
+}());
 
+// ─── C13b — Tooltips (#354) (Phase 2a, #939) ─────────────────────────────────
+// Single shared `#ipam-tooltip` div at position:fixed so the bubble is never
+// clipped by overflow:hidden/clip on ancestor containers. Sweeps the page
+// for `[data-tooltip]` elements and wires mouseenter/focusin show +
+// mouseleave/focusout hide. Original code already had its own inner IIFE.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // ── Tooltips (#354) ─────────────────────────────────────────────────────
     // A single shared #ipam-tooltip div at position:fixed is used so the bubble
     // is never clipped by overflow:hidden/clip on ancestor containers.
@@ -1382,7 +1401,14 @@
         el.addEventListener("focusout",   hideTip);
       });
     }());
+  });
+}());
 
+// ─── C13c — Audit log expand (#564) (Phase 2a, #939) ─────────────────────────
+// Click or Enter/Space on `.audit-details` toggles `--expanded` so a
+// truncated row reveals its full payload. Delegated handlers; runs once.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Audit log: expand truncated details (#564) ---- */
     document.addEventListener("click", function(e) {
       var el = e.target.closest(".audit-details");
@@ -1396,7 +1422,17 @@
       e.preventDefault();
       el.classList.toggle("audit-details--expanded");
     });
+  });
+}());
 
+// ─── C13d — Subnet edit drawer (#567) (Phase 2a, #939) ───────────────────────
+// Click `.subnet-edit-btn` → hydrate `#subnet-edit-drawer` from row data
+// (vlan/vrf/site/tags/custom-fields/notes) → `IpamDrawer.openNode(...)`.
+// Cross-module dependency: IpamDrawer in `20-drawer.js` loads first.
+// Inner IIFE survives the outer wrap (closure for editDrawer + site*
+// element refs).
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Subnet edit drawer (#567) ---- */
     (function() {
       var editDrawer = document.getElementById("subnet-edit-drawer");
@@ -1500,7 +1536,16 @@
         IpamDrawer.openNode("Edit " + d.cidr, editDrawer);
       });
     }());
+  });
+}());
 
+// ─── C13e — Subnet stats async load (#565) (Phase 2a, #939) ──────────────────
+// Lazy-fills per-subnet utilization counts after page load via
+// `api.php?resource=subnet_stats` so the table renders fast and the
+// counts trickle in. Inner IIFE survives the wrap (closure scope for
+// `placeholders` and the fetched data).
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Subnet stats async load (#565) ---- */
     (function() {
       var placeholders = document.querySelectorAll("[data-subnet-counts]");
@@ -1609,7 +1654,16 @@
           });
         });
     }());
+  });
+}());
 
+// ─── C13f — Contact browse overlay (#562) (Phase 2a, #939) ───────────────────
+// Full-page overlay listing contacts; opens when a `[data-browse-contacts]`
+// trigger is clicked, populates via `api.php?resource=contacts`, click a
+// row to stamp the id back into the originating hidden input. Escape to
+// close. Inner IIFE survives the wrap.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Contact browse overlay (#562) ---- */
     (function() {
       var overlay = null;
@@ -1746,7 +1800,15 @@
         }
       });
     }());
+  });
+}());
 
+// ─── C13g — Contact card popover (#561) (Phase 2a, #939) ─────────────────────
+// Hover/focus a `.contact-link` → fetches contact details via api.php and
+// renders a small popover card. Cached per contact id; hidden on Escape
+// or scroll. Inner IIFE survives the wrap.
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Contact card popover (#561) ---- */
     (function() {
       var card = null;
@@ -1859,7 +1921,12 @@
       });
       window.addEventListener("scroll", hideCard, true);
     }());
+  });
+}());
 
+// ─── Main IIFE — C14-C18 (Phase 2a in progress, #939) ────────────────────────
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     // --- Contact picker (v3.0.0 #563) ---
     document.querySelectorAll(".contact-picker").forEach(function(picker) {
       var contacts = [];
