@@ -1353,11 +1353,11 @@
   });
 }());
 
-// ─── Main IIFE — concerns C14–C18 + intra-palette siblings (Phase 2a, #939) ──
-// Block still contains tooltips, audit-log expand, subnet edit drawer,
-// subnet stats async load, contact browse overlay, contact card popover,
-// contact picker, DHCP export, backups modals, TOTP toggle, uPlot chart.
-// Each will move to its own per-concern IIFE in subsequent Phase 2a commits.
+// ─── C13b — Tooltips (#354) (Phase 2a, #939) ─────────────────────────────────
+// Single shared `#ipam-tooltip` div at position:fixed so the bubble is never
+// clipped by overflow:hidden/clip on ancestor containers. Sweeps the page
+// for `[data-tooltip]` elements and wires mouseenter/focusin show +
+// mouseleave/focusout hide. Original code already had its own inner IIFE.
 (function(){
   document.addEventListener("DOMContentLoaded", function() {
     // ── Tooltips (#354) ─────────────────────────────────────────────────────
@@ -1401,7 +1401,12 @@
         el.addEventListener("focusout",   hideTip);
       });
     }());
+  });
+}());
 
+// ─── Main IIFE — remaining intra-palette siblings + C14-C18 (Phase 2a, #939) ─
+(function(){
+  document.addEventListener("DOMContentLoaded", function() {
     /* ---- Audit log: expand truncated details (#564) ---- */
     document.addEventListener("click", function(e) {
       var el = e.target.closest(".audit-details");
