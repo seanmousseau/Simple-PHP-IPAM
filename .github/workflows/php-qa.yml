@@ -178,20 +178,26 @@ jobs:
       - name: Start php -S (mysql)
         if: matrix.engine == 'mysql'
         run: |
+          # #944: explicitly migrate the live engine DB BEFORE starting php -S.
+          # Pre-split, phpunit's single suite incidentally migrated ipam_ci
+          # via MysqlSmokeTest / cross-engine tests; the split exposed that
+          # the workflow itself had no explicit migration step. Calling
+          # ipam_db_init() directly here is deterministic — independent of
+          # test-discovery order.
+          php -r '
+            $config = require "Simple-PHP-IPAM/config.php";
+            require "Simple-PHP-IPAM/lib.php";
+            $db = ipam_db($config);
+            ipam_db_init($db);
+            echo "live DB migrated\n";
+          '
           php -S 127.0.0.1:8080 -t Simple-PHP-IPAM > /tmp/php-s.log 2>&1 &
           echo $! > /tmp/php-s.pid
-          # Wait for readiness (up to 30 s). Probe /status.php — it does not
-          # boot init.php, so we then warm /login.php to force ipam_db_init()
-          # to apply migrations to the live engine database before downstream
-          # steps (#944: in pre-split runs, test-ordering side effects of
-          # phpunit incidentally migrated ipam_ci; the split exposed that
-          # the workflow itself had no explicit migration step).
+          # Wait for readiness (up to 30 s)
           for i in $(seq 1 30); do
             if curl -sSf http://127.0.0.1:8080/status.php > /tmp/status.json 2>/dev/null; then
               echo "php -S ready"
               cat /tmp/status.json
-              curl -sSf http://127.0.0.1:8080/login.php > /dev/null 2>&1 || true
-              echo "init.php warmed via /login.php"
               exit 0
             fi
             sleep 1
@@ -323,20 +329,26 @@ jobs:
       - name: Start php -S (pgsql)
         if: matrix.engine == 'pgsql'
         run: |
+          # #944: explicitly migrate the live engine DB BEFORE starting php -S.
+          # Pre-split, phpunit's single suite incidentally migrated ipam_ci
+          # via MysqlSmokeTest / cross-engine tests; the split exposed that
+          # the workflow itself had no explicit migration step. Calling
+          # ipam_db_init() directly here is deterministic — independent of
+          # test-discovery order.
+          php -r '
+            $config = require "Simple-PHP-IPAM/config.php";
+            require "Simple-PHP-IPAM/lib.php";
+            $db = ipam_db($config);
+            ipam_db_init($db);
+            echo "live DB migrated\n";
+          '
           php -S 127.0.0.1:8080 -t Simple-PHP-IPAM > /tmp/php-s.log 2>&1 &
           echo $! > /tmp/php-s.pid
-          # Wait for readiness (up to 30 s). Probe /status.php — it does not
-          # boot init.php, so we then warm /login.php to force ipam_db_init()
-          # to apply migrations to the live engine database before downstream
-          # steps (#944: in pre-split runs, test-ordering side effects of
-          # phpunit incidentally migrated ipam_ci; the split exposed that
-          # the workflow itself had no explicit migration step).
+          # Wait for readiness (up to 30 s)
           for i in $(seq 1 30); do
             if curl -sSf http://127.0.0.1:8080/status.php > /tmp/status.json 2>/dev/null; then
               echo "php -S ready"
               cat /tmp/status.json
-              curl -sSf http://127.0.0.1:8080/login.php > /dev/null 2>&1 || true
-              echo "init.php warmed via /login.php"
               exit 0
             fi
             sleep 1
