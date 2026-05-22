@@ -12,7 +12,7 @@ Refactor Wave 4 — lib polish + admin refactor. A pure code-quality release clo
 
 ### Known limitations
 
-- **`app_secret` rotation invalidates `totp_backup_codes.lookup_key`.** After rotating `app_secret`, run `UPDATE totp_backup_codes SET lookup_key = NULL` so the verifier falls back to slow-scan until users regenerate codes. Tracked as #1300, target milestone v3.36.x.
+- **`app_secret` rotation invalidates `totp_backup_codes.lookup_key`.** The verifier now falls back to a full unused-rows scan automatically when the narrowed SELECT finds nothing, so backup codes continue to work after rotation without any manual intervention. #1300 tracks a follow-up improvement (batch re-key on rotation to restore O(1) steady state), target milestone v3.36.x.
 
 ### Added
 

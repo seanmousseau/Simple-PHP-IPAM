@@ -84,4 +84,33 @@ final class TotpBackupCodeLookupTest extends TestCase
             'legacy row also consumed one-shot'
         );
     }
+
+    /**
+     * CR #1307 #3 / closes #1300: a row with a stale lookup_key (wrong HMAC
+     * from a past app_secret rotation) must still verify via the full-scan
+     * fallback path. The stale key is non-NULL and will NOT match :lk, so the
+     * narrowed SELECT returns zero rows and the fallback is triggered.
+     */
+    public function testStaleRotatedLookupKeyFallsBackToFullScan(): void
+    {
+        $plainCode = 'STALE-KEY-CODE-5678';
+        $hash = password_hash($plainCode, PASSWORD_DEFAULT);
+        // Insert with a deliberately wrong lookup_key (simulates a row written
+        // before an app_secret rotation — the HMAC is valid syntax but wrong value).
+        $this->db->prepare(
+            "INSERT INTO totp_backup_codes (user_id, code_hash, lookup_key) VALUES (1, :h, 'deadbeef')"
+        )->execute([':h' => $hash]);
+
+        // The current lookup_key for this code under the current app_secret will
+        // not be 'deadbeef' — so the narrowed SELECT finds nothing and the
+        // full-scan fallback must kick in and verify successfully.
+        $this->assertTrue(
+            ipam_totp_verify_backup_code($this->db, 1, $plainCode),
+            'stale (post-rotation) lookup_key must still verify via full-scan fallback'
+        );
+        $this->assertFalse(
+            ipam_totp_verify_backup_code($this->db, 1, $plainCode),
+            'stale row also consumed one-shot'
+        );
+    }
 }
