@@ -339,7 +339,7 @@ The `deleteSubnet()` fixture in `testing/playwright/fixtures/ipam.ts` is now a b
 **Running the dashboard VR projects manually:**
 
 ```bash
-bash testing/bootstrap-app.sh sqlite   # or mysql / pgsql
+bash testing/playwright/bootstrap-app.sh sqlite   # or mysql / pgsql
 cd testing/playwright
 IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
   npx playwright test visual-regression --project=vr-dashboard-setup \
