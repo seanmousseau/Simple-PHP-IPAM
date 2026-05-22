@@ -3833,7 +3833,7 @@ function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds, boo
         $oldSt->execute([':id' => $id]);
         $oldIds = array_map('intval', $oldSt->fetchAll(PDO::FETCH_COLUMN));
 
-        $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id")->execute([':id' => $id]);
+        $delSt = $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id");
         $ins = $db->prepare("INSERT INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("subnet_tags", ["subnet_id", "tag_id"]) . "");
     } elseif ($type === 'address') {
         // #1292: read old set before the wholesale DELETE so we can diff
@@ -3841,34 +3841,50 @@ function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds, boo
         $oldSt->execute([':id' => $id]);
         $oldIds = array_map('intval', $oldSt->fetchAll(PDO::FETCH_COLUMN));
 
-        $db->prepare("DELETE FROM address_tags WHERE address_id = :id")->execute([':id' => $id]);
+        $delSt = $db->prepare("DELETE FROM address_tags WHERE address_id = :id");
         $ins = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("address_tags", ["address_id", "tag_id"]) . "");
     } else {
         return;
     }
-    foreach ($tagIds as $tid) {
-        $ins->execute([':eid' => $id, ':tid' => $tid]);
-    }
 
-    // #1292: emit diff-based audit events unless suppressed by the caller.
-    // Suppression is used at api.php address/subnet create+update callsites
-    // where address.create / address.update / subnet.create / subnet.update
-    // already audits the full tag set — adding per-tag deltas there would
-    // double-audit. Browser form callsites (subnets.php) leave the default
-    // (suppressAudit=false) so the browser path now matches the API's
-    // individual attach/detach events.
-    if (!$suppressAudit) {
-        $newIds = array_values(array_unique(array_map('intval', $tagIds)));
-        $toAttach = array_values(array_diff($newIds, $oldIds));
-        $toDetach = array_values(array_diff($oldIds, $newIds));
-        // Emit detaches before attaches: "remove the old, then add the new"
-        // is the natural application order for a set-replace operation.
-        foreach ($toDetach as $tid) {
-            audit($db, 'tag.detach', $type, $id, "tag_id={$tid}");
+    // CR #1307 #2: audit emissions must share the same failure boundary as the
+    // join-row mutation. If audit() throws after the DELETE+INSERT committed,
+    // the data change would be invisible in the audit log. Wrap the entire
+    // delete/insert/audit sequence in a single transaction so either all
+    // succeed or all roll back.
+    $wasInTxn = $db->inTransaction();
+    if (!$wasInTxn) $db->beginTransaction();
+    try {
+        $delSt->execute([':id' => $id]);
+        foreach ($tagIds as $tid) {
+            $ins->execute([':eid' => $id, ':tid' => $tid]);
         }
-        foreach ($toAttach as $tid) {
-            audit($db, 'tag.attach', $type, $id, "tag_id={$tid}");
+
+        // #1292: emit diff-based audit events unless suppressed by the caller.
+        // Suppression is used at api.php address/subnet create+update callsites
+        // where address.create / address.update / subnet.create / subnet.update
+        // already audits the full tag set — adding per-tag deltas there would
+        // double-audit. Browser form callsites (subnets.php) leave the default
+        // (suppressAudit=false) so the browser path now matches the API's
+        // individual attach/detach events.
+        if (!$suppressAudit) {
+            $newIds = array_values(array_unique(array_map('intval', $tagIds)));
+            $toAttach = array_values(array_diff($newIds, $oldIds));
+            $toDetach = array_values(array_diff($oldIds, $newIds));
+            // Emit detaches before attaches: "remove the old, then add the new"
+            // is the natural application order for a set-replace operation.
+            foreach ($toDetach as $tid) {
+                audit($db, 'tag.detach', $type, $id, "tag_id={$tid}");
+            }
+            foreach ($toAttach as $tid) {
+                audit($db, 'tag.attach', $type, $id, "tag_id={$tid}");
+            }
         }
+
+        if (!$wasInTxn) $db->commit();
+    } catch (\Throwable $e) {
+        if (!$wasInTxn && $db->inTransaction()) $db->rollBack();
+        throw $e;
     }
 }
 
@@ -3956,34 +3972,41 @@ function save_contacts_for_entity(PDO $db, string $type, int $id, array $contact
         foreach ($deduped as $c) {
             $ins->execute([':eid' => $id, ':cid' => $c['contact_id'], ':role' => $c['role']]);
         }
+
+        // CR #1307 #2: audit emissions must share the same failure boundary as
+        // the join-row mutation. The previous code committed first and then
+        // audited — an audit failure would leave the data changed but the audit
+        // log empty. Moved inside the transaction so both succeed or both roll
+        // back together.
+        //
+        // #1292: emit diff-based audit events unless suppressed.
+        // Browser form callsites (sites.php, subnets.php) leave the default
+        // (suppressAudit=false) so attach/detach events are now recorded.
+        // No api.php path currently calls this function, so there is no
+        // double-audit risk — suppressAudit is provided for future-proofing.
+        if (!$suppressAudit) {
+            $newById = [];
+            foreach ($deduped as $c) {
+                $newById[$c['contact_id']] = $c['role'];
+            }
+            // Attached: in new set but not in old set
+            foreach ($newById as $cid => $role) {
+                if (!array_key_exists($cid, $oldById)) {
+                    audit($db, 'contact.attach', $type, $id, "contact_id={$cid} role={$role}");
+                }
+            }
+            // Detached: in old set but not in new set
+            foreach ($oldById as $cid => $role) {
+                if (!array_key_exists($cid, $newById)) {
+                    audit($db, 'contact.detach', $type, $id, "contact_id={$cid} role={$role}");
+                }
+            }
+        }
+
         if (!$wasInTxn) $db->commit();
     } catch (\Throwable $e) {
         if (!$wasInTxn && $db->inTransaction()) $db->rollBack();
         throw $e;
-    }
-
-    // #1292: emit diff-based audit events unless suppressed.
-    // Browser form callsites (sites.php, subnets.php) leave the default
-    // (suppressAudit=false) so attach/detach events are now recorded.
-    // No api.php path currently calls this function, so there is no
-    // double-audit risk — suppressAudit is provided for future-proofing.
-    if (!$suppressAudit) {
-        $newById = [];
-        foreach ($deduped as $c) {
-            $newById[$c['contact_id']] = $c['role'];
-        }
-        // Attached: in new set but not in old set
-        foreach ($newById as $cid => $role) {
-            if (!array_key_exists($cid, $oldById)) {
-                audit($db, 'contact.attach', $type, $id, "contact_id={$cid} role={$role}");
-            }
-        }
-        // Detached: in old set but not in new set
-        foreach ($oldById as $cid => $role) {
-            if (!array_key_exists($cid, $newById)) {
-                audit($db, 'contact.detach', $type, $id, "contact_id={$cid} role={$role}");
-            }
-        }
     }
 }
 
@@ -7054,8 +7077,28 @@ function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool 
         . "AND (lookup_key = :lk OR lookup_key IS NULL)"
     );
     $stmt->execute([':uid' => $userId, ':lk' => $lk]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // CR #1307 #3 / closes #1300: after an app_secret rotation every existing
+    // lookup_key becomes a stale HMAC (wrong key material) — those rows have
+    // lookup_key IS NOT NULL and lookup_key != :lk, so the narrowed SELECT
+    // above misses them entirely. If we get zero candidates we fall back to a
+    // full unused-rows scan for this user, restoring the pre-#946 O(N)
+    // worst-case behaviour only on the post-rotation tail. Steady-state (no
+    // rotation) is unaffected: the narrowed path returns ≤1 row and we never
+    // reach this branch. #1300 tracks a follow-up improvement (batch re-key on
+    // rotation) but this fallback closes the hard failure case immediately.
+    if ($rows === []) {
+        $fallback = $db->prepare(
+            "SELECT id, code_hash FROM totp_backup_codes "
+            . "WHERE user_id = :uid AND used_at IS NULL"
+        );
+        $fallback->execute([':uid' => $userId]);
+        $rows = $fallback->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     $nowExpr = ipam_dialect()->now();
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    foreach ($rows as $row) {
         if (password_verify($code, (string)$row['code_hash'])) {
             $consume = $db->prepare(
                 "UPDATE totp_backup_codes SET used_at = {$nowExpr} WHERE id = :id AND used_at IS NULL"
