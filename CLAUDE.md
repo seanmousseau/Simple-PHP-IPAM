@@ -50,7 +50,7 @@ These are the rules a fresh agent must hold in working memory before touching co
 4. **CSRF (`csrf_require()`) on every browser POST; `e()` on every HTML output.** `api.php` is the only CSRF-exempt surface (stateless Bearer).
 5. **`app_secret` lives in `config.php`, never the DB.** Per-tenant keys (v4+) HKDF-derive from it; vault key likewise stays out of DB.
 6. **No `git push` or PR merge without explicit per-conversation authorisation.** Previous yes does not carry forward.
-7. **Local 3-driver gate before push.** `bash testing/bootstrap-app.sh sqlite|mysql|pgsql` + Playwright all green. CI minutes are paid; don't use CI as the test runner.
+7. **Local 3-driver gate before push.** `bash testing/playwright/bootstrap-app.sh sqlite|mysql|pgsql` + Playwright all green. CI minutes are paid; don't use CI as the test runner.
 8. **No `global $config;` (or `$GLOBALS['config']`) anywhere in the tree — use the `ipam_config()` accessor (ADR-003).** `global $db` (runtime PDO handle) is still permitted. The sweep is complete (#1207 closed in v3.33.0); the ADR-004 linter (`testing/scripts/lib-module-linter.php`) now enforces this across the whole codebase, not just the extracted `lib/*.php` modules.
 
 ---
@@ -65,7 +65,7 @@ These are the rules a fresh agent must hold in working memory before touching co
 
 ```bash
 composer install                              # one-time, installs dev tools to vendor/
-bash testing/bootstrap-app.sh sqlite          # spin up dockerized app + seed for local testing
+bash testing/playwright/bootstrap-app.sh sqlite  # spin up dockerized app + seed for local testing
 vendor/bin/phpunit && vendor/bin/phpstan analyse --memory-limit=1G && vendor/bin/phpcs
 ```
 

@@ -343,7 +343,7 @@ A PR that violates any of these gets bounced.
 6. **New runtime dependency → six-criteria justification PR per `runtime-dependency-policy.md`; update the whitelist in this doc.** Vendored frontend asset additions also update the whitelist.
 7. **Migration added → run `migration-reviewer` subagent.** Confirm the FK-safe pattern from `adding-a-migration.md`. CI runs `MigrationTest` to assert no data loss.
 8. **IP/binary code touched → run `ip-binary-auditor` subagent.** Covers `ip_bin`, `network_bin`, IP parsing, subnet math, ping/scan, DB binds for binary columns.
-9. **Local three-driver gate before push.** `bash testing/bootstrap-app.sh sqlite|mysql|pgsql` then Playwright must all pass. GH Action minutes are paid; do not use CI as your test runner.
+9. **Local three-driver gate before push.** `bash testing/playwright/bootstrap-app.sh sqlite|mysql|pgsql` then Playwright must all pass. GH Action minutes are paid; do not use CI as your test runner.
 10. **Public / cross-module function added or changed → it carries a current docblock.** See "Docblocks are not inline comments". A missing or stale contract docblock on changed surface code is a review finding.
 11. **No `git push` or PR merge without explicit per-conversation authorisation.** A previous yes does not carry forward.
 
