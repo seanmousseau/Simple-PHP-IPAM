@@ -42,13 +42,26 @@ function lint_at_pattern(): string
 }
 
 /**
- * Same line contains //, OR previous line starts with //, OR previous line starts with *.
+ * CR #1307 #7: tighter comment-justification heuristic — strip string literals
+ * before looking for '//' so URLs or '//' inside quoted values don't count.
+ *
+ * Returns true if:
+ *   - same line contains '//' that is outside any string literal, OR
+ *   - previous trimmed line starts with '//' or '*' (block-comment continuation).
  */
+function lint_at_has_inline_comment(string $line): bool
+{
+    // Strip single- and double-quoted string literals (handles \-escape sequences),
+    // then check whether any '//' remains — that '//' must be a comment.
+    $stripped = preg_replace('/\'(?:\\\\.|[^\\\\\'])*\'|"(?:\\\\.|[^\\\\"])*"/', '', $line);
+    return $stripped !== null && str_contains($stripped, '//');
+}
+
 function lint_at_has_justification(string $line, string $prevLine): bool
 {
     $prevTrimmed = trim($prevLine);
 
-    return str_contains($line, '//') ||
+    return lint_at_has_inline_comment($line) ||
            str_starts_with($prevTrimmed, '//') ||
            str_starts_with($prevTrimmed, '*');
 }
@@ -62,7 +75,11 @@ function lint_at_check_file(string $path): ?array
 {
     $lines = @file($path);
     if ($lines === false) {
-        return null;
+        // CR #1307 #5: fail closed on unreadable / missing file. Returning null
+        // (clean) here would silently skip the requested target and let CI pass
+        // without actually linting it. Throw instead so the CLI bootstrap exits
+        // non-zero and the operator knows the file could not be read.
+        throw new \RuntimeException("lint-at-suppressions: cannot read {$path}");
     }
     $pattern = lint_at_pattern();
     foreach ($lines as $i => $line) {
