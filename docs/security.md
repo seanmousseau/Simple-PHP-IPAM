@@ -141,6 +141,8 @@ After entering username and password, if 2FA is enabled the user is redirected t
 
 Eight single-use backup codes are generated at enrollment. Each code is in `XXXXXXXX-XXXXXXXX` format. Backup codes can be used on the 2FA challenge screen instead of the 6-digit TOTP code. Each code is valid once only and is consumed on use.
 
+Backup-code verification is now O(1) via a non-secret HMAC discriminator (`lookup_key`). The discriminator narrows the candidate set before any bcrypt work is done, so at most one bcrypt verify is performed per login attempt. The bcrypt+salt of the code itself remains the security boundary.
+
 When all backup codes are used, new ones can be generated from the Account page (this re-enrolls 2FA with a fresh secret and new backup codes).
 
 Store backup codes securely — in a password manager, not in the same location as the device running the authenticator app.
