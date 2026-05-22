@@ -4526,11 +4526,34 @@ function ipam_migrations(): array
             // Composite index on (user_id, lookup_key) — makes the narrowed
             // WHERE user_id = :uid AND (lookup_key = :lk OR lookup_key IS NULL)
             // an index-range scan rather than a full-table scan.
-            // IF NOT EXISTS is portable across SQLite, MySQL, and PostgreSQL.
-            $db->exec(
-                "CREATE INDEX IF NOT EXISTS idx_totp_backup_lookup "
-                . "ON totp_backup_codes (user_id, lookup_key)"
-            );
+            // CREATE INDEX IF NOT EXISTS is a SQLite/PostgreSQL idiom. MySQL
+            // accepted it only from 8.0.29 onward — the CI's older 8.0.x
+            // rejects with syntax error 1064. Mirror the helper pattern from
+            // lib/db.php ensure_audit_log_table(): try IF NOT EXISTS first;
+            // on MySQL syntax error fall back to plain CREATE INDEX, then
+            // swallow "duplicate key name" (1061) on idempotent re-runs.
+            try {
+                $db->exec(
+                    "CREATE INDEX IF NOT EXISTS idx_totp_backup_lookup "
+                    . "ON totp_backup_codes (user_id, lookup_key)"
+                );
+            } catch (PDOException $e) {
+                $sqlstate = (string) ($e->errorInfo[0] ?? '');
+                if ($sqlstate === '42000' && stripos($e->getMessage(), 'syntax') !== false) {
+                    try {
+                        $db->exec(
+                            "CREATE INDEX idx_totp_backup_lookup "
+                            . "ON totp_backup_codes (user_id, lookup_key)"
+                        );
+                    } catch (PDOException $e2) {
+                        if (stripos($e2->getMessage(), 'duplicate key name') === false) {
+                            throw $e2;
+                        }
+                    }
+                    return;
+                }
+                throw $e;
+            }
         },
 
     ];
