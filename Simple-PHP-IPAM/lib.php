@@ -3811,14 +3811,36 @@ function get_tags_for_entity(PDO $db, string $type, int $id): array
 
 /**
  * Replace all tags for a given entity with the supplied tag IDs.
+ *
+ * #1292: Computes the diff (old set vs new set) and emits audit_log entries
+ * for each attached/detached tag, matching the canonical API shape:
+ *   action=tag.attach|tag.detach, entity_type=$type, entity_id=$id,
+ *   details="tag_id=<N>"
+ *
+ * Pass $suppressAudit=true at callsites where a higher-level audit row
+ * already covers the full tag set (e.g. api.php address.create /
+ * address.update / subnet.create / subnet.update). Per-tag delta events at
+ * those sites would double-audit — the suppress flag avoids that without
+ * changing the join-table behaviour.
+ *
  * @param list<int> $tagIds
  */
-function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds): void
+function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds, bool $suppressAudit = false): void
 {
     if ($type === 'subnet') {
+        // #1292: read old set before the wholesale DELETE so we can diff
+        $oldSt = $db->prepare("SELECT tag_id FROM subnet_tags WHERE subnet_id = :id");
+        $oldSt->execute([':id' => $id]);
+        $oldIds = array_map('intval', $oldSt->fetchAll(PDO::FETCH_COLUMN));
+
         $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id")->execute([':id' => $id]);
         $ins = $db->prepare("INSERT INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("subnet_tags", ["subnet_id", "tag_id"]) . "");
     } elseif ($type === 'address') {
+        // #1292: read old set before the wholesale DELETE so we can diff
+        $oldSt = $db->prepare("SELECT tag_id FROM address_tags WHERE address_id = :id");
+        $oldSt->execute([':id' => $id]);
+        $oldIds = array_map('intval', $oldSt->fetchAll(PDO::FETCH_COLUMN));
+
         $db->prepare("DELETE FROM address_tags WHERE address_id = :id")->execute([':id' => $id]);
         $ins = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("address_tags", ["address_id", "tag_id"]) . "");
     } else {
@@ -3826,6 +3848,27 @@ function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds): vo
     }
     foreach ($tagIds as $tid) {
         $ins->execute([':eid' => $id, ':tid' => $tid]);
+    }
+
+    // #1292: emit diff-based audit events unless suppressed by the caller.
+    // Suppression is used at api.php address/subnet create+update callsites
+    // where address.create / address.update / subnet.create / subnet.update
+    // already audits the full tag set — adding per-tag deltas there would
+    // double-audit. Browser form callsites (subnets.php) leave the default
+    // (suppressAudit=false) so the browser path now matches the API's
+    // individual attach/detach events.
+    if (!$suppressAudit) {
+        $newIds = array_values(array_unique(array_map('intval', $tagIds)));
+        $toAttach = array_values(array_diff($newIds, $oldIds));
+        $toDetach = array_values(array_diff($oldIds, $newIds));
+        // Emit detaches before attaches: "remove the old, then add the new"
+        // is the natural application order for a set-replace operation.
+        foreach ($toDetach as $tid) {
+            audit($db, 'tag.detach', $type, $id, "tag_id={$tid}");
+        }
+        foreach ($toAttach as $tid) {
+            audit($db, 'tag.attach', $type, $id, "tag_id={$tid}");
+        }
     }
 }
 
@@ -3856,19 +3899,46 @@ function get_contacts_for_entity(PDO $db, string $type, int $id): array
 
 /**
  * Replace all contact assignments for a site or subnet.
+ *
+ * #1292: Computes the diff (old contact-ID set vs new contact-ID set) and
+ * emits audit_log entries for each attached/detached contact. Action shape:
+ *   action=contact.attach|contact.detach, entity_type=$type, entity_id=$id,
+ *   details="contact_id=<N> role=<role>"
+ *
+ * Role changes on an already-assigned contact are NOT tracked as
+ * contact.update events — only ID-level attach/detach is diffed. This keeps
+ * the implementation simple and matches the scope of #1292.
+ *
+ * Pass $suppressAudit=true if a higher-level audit row already covers the
+ * operation (currently no api.php path calls this function, so suppression
+ * is provided for consistency and future-proofing only).
+ *
  * @param list<array{contact_id: int, role: string}> $contacts
  */
-function save_contacts_for_entity(PDO $db, string $type, int $id, array $contacts): void
+function save_contacts_for_entity(PDO $db, string $type, int $id, array $contacts, bool $suppressAudit = false): void
 {
     if ($type === 'site') {
+        $oldSql = "SELECT contact_id, role FROM site_contacts WHERE site_id = :id";
         $delSql = "DELETE FROM site_contacts WHERE site_id = :id";
         $insSql = "INSERT INTO site_contacts (site_id, contact_id, role) VALUES (:eid, :cid, :role)";
     } elseif ($type === 'subnet') {
+        $oldSql = "SELECT contact_id, role FROM subnet_contacts WHERE subnet_id = :id";
         $delSql = "DELETE FROM subnet_contacts WHERE subnet_id = :id";
         $insSql = "INSERT INTO subnet_contacts (subnet_id, contact_id, role) VALUES (:eid, :cid, :role)";
     } else {
         return;
     }
+
+    // #1292: read old assignments before the wholesale DELETE so we can diff
+    $oldSt = $db->prepare($oldSql);
+    $oldSt->execute([':id' => $id]);
+    /** @var list<array<string,mixed>> $oldRows */
+    $oldRows   = $oldSt->fetchAll(PDO::FETCH_ASSOC);
+    $oldById   = [];  // contact_id => role
+    foreach ($oldRows as $r) {
+        $oldById[to_int($r['contact_id'])] = to_str($r['role']);
+    }
+
     $seen = [];
     $deduped = [];
     foreach ($contacts as $c) {
@@ -3877,6 +3947,7 @@ function save_contacts_for_entity(PDO $db, string $type, int $id, array $contact
         $seen[$cid] = true;
         $deduped[] = $c;
     }
+
     $wasInTxn = $db->inTransaction();
     if (!$wasInTxn) $db->beginTransaction();
     try {
@@ -3889,6 +3960,30 @@ function save_contacts_for_entity(PDO $db, string $type, int $id, array $contact
     } catch (\Throwable $e) {
         if (!$wasInTxn && $db->inTransaction()) $db->rollBack();
         throw $e;
+    }
+
+    // #1292: emit diff-based audit events unless suppressed.
+    // Browser form callsites (sites.php, subnets.php) leave the default
+    // (suppressAudit=false) so attach/detach events are now recorded.
+    // No api.php path currently calls this function, so there is no
+    // double-audit risk — suppressAudit is provided for future-proofing.
+    if (!$suppressAudit) {
+        $newById = [];
+        foreach ($deduped as $c) {
+            $newById[$c['contact_id']] = $c['role'];
+        }
+        // Attached: in new set but not in old set
+        foreach ($newById as $cid => $role) {
+            if (!array_key_exists($cid, $oldById)) {
+                audit($db, 'contact.attach', $type, $id, "contact_id={$cid} role={$role}");
+            }
+        }
+        // Detached: in old set but not in new set
+        foreach ($oldById as $cid => $role) {
+            if (!array_key_exists($cid, $newById)) {
+                audit($db, 'contact.detach', $type, $id, "contact_id={$cid} role={$role}");
+            }
+        }
     }
 }
 

@@ -2032,8 +2032,10 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     $newId = ipam_last_insert_id($db, 'addresses');
 
     // #310 + CodeRabbit m1: tag_ids[] validated up-front.
+    // #1292: address.create already audits the full tag set via api_audit()
+    // below — suppress per-tag delta events to avoid double-audit.
     if ($validatedTagIds !== null) {
-        save_tags_for_entity($db, 'address', $newId, $validatedTagIds);
+        save_tags_for_entity($db, 'address', $newId, $validatedTagIds, /* suppressAudit */ true);
     }
 
     api_audit($db, $apiKey, 'address.create', 'address', $newId,
@@ -2108,8 +2110,10 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
                 ':mac' => $mac, ':exp' => $expiresAt, ':st' => $status, ':cf' => $cfJson, ':id' => $id]);
 
     // #310 + CodeRabbit m1: tag_ids[] validated up-front.
+    // #1292: address.update already audits the full tag set via api_audit()
+    // below — suppress per-tag delta events to avoid double-audit.
     if ($validatedTagIds !== null) {
-        save_tags_for_entity($db, 'address', $id, $validatedTagIds);
+        save_tags_for_entity($db, 'address', $id, $validatedTagIds, /* suppressAudit */ true);
     }
 
     api_audit($db, $apiKey, 'address.update', 'address', $id,
@@ -2249,8 +2253,10 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
 
     // #310 + CodeRabbit m1: tag_ids[] is validated up-front (see below) so
     // we already know every ID exists; the only DB work left is the join.
+    // #1292: subnet.create already audits the full tag set via api_audit()
+    // below — suppress per-tag delta events to avoid double-audit.
     if ($validatedTagIds !== null) {
-        save_tags_for_entity($db, 'subnet', $newId, $validatedTagIds);
+        save_tags_for_entity($db, 'subnet', $newId, $validatedTagIds, /* suppressAudit */ true);
     }
 
     api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId,
@@ -2360,8 +2366,10 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     }
 
     // #310 + CodeRabbit m1: tag_ids[] validated up-front; null = no-op.
+    // #1292: subnet.update already audits the full tag set via api_audit()
+    // below — suppress per-tag delta events to avoid double-audit.
     if ($validatedTagIds !== null) {
-        save_tags_for_entity($db, 'subnet', $id, $validatedTagIds);
+        save_tags_for_entity($db, 'subnet', $id, $validatedTagIds, /* suppressAudit */ true);
     }
 
     api_audit($db, $apiKey, 'subnet.update', 'subnet', $id, 'cidr=' . to_str($subnet['cidr']));
