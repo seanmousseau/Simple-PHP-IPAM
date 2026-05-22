@@ -1253,6 +1253,7 @@ function ipam_migrations(): array
 
             $bakPath = $configPath . '.bak-v3upgrade';
             if (!is_file($bakPath)) {
+                // best-effort: safety copy before rewriting config; migration proceeds even if disk is full
                 @copy($configPath, $bakPath);
             }
 
@@ -1306,6 +1307,7 @@ function ipam_migrations(): array
             }
             $stub .= "];\n";
 
+            // best-effort: rewrite config.php to new-style stub; operator can do it manually if disk is read-only
             @file_put_contents($configPath, $stub, LOCK_EX);
 
             if ($imported > 0) {
