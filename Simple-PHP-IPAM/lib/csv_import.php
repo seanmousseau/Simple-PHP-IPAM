@@ -71,6 +71,7 @@ function ipam_csv_import_save_result(array $result): string
     if (file_put_contents($path, $json) === false) {
         throw new RuntimeException('Failed to write import result');
     }
+    // best-effort: tighten perms on the import-result file after writing
     @chmod($path, 0600);
     return $path;
 }

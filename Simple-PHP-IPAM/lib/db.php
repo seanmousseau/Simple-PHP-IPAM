@@ -690,6 +690,7 @@ function ipam_db_init(PDO $db): void
         $dbFilePath = is_string($dbPathRaw) && $dbPathRaw !== ''
             ? $dbPathRaw
             : __DIR__ . '/../data/ipam.sqlite';
+        // best-effort: sentinel file records that schema init has run; missing sentinel is harmless
         @touch(dirname($dbFilePath) . '/.db_initialized');
     }
 }
