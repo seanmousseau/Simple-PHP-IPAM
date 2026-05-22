@@ -1,6 +1,6 @@
 {
     "name": "seanmousseau/simple-php-ipam",
-    "description": "Simple PHP IPAM — lightweight IPv4/IPv6 address management",
+    "description": "Simple PHP IPAM \u2014 lightweight IPv4/IPv6 address management",
     "type": "project",
     "license": "MIT",
     "prefer-stable": true,
@@ -31,7 +31,10 @@
         "post-update-cmd": [
             "bash testing/scripts/check-composer-lock-drift.sh"
         ],
-        "test": "phpunit",
+        "test": [
+            "@test:unit",
+            "@test:integration"
+        ],
         "phpstan": "phpstan analyse --memory-limit=1G",
         "phpcs": "phpcs",
         "phpcbf": "phpcbf",
@@ -46,7 +49,9 @@
         "ci-gate": [
             "@test",
             "@lint"
-        ]
+        ],
+        "test:unit": "phpunit --testsuite Unit",
+        "test:integration": "phpunit --testsuite Integration"
     },
     "scripts-descriptions": {
         "test": "Run the PHPUnit test suite.",
