@@ -102,13 +102,29 @@ final class ScanLoopTest extends TestCase
             details TEXT
         )");
 
-        // Seed three subnets
-        $pdo->exec("INSERT INTO subnets (id, cidr, ip_version, network, network_bin, prefix)
-                    VALUES (1, '10.0.1.0/24', 4, '10.0.1.0', '', 24)");
-        $pdo->exec("INSERT INTO subnets (id, cidr, ip_version, network, network_bin, prefix)
-                    VALUES (2, '10.0.2.0/24', 4, '10.0.2.0', '', 24)");
-        $pdo->exec("INSERT INTO subnets (id, cidr, ip_version, network, network_bin, prefix)
-                    VALUES (3, '10.0.3.0/24', 4, '10.0.3.0', '', 24)");
+        // Seed three subnets.
+        // CR #1307 #8: network_bin must be proper 4-byte binary (inet_pton) bound
+        // via ipam_bind_binary()+PARAM_LOB — invariant #1 from CLAUDE.md. Seeding
+        // as empty text '' diverges from the project invariant and can mask
+        // regressions in scan helpers that read network_bin.
+        $subnetSeeds = [
+            [1, '10.0.1.0/24', '10.0.1.0', 24],
+            [2, '10.0.2.0/24', '10.0.2.0', 24],
+            [3, '10.0.3.0/24', '10.0.3.0', 24],
+        ];
+        foreach ($subnetSeeds as [$sid, $cidr, $network, $prefix]) {
+            $st = $pdo->prepare(
+                "INSERT INTO subnets (id, cidr, ip_version, network, network_bin, prefix)
+                 VALUES (:id, :cidr, 4, :net, :nb, :pfx)"
+            );
+            $netBin = (string) inet_pton($network);
+            $st->bindValue(':id', $sid, PDO::PARAM_INT);
+            $st->bindValue(':cidr', $cidr);
+            $st->bindValue(':net', $network);
+            ipam_bind_binary($st, ':nb', $netBin);
+            $st->bindValue(':pfx', $prefix, PDO::PARAM_INT);
+            $st->execute();
+        }
 
         return $pdo;
     }
