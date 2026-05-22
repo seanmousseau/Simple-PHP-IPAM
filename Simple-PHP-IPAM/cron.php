@@ -76,7 +76,9 @@ if (!flock($cronLockHandle, LOCK_EX | LOCK_NB)) {
 // Release on shutdown — covers normal exit, fatal errors, and uncaught throws.
 register_shutdown_function(static function () use ($cronLockHandle): void {
     if (is_resource($cronLockHandle)) {
+        // best-effort: release lock and close handle on every exit path including fatal errors
         @flock($cronLockHandle, LOCK_UN);
+        // best-effort: close the lock file handle on every exit path including fatal errors
         @fclose($cronLockHandle);
     }
 });
@@ -86,6 +88,7 @@ $db       = ipam_db($config);
 // Apply admin-configured timezone from DB settings now that $db is open. All
 // downstream date() calls in this cron run pick up the new zone.
 $tz = to_str(ipam_setting('branding.timezone'));
+// best-effort: invalid or empty timezone string falls back to UTC
 if ($tz === '' || !@date_default_timezone_set($tz)) {
     date_default_timezone_set('UTC');
 }
