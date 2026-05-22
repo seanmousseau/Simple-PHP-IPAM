@@ -898,6 +898,7 @@ function ipam_backup_dump_to_tmp(PDO $db): string
         throw new RuntimeException('ipam_backup: tempnam failed');
     }
     $tmpGz = $tmp . '.sql.gz';
+    // best-effort: rename the bare tempnam file to .sql.gz extension before writing; harmless if it fails
     @rename($tmp, $tmpGz);
 
     // Outer try ensures $tmpGz is unlinked on every failure path, including
@@ -946,6 +947,7 @@ function ipam_backup_dump_to_tmp(PDO $db): string
                     }
                     throw new RuntimeException('ipam_backup: ' . $driver . ' dump failed: ' . $detail);
                 }
+                // soft-open: failure is handled immediately below with a RuntimeException
                 $in = @fopen($tmpSql, 'rb');
                 if ($in === false) {
                     throw new RuntimeException('ipam_backup: cannot read dump output');
@@ -1341,6 +1343,7 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
 
     $tmpDir = dirname(__DIR__) . '/data/tmp';
     if (!is_dir($tmpDir)) {
+        // best-effort: directory may already exist if another request raced us
         if (!@mkdir($tmpDir, 0775, true) && !is_dir($tmpDir)) {
             throw new RuntimeException('ipam_restore: cannot create tmp dir');
         }
@@ -1411,6 +1414,7 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
             backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret, null, $vaultKey);
         } else {
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
+            // copy the plain download to the staging path; failure is fatal
             if (!@copy($downloadPath, $stagedPath)) {
                 throw new RuntimeException('ipam_restore: cannot stage downloaded file');
             }
@@ -1450,12 +1454,17 @@ function ipam_restore_stage_uploaded_file(string $src, string $dst): bool
     // upstream try/catch surfaces the exact error.
     ipam_restore_assert_staged_path($dst);
 
-    $moved = is_uploaded_file($src)
-        ? @move_uploaded_file($src, $dst)
-        : @rename($src, $dst);
+    // soft-move/rename: failure returns false; caller surfaces the error to the UI
+    if (is_uploaded_file($src)) {
+        $moved = @move_uploaded_file($src, $dst);
+    } else {
+        // soft-rename: failure returns false; caller surfaces the error to the UI
+        $moved = @rename($src, $dst);
+    }
     if (!$moved) {
         return false;
     }
+    // best-effort chmod: if tightening fails, discard the staged file rather than leave it world-readable
     if (!@chmod($dst, 0640)) {
         @unlink($dst); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $dst is caller-computed staging path; cleanup on chmod failure
         return false;
@@ -1503,6 +1512,7 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
     // under lib/), matching the convention used by sibling helpers.
     $tmpDir = dirname(__DIR__) . '/data/tmp';
     if (!is_dir($tmpDir)) {
+        // best-effort: directory may already exist if another request raced us
         if (!@mkdir($tmpDir, 0775, true) && !is_dir($tmpDir)) {
             throw new RuntimeException('ipam_restore_upload: cannot create tmp dir');
         }
@@ -1675,9 +1685,11 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
             // no handle on (the function exits before returning the path).
             $copyTmp = $stagedPath . '.copying.' . bin2hex(random_bytes(4));
             try {
+                // copy to sibling temp for atomic staging; failure is fatal
                 if (!@copy($downloadPath, $copyTmp)) {
                     throw new RuntimeException('ipam_restore_upload: cannot copy plain upload to staged tmp');
                 }
+                // atomic rename: avoids a partial file at $stagedPath on failure
                 if (!@rename($copyTmp, $stagedPath)) {
                     throw new RuntimeException('ipam_restore_upload: cannot finalise staged upload');
                 }
@@ -2259,6 +2271,7 @@ function ipam_restore_read_staged_sql(string $stagedPath): \Generator
         return;
     }
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $fh = @fopen($real, 'rb');
     if ($fh === false) {
         throw new RuntimeException('ipam_restore: cannot open staged file');

@@ -36,6 +36,7 @@ final class LocalBackupClient implements BackupClientInterface
             throw new InvalidArgumentException('LocalBackupClient: path must be under data/');
         }
         if (!is_dir($canonical)) {
+            // best-effort: directory may already exist if another request raced us
             if (!@mkdir($canonical, 0775, true) && !is_dir($canonical)) {
                 throw new RuntimeException('LocalBackupClient: cannot create directory');
             }
@@ -54,6 +55,7 @@ final class LocalBackupClient implements BackupClientInterface
     {
         $this->guardName($remoteName);
         $dest = $this->directory . $remoteName;
+        // copy backup file to destination directory; failure is fatal
         if (!@copy($localPath, $dest)) {
             throw new RuntimeException('LocalBackupClient: copy failed');
         }
@@ -73,6 +75,7 @@ final class LocalBackupClient implements BackupClientInterface
         $this->guardName($remoteName);
         $src = $this->directory . $remoteName;
         if (!is_file($src)) return false;
+        // copy backup file to the caller-supplied destination path; failure is fatal
         if (!@copy($src, $destPath)) {
             throw new RuntimeException('LocalBackupClient: download copy failed');
         }

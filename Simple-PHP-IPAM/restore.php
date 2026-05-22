@@ -145,12 +145,14 @@ if ($driver === 'sqlite') {
 
     $bakPath = $dbPath . '.pre-restore-' . date('YmdHis') . '.bak';
     if (is_file($dbPath)) {
+        // safety copy before overwrite; failure is fatal — restore_die aborts the operation
         if (!@copy($dbPath, $bakPath)) {
             restore_die("Could not create safety backup at {$bakPath}.");
         }
         restore_info("Safety backup: {$bakPath}");
     }
 
+    // copy the staged backup over the live db; failure is fatal — restore_die aborts the operation
     if (!@copy($fromAbs, $dbPath)) {
         restore_die("Failed to copy {$fromAbs} → {$dbPath}.");
     }

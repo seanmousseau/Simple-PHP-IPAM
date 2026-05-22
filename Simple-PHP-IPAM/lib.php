@@ -605,6 +605,7 @@ function ipam_config_sync(string $configPath, array $loaded): array
 
             $content = preg_replace('/\n\];\s*$/', $block . "\n];", $content);
             if ($content === null) break;
+            // soft-write: a read-only config.php surfaces an admin warning via session flag (#119)
             if (@file_put_contents($configPath, $content) !== false) {
                 $added[] = $key;
             } else {
@@ -617,6 +618,7 @@ function ipam_config_sync(string $configPath, array $loaded): array
             // --- Nested block exists: deep-merge missing sub-keys ---
             $missingSubKeys = array_diff_key($meta['default'], $loaded[$key]);
             foreach ($missingSubKeys as $subKey => $subDefault) {
+                // soft-read: failure aborts the merge loop; config stays at current state
                 $content = @file_get_contents($configPath);
                 if ($content === false) break 2;
 
@@ -633,6 +635,7 @@ function ipam_config_sync(string $configPath, array $loaded): array
                 }, $content);
 
                 if ($content === null) break;
+                // soft-write: a read-only config.php surfaces an admin warning via session flag (#119)
                 if (@file_put_contents($configPath, $content) !== false) {
                     $added[] = $key . '.' . $subKey;
                 } else {
@@ -728,7 +731,9 @@ function housekeeping_mark_ran(): void
     $dir = dirname($path);
     if (!is_dir($dir)) mkdir($dir, 0700, true);
 
+    // best-effort: state file write failure means housekeeping may re-run sooner than scheduled
     @file_put_contents($path, json_encode(['last_run' => time()], JSON_PRETTY_PRINT));
+    // best-effort: tighten perms on the housekeeping state file
     @chmod($path, 0600);
 }
 
@@ -1054,13 +1059,16 @@ function alerts_check_if_due(array $config, PDO $db): void
 
     $statePath = __DIR__ . '/data/alerts_last_run.txt';
     if (is_file($statePath)) {
+        // soft-read: unreadable state file is treated as never-run; alerts fire immediately
         $last = (int)@file_get_contents($statePath);
         if ((time() - $last) < $interval) return;
     }
 
     check_utilization_alerts($db, $config);
 
+    // best-effort: state file write failure means alerts may fire again next request
     @file_put_contents($statePath, (string)time());
+    // best-effort: tighten perms on the alerts state file
     @chmod($statePath, 0600);
 }
 
@@ -1074,9 +1082,11 @@ function run_housekeeping_if_due(?PDO $db = null): void
     if (!housekeeping_should_run()) return;
 
     $lockPath = __DIR__ . '/data/housekeeping.lock';
+    // soft-open: if the lock file cannot be created, skip housekeeping silently
     $lock = @fopen($lockPath, 'c');
     if (!$lock) return;
 
+    // soft-lock: another process holds the lock; skip this tick silently
     if (!@flock($lock, LOCK_EX | LOCK_NB)) {
         fclose($lock);
         return;
@@ -1106,7 +1116,9 @@ function run_housekeeping_if_due(?PDO $db = null): void
 
         housekeeping_mark_ran();
     } finally {
+        // best-effort: release lock and close handle on every exit path including exceptions
         @flock($lock, LOCK_UN);
+        // best-effort: close the lock file handle on every exit path including exceptions
         @fclose($lock);
     }
 }
@@ -1247,13 +1259,13 @@ function ipam_backup_write_mysql_defaults_file(string $pass): string
     }
     // tempnam creates with 0600 on most unixes, but tighten explicitly before
     // writing so the secret is never observable through a wider mode.
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort pre-write: tempnam mode varies by OS/umask
     $contents = "[client]\npassword=" . $pass . "\n";
     if (file_put_contents($path, $contents, LOCK_EX) === false) {
         @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
         throw new RuntimeException('Failed to write MySQL credential file');
     }
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort post-write: tighten after file_put_contents
     return $path;
 }
 
@@ -1275,7 +1287,7 @@ function ipam_backup_write_pgpass_file(string $pass): string
     if ($path === false) {
         throw new RuntimeException('Failed to allocate temp file for Postgres credential');
     }
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort pre-write: tempnam mode varies by OS/umask
     // Escape ':' and '\' inside the password per libpq's pgpass rules.
     $escaped = str_replace(['\\', ':'], ['\\\\', '\\:'], $pass);
     $contents = "*:*:*:*:" . $escaped . "\n";
@@ -1283,7 +1295,7 @@ function ipam_backup_write_pgpass_file(string $pass): string
         @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
         throw new RuntimeException('Failed to write Postgres credential file');
     }
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort post-write: tighten after file_put_contents
     return $path;
 }
 
@@ -1397,6 +1409,7 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
         error_log('backup_run_dump failed (' . $errorOut . ')');
         return false;
     }
+    // best-effort: tighten perms on the dump output file before further processing
     @chmod($destPath, 0600);
     return true;
 }
@@ -1663,6 +1676,7 @@ function ipam_config_inject_or_replace_key(string $configPath, string $key, stri
     if (str_contains($valueB64, "'") || str_contains($valueB64, "\n") || str_contains($valueB64, "\r")) {
         throw new RuntimeException('refusing to inject value containing quotes or newlines');
     }
+    // soft-read: is_readable() check above passed but read could still fail on a permission race
     $contents = @file_get_contents($configPath);
     if ($contents === false) {
         throw new RuntimeException('failed to read config file');
@@ -1708,14 +1722,17 @@ function ipam_config_inject_or_replace_key(string $configPath, string $key, stri
         throw new RuntimeException('cannot create tempfile next to config file');
     }
     try {
+        // soft-write: short write means disk-full; checked immediately
         $written = @file_put_contents($tmp, $new);
         if ($written !== strlen($new)) {
             throw new RuntimeException('short write to tempfile');
         }
         $perms = @fileperms($configPath);
         if ($perms !== false) {
+            // best-effort: preserve original config file permissions on the replacement
             @chmod($tmp, $perms & 0777);
         }
+        // atomic rename: failure is fatal to avoid leaving a partial config in place
         if (!@rename($tmp, $configPath)) {
             throw new RuntimeException('rename of tempfile to config file failed');
         }
@@ -1811,10 +1828,12 @@ function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecr
     $encKey = substr($keys, 0, 32);
     $macKey = substr($keys, 32, 32);
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_encrypt_stream: cannot open source');
     }
+    // soft-open: failure is handled immediately below with a RuntimeException
     $out = @fopen($dstPath, 'wb');
     if ($out === false) {
         fclose($in);
@@ -1889,6 +1908,7 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
     }
     $ctLen = $size - $minLen;
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_decrypt_stream: cannot open source');
@@ -1912,6 +1932,7 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
         $encKey = substr($keys, 0, 32);
         $macKey = substr($keys, 32, 32);
 
+        // soft-open: failure is handled immediately below with a RuntimeException
         $out = @fopen($tmpPath, 'wb');
         if ($out === false) {
             throw new RuntimeException('backup_decrypt_stream: cannot open tmp dst');
@@ -1951,6 +1972,7 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
         // HMAC verified — close out, atomically rename tmp into place.
         fclose($out);
         $out = null;
+        // atomic rename: failure is fatal to avoid a partial plaintext at $dstPath
         if (!@rename($tmpPath, $dstPath)) {
             throw new RuntimeException('backup_decrypt_stream: rename to dst failed');
         }
@@ -2128,10 +2150,12 @@ function backup_encrypt_stream_v3(
 
     $header = ipam_backup_v3_pack_header($mode, $aTime, $aMem, $aPar, $argonSalt, $hkdfSalt, $ctrIv);
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_encrypt_stream_v3: cannot open source');
     }
+    // soft-open: failure is handled immediately below with a RuntimeException
     $out = @fopen($dstPath, 'wb');
     if ($out === false) {
         fclose($in);
@@ -2206,6 +2230,7 @@ function backup_decrypt_stream_v3(
     }
     $ctLen = $size - $minLen;
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_decrypt_stream_v3: cannot open source');
@@ -2261,6 +2286,7 @@ function backup_decrypt_stream_v3(
         $encKey = substr($keys, 0, 32);
         $macKey = substr($keys, 32, 32);
 
+        // soft-open: failure is handled immediately below with a RuntimeException
         $out = @fopen($tmpPath, 'wb');
         if ($out === false) {
             throw new RuntimeException('backup_decrypt_stream_v3: cannot open tmp dst');
@@ -2305,6 +2331,7 @@ function backup_decrypt_stream_v3(
 
         fclose($out);
         $out = null;
+        // atomic rename: failure is fatal to avoid a partial plaintext at $dstPath
         if (!@rename($tmpPath, $dstPath)) {
             throw new RuntimeException('backup_decrypt_stream_v3: rename to dst failed');
         }
@@ -2340,10 +2367,12 @@ const BACKUP_UNENC_HEADER_LEN = 8 + 32; // magic + sha256
  */
 function backup_unencrypted_wrap_stream(string $srcPath, string $dstPath): void
 {
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_unencrypted_wrap_stream: cannot open source');
     }
+    // soft-open: failure is handled immediately below with a RuntimeException
     $out = @fopen($dstPath, 'wb');
     if ($out === false) {
         fclose($in);
@@ -2406,6 +2435,7 @@ function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): voi
         throw new RuntimeException('backup_unencrypted_unwrap_stream: file too short');
     }
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open source');
@@ -2423,6 +2453,7 @@ function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): voi
         }
         $expected = substr($hdr, 8, 32);
 
+        // soft-open: failure is handled immediately below with a RuntimeException
         $out = @fopen($tmpPath, 'wb');
         if ($out === false) {
             throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open tmp dst');
@@ -2448,6 +2479,7 @@ function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): voi
 
         fclose($out);
         $out = null;
+        // atomic rename: failure is fatal to avoid a partial plaintext at $dstPath
         if (!@rename($tmpPath, $dstPath)) {
             throw new RuntimeException('backup_unencrypted_unwrap_stream: rename to dst failed');
         }
@@ -2511,6 +2543,7 @@ function backup_decrypt_to_path(
     ?string $passphrase = null,
     ?string $vaultKey = null
 ): void {
+    // soft-open: reads magic header only; failure is handled immediately below with a RuntimeException
     $fh = @fopen($srcPath, 'rb');
     if ($fh === false) {
         throw new RuntimeException('backup_decrypt_to_path: cannot open source');
@@ -2550,11 +2583,13 @@ function backup_decrypt_to_path(
         return;
     }
     if ($magic === BACKUP_MAGIC) {
+        // v1 (legacy): must load entire blob into memory; failure is fatal
         $blob = @file_get_contents($srcPath);
         if ($blob === false) {
             throw new RuntimeException('backup_decrypt_to_path: cannot read v1 blob');
         }
         $plain = backup_decrypt($blob, $appSecret);
+        // soft-write: partial write detected by length check; truncated plaintext is discarded below
         $written = @file_put_contents($dstPath, $plain);
         if ($written !== strlen($plain)) {
             // Partial write (e.g. disk full) — discard truncated plaintext.
@@ -4478,6 +4513,7 @@ function save_import_plan(array $plan): string
     if (file_put_contents($path, $json) === false) {
         throw new RuntimeException('Failed to write import plan');
     }
+    // best-effort: tighten perms on the import-plan file after writing
     @chmod($path, 0600);
     return $path;
 }
@@ -5340,6 +5376,7 @@ function ipam_update_check(array $config): ?array
             'header' => "User-Agent: Simple-PHP-IPAM/" . IPAM_VERSION . "\r\n"
                       . "Accept: application/vnd.github+json\r\n",
         ]]);
+        // soft-fetch: network failure silently skips the update check; result stays null
         $raw = @file_get_contents($url, false, $ctx);
         if ($raw !== false && $raw !== '') {
             $releases = json_decode($raw, true);
@@ -5366,7 +5403,9 @@ function ipam_update_check(array $config): ?array
         // Non-critical — silently skip on network failure
     }
 
+    // best-effort: update-check cache write failure just means the check runs again next request
     @file_put_contents($cache, json_encode(['checked' => time(), 'update' => $result]));
+    // best-effort: tighten perms on the update-check cache file
     @chmod($cache, 0600);
     $memo = $result;
     return $result;
@@ -5493,6 +5532,7 @@ function oidc_discovery(array $config): array
     /** @var array<string, mixed> $d */
 
     file_put_contents($cache, json_encode($d));
+    // best-effort: tighten perms on the OIDC discovery cache file
     @chmod($cache, 0600);
     return $d;
 }
@@ -5526,10 +5566,12 @@ function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
     // can see it without us hard-failing this request (we already have
     // a valid in-memory $d to return).
     $encoded = json_encode($d);
+    // soft-write: cache failure is logged and JWKS is re-fetched on the next request (see A.P3 comment above)
     if ($encoded === false || @file_put_contents($cache, $encoded) === false) {
         error_log('oidc_jwks: failed to write JWKS cache to ' . $cache
             . ' — JWKS will be re-fetched on each request until the write succeeds');
     } else {
+        // best-effort: tighten perms on the JWKS cache file after a successful write
         @chmod($cache, 0600);
     }
     return array_values((array)$d['keys']);
@@ -5542,6 +5584,7 @@ function oidc_http_get(string $url): string
         'http' => ['timeout' => 10, 'ignore_errors' => true],
         'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
+    // soft-fetch: network or TLS failure; error is surfaced via RuntimeException to the caller
     $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false || $raw === '') {
         throw new RuntimeException('HTTP GET failed for ' . $url);
@@ -5569,6 +5612,7 @@ function oidc_http_post(string $url, array $params): array
         ],
         'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
+    // soft-fetch: network or TLS failure; error is surfaced via RuntimeException to the caller
     $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false) throw new RuntimeException('Token endpoint request failed');
     $d = json_decode($raw, true);
@@ -5646,6 +5690,7 @@ function ipam_http_status_from_headers(array $headers): int
 function ipam_http_post_json(string $url, array $body, array $headers = []): array
 {
     $ctx = stream_context_create(ipam_http_post_json_options($body, $headers));
+    // soft-fetch: network failure is returned as an error struct; never throws (see docblock)
     $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false) {
         return ['body' => null, 'status' => 0, 'error' => 'HTTP request failed'];

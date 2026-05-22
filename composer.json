@@ -36,10 +36,12 @@
         "phpcs": "phpcs",
         "phpcbf": "phpcbf",
         "audit-icons": "php tools/audit-icons-svg.php",
+        "lint:at": "php testing/scripts/lint-at-suppressions.php",
         "lint": [
             "@phpstan",
             "@phpcs",
-            "@audit-icons"
+            "@audit-icons",
+            "@lint:at"
         ],
         "ci-gate": [
             "@test",
@@ -52,7 +54,8 @@
         "phpcs": "PSR-12 style check with project exclusions (see phpcs.xml.dist).",
         "phpcbf": "Auto-fix PSR-12 style violations where safe.",
         "audit-icons": "Verify icons.svg sprite has no dead symbols or missing references (#942).",
-        "lint": "Run all static-quality gates: phpstan + phpcs + audit-icons.",
+        "lint:at": "Check that every @-suppressed I/O call has an adjacent justifying comment.",
+        "lint": "Run all static-quality gates: phpstan + phpcs + audit-icons + lint:at.",
         "ci-gate": "Full local CI gate: PHPUnit + lint. Run before pushing. Does not include the dockerized 3-driver bootstrap (see testing/bootstrap-app.sh)."
     },
     "config": {

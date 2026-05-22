@@ -292,7 +292,8 @@ function ipam_backup_run_verify(\PDO $db, int $runId): array
         return ['ok' => false, 'error' => 'unreachable', 'message' => $e->getMessage()];
     } finally {
         if (is_file($tmp)) {
-            @unlink($tmp);
+            // best-effort: clean up the verify temp file on every exit path
+            @unlink($tmp); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmp is from tempnam(), no user input
         }
     }
 

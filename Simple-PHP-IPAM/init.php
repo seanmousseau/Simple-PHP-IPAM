@@ -346,6 +346,7 @@ session_set_cookie_params([
 // the session files.
 $sessionSaveDir = __DIR__ . '/data/sessions';
 if (!is_dir($sessionSaveDir)) {
+    // best-effort: directory may already exist if another request raced us
     @mkdir($sessionSaveDir, 0700, true);
 }
 if (is_dir($sessionSaveDir) && is_writable($sessionSaveDir)) {
@@ -380,6 +381,7 @@ ipam_db_init($db);
 // timestamps are stored as UTC; ipam_format_datetime() in lib.php converts them
 // for UI output using the effective timezone set here.
 $tz = to_str(ipam_setting('branding.timezone'));
+// best-effort: invalid or empty timezone string falls back to UTC
 if ($tz === '' || !@date_default_timezone_set($tz)) {
     date_default_timezone_set('UTC');
 }
