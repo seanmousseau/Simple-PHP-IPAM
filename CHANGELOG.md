@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.35.0] - 2026-05-22
+
+Refactor Wave 4 — lib polish + admin refactor. A pure code-quality release closing the 7 open issues in milestone #85. One small schema migration (TOTP backup-code lookup discriminator); no new operator-facing pages; no new config keys.
+
+### Known limitations
+
+- **`app_secret` rotation invalidates `totp_backup_codes.lookup_key`.** The verifier now falls back to a full unused-rows scan automatically when the narrowed SELECT finds nothing, so backup codes continue to work after rotation without any manual intervention. #1300 tracks a follow-up improvement (batch re-key on rotation to restore O(1) steady state), target milestone v3.36.x.
+
+### Added
+
+- **`@`-suppression CI linter (#1290).** `testing/scripts/lint-at-suppressions.php` + `composer lint:at` (wired into `.github/workflows/php-qa.yml`). Refuses any `@`-suppressed I/O call that lacks an inline justifying comment on the same or previous line. All 157 existing sites swept and justified.
+- **TOTP backup-code O(1) lookup discriminator (#946).** New `lookup_key` column + composite index on `totp_backup_codes`. Verification narrows by HMAC discriminator, performing at most one bcrypt verify per login. Migration `3.35.0-totp-backup-lookup-key` is idempotent.
+- **`tag.attach` / `tag.detach` / `contact.attach` / `contact.detach` audit coverage for browser POSTs (#1292).** `save_tags_for_entity` and `save_contacts_for_entity` now compute the delta and emit audit rows matching the API shape. Address/subnet create+update paths suppress per-tag deltas to avoid double-auditing the wholesale event.
+- **phpunit Unit / Integration testsuite split (#944).** `tests/unit/` (no DB, ~2.3s) vs `tests/integration/` (DB-touching, ~30s). New `composer test:unit` / `composer test:integration` scripts; CI runs Unit first for fast-fail.
+- **Dashboard visual-regression coverage restored (#775).** New `vr-dashboard-setup` + `vr-dashboard-{1440,1024,768,375}` Playwright projects run serially against a freshly-bootstrapped DB before mutating workers start. Existing `vr-*` projects gain `grepInvert: /@vr-dashboard/`.
+
+### Changed
+
+- **`init.php` decomposed into `lib/bootstrap_*.php` modules (#1293).** 435L → 141L of top-level chain. Four modules: `bootstrap_session`, `bootstrap_demo`, `bootstrap_runtime`, `bootstrap_dialect`. Boot order preserved exactly.
+- **`scan_run.php` and `cron.php` scan branch delegate to `lib/scan.php` (#1291).** New API: `ipam_scan_select_due_subnets()`, `ipam_scan_run_for_subnet()`. Audit-log shape preserved (cron-tagged rows still distinguishable from CLI runs).
+
+### Internal
+
+- Audit tool `Simple-PHP-IPAM/tools/audit-at-suppressions.php` (dev-only) — TSV enumerator behind the linter.
+- `MySQL <8.0.29` index-creation guard pattern documented inline in `migrations.php` for the new TOTP migration.
+
 ## [3.34.0] - 2026-05-21
 
 Refactor Wave 3 — frontend modularization. A pure code-quality release; no schema migrations, no new config keys, no new operator-facing pages. Closes 9 milestone-#58 issues plus 3 umbrellas (#949 #950 #952) with full per-item disposition. **8 items carry forward to milestone #85 (Refactor wave 4):** 4 newly filed from the wave-3 review (#1290 #1291 #1292 #1293) and 4 pre-existing deferrals (#775 #944 #946 #1243).
@@ -2029,6 +2055,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.35.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.34.0...v3.35.0
 [3.34.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.33.0...v3.34.0
 [3.33.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.32.0...v3.33.0
 [3.32.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.31.0...v3.32.0

@@ -21,6 +21,43 @@ CI (`.github/workflows/php-qa.yml` + `playwright.yml`) runs all of the above on 
 
 ---
 
+## Unit vs Integration: where does my test go?
+
+PHPUnit is split into two named testsuites. The rule is mechanical:
+
+| Suite | Directory | Criterion |
+|---|---|---|
+| **Unit** | `tests/unit/` | Pure PHP — no DB, no file I/O outside the test class, no network |
+| **Integration** | `tests/integration/`, `tests/Migration/`, `tests/Helpers/` | Touches `ipam_test_db_sqlite()`, `InMemoryDb`, `new PDO(…)`, any DSN literal, `apply_migrations`, `ipam_db_init`, or writes/reads files outside the test class (e.g. `sys_get_temp_dir()`, `data/tmp/`) |
+
+**When in doubt, put it in Integration.** A false-positive integration test costs ~1 second in a longer suite. A false-positive unit test pollutes the fast suite and hides the dependency.
+
+### Run commands
+
+```bash
+vendor/bin/phpunit --testsuite Unit         # ~2 s — safe to run on every save
+vendor/bin/phpunit --testsuite Integration  # ~30 s — run before push
+vendor/bin/phpunit                          # both, Unit first
+
+# composer shortcuts
+composer test:unit
+composer test:integration
+composer test          # both, Unit runs first (fast-fail)
+```
+
+### Example placements
+
+| Test | Suite | Reason |
+|---|---|---|
+| `HkdfTest` — pure HKDF derivation | Unit | No I/O |
+| `PasswordPolicyTest` — regex validator | Unit | No I/O |
+| `MigrationTest` — applies closures to in-memory DB | Integration | `new PDO` |
+| `LocalBackupClientTest` — writes to `data/tmp/` | Integration | File I/O under `data/` |
+| `MigrationLinterTest` — writes fixture files to `sys_get_temp_dir()` | Integration | File I/O |
+| `RestoreStagingPathTest` — creates files under `data/tmp/` | Integration | File I/O under `data/` |
+
+---
+
 ## When to add what
 
 | Change | New test? | Where |

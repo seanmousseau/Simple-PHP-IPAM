@@ -25,6 +25,7 @@ require_once __DIR__ . '/lib/secret.php'; // settings-secret encrypt-at-rest cry
 require_once __DIR__ . '/lib/backup.php';
 require_once __DIR__ . '/lib/auth_step_up.php';
 require_once __DIR__ . '/lib/csv_import.php'; // CSV-import wizard logic (ADR-004, B13, #925)
+require_once __DIR__ . '/lib/scan.php';       // shared scan-loop helpers (ADR-004, #1291)
 
 /* ---------------- View helpers (v3.8.0, #522) ---------------- */
 
@@ -605,6 +606,7 @@ function ipam_config_sync(string $configPath, array $loaded): array
 
             $content = preg_replace('/\n\];\s*$/', $block . "\n];", $content);
             if ($content === null) break;
+            // soft-write: a read-only config.php surfaces an admin warning via session flag (#119)
             if (@file_put_contents($configPath, $content) !== false) {
                 $added[] = $key;
             } else {
@@ -617,6 +619,7 @@ function ipam_config_sync(string $configPath, array $loaded): array
             // --- Nested block exists: deep-merge missing sub-keys ---
             $missingSubKeys = array_diff_key($meta['default'], $loaded[$key]);
             foreach ($missingSubKeys as $subKey => $subDefault) {
+                // soft-read: failure aborts the merge loop; config stays at current state
                 $content = @file_get_contents($configPath);
                 if ($content === false) break 2;
 
@@ -633,6 +636,7 @@ function ipam_config_sync(string $configPath, array $loaded): array
                 }, $content);
 
                 if ($content === null) break;
+                // soft-write: a read-only config.php surfaces an admin warning via session flag (#119)
                 if (@file_put_contents($configPath, $content) !== false) {
                     $added[] = $key . '.' . $subKey;
                 } else {
@@ -728,7 +732,9 @@ function housekeeping_mark_ran(): void
     $dir = dirname($path);
     if (!is_dir($dir)) mkdir($dir, 0700, true);
 
+    // best-effort: state file write failure means housekeeping may re-run sooner than scheduled
     @file_put_contents($path, json_encode(['last_run' => time()], JSON_PRETTY_PRINT));
+    // best-effort: tighten perms on the housekeeping state file
     @chmod($path, 0600);
 }
 
@@ -1054,13 +1060,16 @@ function alerts_check_if_due(array $config, PDO $db): void
 
     $statePath = __DIR__ . '/data/alerts_last_run.txt';
     if (is_file($statePath)) {
+        // soft-read: unreadable state file is treated as never-run; alerts fire immediately
         $last = (int)@file_get_contents($statePath);
         if ((time() - $last) < $interval) return;
     }
 
     check_utilization_alerts($db, $config);
 
+    // best-effort: state file write failure means alerts may fire again next request
     @file_put_contents($statePath, (string)time());
+    // best-effort: tighten perms on the alerts state file
     @chmod($statePath, 0600);
 }
 
@@ -1074,9 +1083,11 @@ function run_housekeeping_if_due(?PDO $db = null): void
     if (!housekeeping_should_run()) return;
 
     $lockPath = __DIR__ . '/data/housekeeping.lock';
+    // soft-open: if the lock file cannot be created, skip housekeeping silently
     $lock = @fopen($lockPath, 'c');
     if (!$lock) return;
 
+    // soft-lock: another process holds the lock; skip this tick silently
     if (!@flock($lock, LOCK_EX | LOCK_NB)) {
         fclose($lock);
         return;
@@ -1106,7 +1117,9 @@ function run_housekeeping_if_due(?PDO $db = null): void
 
         housekeeping_mark_ran();
     } finally {
+        // best-effort: release lock and close handle on every exit path including exceptions
         @flock($lock, LOCK_UN);
+        // best-effort: close the lock file handle on every exit path including exceptions
         @fclose($lock);
     }
 }
@@ -1247,13 +1260,13 @@ function ipam_backup_write_mysql_defaults_file(string $pass): string
     }
     // tempnam creates with 0600 on most unixes, but tighten explicitly before
     // writing so the secret is never observable through a wider mode.
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort pre-write: tempnam mode varies by OS/umask
     $contents = "[client]\npassword=" . $pass . "\n";
     if (file_put_contents($path, $contents, LOCK_EX) === false) {
         @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
         throw new RuntimeException('Failed to write MySQL credential file');
     }
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort post-write: tighten after file_put_contents
     return $path;
 }
 
@@ -1275,7 +1288,7 @@ function ipam_backup_write_pgpass_file(string $pass): string
     if ($path === false) {
         throw new RuntimeException('Failed to allocate temp file for Postgres credential');
     }
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort pre-write: tempnam mode varies by OS/umask
     // Escape ':' and '\' inside the password per libpq's pgpass rules.
     $escaped = str_replace(['\\', ':'], ['\\\\', '\\:'], $pass);
     $contents = "*:*:*:*:" . $escaped . "\n";
@@ -1283,7 +1296,7 @@ function ipam_backup_write_pgpass_file(string $pass): string
         @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
         throw new RuntimeException('Failed to write Postgres credential file');
     }
-    @chmod($path, 0600);
+    @chmod($path, 0600); // best-effort post-write: tighten after file_put_contents
     return $path;
 }
 
@@ -1397,6 +1410,7 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
         error_log('backup_run_dump failed (' . $errorOut . ')');
         return false;
     }
+    // best-effort: tighten perms on the dump output file before further processing
     @chmod($destPath, 0600);
     return true;
 }
@@ -1663,6 +1677,7 @@ function ipam_config_inject_or_replace_key(string $configPath, string $key, stri
     if (str_contains($valueB64, "'") || str_contains($valueB64, "\n") || str_contains($valueB64, "\r")) {
         throw new RuntimeException('refusing to inject value containing quotes or newlines');
     }
+    // soft-read: is_readable() check above passed but read could still fail on a permission race
     $contents = @file_get_contents($configPath);
     if ($contents === false) {
         throw new RuntimeException('failed to read config file');
@@ -1708,14 +1723,17 @@ function ipam_config_inject_or_replace_key(string $configPath, string $key, stri
         throw new RuntimeException('cannot create tempfile next to config file');
     }
     try {
+        // soft-write: short write means disk-full; checked immediately
         $written = @file_put_contents($tmp, $new);
         if ($written !== strlen($new)) {
             throw new RuntimeException('short write to tempfile');
         }
         $perms = @fileperms($configPath);
         if ($perms !== false) {
+            // best-effort: preserve original config file permissions on the replacement
             @chmod($tmp, $perms & 0777);
         }
+        // atomic rename: failure is fatal to avoid leaving a partial config in place
         if (!@rename($tmp, $configPath)) {
             throw new RuntimeException('rename of tempfile to config file failed');
         }
@@ -1811,10 +1829,12 @@ function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecr
     $encKey = substr($keys, 0, 32);
     $macKey = substr($keys, 32, 32);
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_encrypt_stream: cannot open source');
     }
+    // soft-open: failure is handled immediately below with a RuntimeException
     $out = @fopen($dstPath, 'wb');
     if ($out === false) {
         fclose($in);
@@ -1889,6 +1909,7 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
     }
     $ctLen = $size - $minLen;
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_decrypt_stream: cannot open source');
@@ -1912,6 +1933,7 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
         $encKey = substr($keys, 0, 32);
         $macKey = substr($keys, 32, 32);
 
+        // soft-open: failure is handled immediately below with a RuntimeException
         $out = @fopen($tmpPath, 'wb');
         if ($out === false) {
             throw new RuntimeException('backup_decrypt_stream: cannot open tmp dst');
@@ -1951,6 +1973,7 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
         // HMAC verified — close out, atomically rename tmp into place.
         fclose($out);
         $out = null;
+        // atomic rename: failure is fatal to avoid a partial plaintext at $dstPath
         if (!@rename($tmpPath, $dstPath)) {
             throw new RuntimeException('backup_decrypt_stream: rename to dst failed');
         }
@@ -2128,10 +2151,12 @@ function backup_encrypt_stream_v3(
 
     $header = ipam_backup_v3_pack_header($mode, $aTime, $aMem, $aPar, $argonSalt, $hkdfSalt, $ctrIv);
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_encrypt_stream_v3: cannot open source');
     }
+    // soft-open: failure is handled immediately below with a RuntimeException
     $out = @fopen($dstPath, 'wb');
     if ($out === false) {
         fclose($in);
@@ -2206,6 +2231,7 @@ function backup_decrypt_stream_v3(
     }
     $ctLen = $size - $minLen;
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_decrypt_stream_v3: cannot open source');
@@ -2261,6 +2287,7 @@ function backup_decrypt_stream_v3(
         $encKey = substr($keys, 0, 32);
         $macKey = substr($keys, 32, 32);
 
+        // soft-open: failure is handled immediately below with a RuntimeException
         $out = @fopen($tmpPath, 'wb');
         if ($out === false) {
             throw new RuntimeException('backup_decrypt_stream_v3: cannot open tmp dst');
@@ -2305,6 +2332,7 @@ function backup_decrypt_stream_v3(
 
         fclose($out);
         $out = null;
+        // atomic rename: failure is fatal to avoid a partial plaintext at $dstPath
         if (!@rename($tmpPath, $dstPath)) {
             throw new RuntimeException('backup_decrypt_stream_v3: rename to dst failed');
         }
@@ -2340,10 +2368,12 @@ const BACKUP_UNENC_HEADER_LEN = 8 + 32; // magic + sha256
  */
 function backup_unencrypted_wrap_stream(string $srcPath, string $dstPath): void
 {
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_unencrypted_wrap_stream: cannot open source');
     }
+    // soft-open: failure is handled immediately below with a RuntimeException
     $out = @fopen($dstPath, 'wb');
     if ($out === false) {
         fclose($in);
@@ -2406,6 +2436,7 @@ function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): voi
         throw new RuntimeException('backup_unencrypted_unwrap_stream: file too short');
     }
 
+    // soft-open: failure is handled immediately below with a RuntimeException
     $in = @fopen($srcPath, 'rb');
     if ($in === false) {
         throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open source');
@@ -2423,6 +2454,7 @@ function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): voi
         }
         $expected = substr($hdr, 8, 32);
 
+        // soft-open: failure is handled immediately below with a RuntimeException
         $out = @fopen($tmpPath, 'wb');
         if ($out === false) {
             throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open tmp dst');
@@ -2448,6 +2480,7 @@ function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): voi
 
         fclose($out);
         $out = null;
+        // atomic rename: failure is fatal to avoid a partial plaintext at $dstPath
         if (!@rename($tmpPath, $dstPath)) {
             throw new RuntimeException('backup_unencrypted_unwrap_stream: rename to dst failed');
         }
@@ -2511,6 +2544,7 @@ function backup_decrypt_to_path(
     ?string $passphrase = null,
     ?string $vaultKey = null
 ): void {
+    // soft-open: reads magic header only; failure is handled immediately below with a RuntimeException
     $fh = @fopen($srcPath, 'rb');
     if ($fh === false) {
         throw new RuntimeException('backup_decrypt_to_path: cannot open source');
@@ -2550,11 +2584,13 @@ function backup_decrypt_to_path(
         return;
     }
     if ($magic === BACKUP_MAGIC) {
+        // v1 (legacy): must load entire blob into memory; failure is fatal
         $blob = @file_get_contents($srcPath);
         if ($blob === false) {
             throw new RuntimeException('backup_decrypt_to_path: cannot read v1 blob');
         }
         $plain = backup_decrypt($blob, $appSecret);
+        // soft-write: partial write detected by length check; truncated plaintext is discarded below
         $written = @file_put_contents($dstPath, $plain);
         if ($written !== strlen($plain)) {
             // Partial write (e.g. disk full) — discard truncated plaintext.
@@ -3775,21 +3811,80 @@ function get_tags_for_entity(PDO $db, string $type, int $id): array
 
 /**
  * Replace all tags for a given entity with the supplied tag IDs.
+ *
+ * #1292: Computes the diff (old set vs new set) and emits audit_log entries
+ * for each attached/detached tag, matching the canonical API shape:
+ *   action=tag.attach|tag.detach, entity_type=$type, entity_id=$id,
+ *   details="tag_id=<N>"
+ *
+ * Pass $suppressAudit=true at callsites where a higher-level audit row
+ * already covers the full tag set (e.g. api.php address.create /
+ * address.update / subnet.create / subnet.update). Per-tag delta events at
+ * those sites would double-audit — the suppress flag avoids that without
+ * changing the join-table behaviour.
+ *
  * @param list<int> $tagIds
  */
-function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds): void
+function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds, bool $suppressAudit = false): void
 {
     if ($type === 'subnet') {
-        $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id")->execute([':id' => $id]);
+        // #1292: read old set before the wholesale DELETE so we can diff
+        $oldSt = $db->prepare("SELECT tag_id FROM subnet_tags WHERE subnet_id = :id");
+        $oldSt->execute([':id' => $id]);
+        $oldIds = array_map('intval', $oldSt->fetchAll(PDO::FETCH_COLUMN));
+
+        $delSt = $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id");
         $ins = $db->prepare("INSERT INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("subnet_tags", ["subnet_id", "tag_id"]) . "");
     } elseif ($type === 'address') {
-        $db->prepare("DELETE FROM address_tags WHERE address_id = :id")->execute([':id' => $id]);
+        // #1292: read old set before the wholesale DELETE so we can diff
+        $oldSt = $db->prepare("SELECT tag_id FROM address_tags WHERE address_id = :id");
+        $oldSt->execute([':id' => $id]);
+        $oldIds = array_map('intval', $oldSt->fetchAll(PDO::FETCH_COLUMN));
+
+        $delSt = $db->prepare("DELETE FROM address_tags WHERE address_id = :id");
         $ins = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("address_tags", ["address_id", "tag_id"]) . "");
     } else {
         return;
     }
-    foreach ($tagIds as $tid) {
-        $ins->execute([':eid' => $id, ':tid' => $tid]);
+
+    // CR #1307 #2: audit emissions must share the same failure boundary as the
+    // join-row mutation. If audit() throws after the DELETE+INSERT committed,
+    // the data change would be invisible in the audit log. Wrap the entire
+    // delete/insert/audit sequence in a single transaction so either all
+    // succeed or all roll back.
+    $wasInTxn = $db->inTransaction();
+    if (!$wasInTxn) $db->beginTransaction();
+    try {
+        $delSt->execute([':id' => $id]);
+        foreach ($tagIds as $tid) {
+            $ins->execute([':eid' => $id, ':tid' => $tid]);
+        }
+
+        // #1292: emit diff-based audit events unless suppressed by the caller.
+        // Suppression is used at api.php address/subnet create+update callsites
+        // where address.create / address.update / subnet.create / subnet.update
+        // already audits the full tag set — adding per-tag deltas there would
+        // double-audit. Browser form callsites (subnets.php) leave the default
+        // (suppressAudit=false) so the browser path now matches the API's
+        // individual attach/detach events.
+        if (!$suppressAudit) {
+            $newIds = array_values(array_unique(array_map('intval', $tagIds)));
+            $toAttach = array_values(array_diff($newIds, $oldIds));
+            $toDetach = array_values(array_diff($oldIds, $newIds));
+            // Emit detaches before attaches: "remove the old, then add the new"
+            // is the natural application order for a set-replace operation.
+            foreach ($toDetach as $tid) {
+                audit($db, 'tag.detach', $type, $id, "tag_id={$tid}");
+            }
+            foreach ($toAttach as $tid) {
+                audit($db, 'tag.attach', $type, $id, "tag_id={$tid}");
+            }
+        }
+
+        if (!$wasInTxn) $db->commit();
+    } catch (\Throwable $e) {
+        if (!$wasInTxn && $db->inTransaction()) $db->rollBack();
+        throw $e;
     }
 }
 
@@ -3820,19 +3915,46 @@ function get_contacts_for_entity(PDO $db, string $type, int $id): array
 
 /**
  * Replace all contact assignments for a site or subnet.
+ *
+ * #1292: Computes the diff (old contact-ID set vs new contact-ID set) and
+ * emits audit_log entries for each attached/detached contact. Action shape:
+ *   action=contact.attach|contact.detach, entity_type=$type, entity_id=$id,
+ *   details="contact_id=<N> role=<role>"
+ *
+ * Role changes on an already-assigned contact are NOT tracked as
+ * contact.update events — only ID-level attach/detach is diffed. This keeps
+ * the implementation simple and matches the scope of #1292.
+ *
+ * Pass $suppressAudit=true if a higher-level audit row already covers the
+ * operation (currently no api.php path calls this function, so suppression
+ * is provided for consistency and future-proofing only).
+ *
  * @param list<array{contact_id: int, role: string}> $contacts
  */
-function save_contacts_for_entity(PDO $db, string $type, int $id, array $contacts): void
+function save_contacts_for_entity(PDO $db, string $type, int $id, array $contacts, bool $suppressAudit = false): void
 {
     if ($type === 'site') {
+        $oldSql = "SELECT contact_id, role FROM site_contacts WHERE site_id = :id";
         $delSql = "DELETE FROM site_contacts WHERE site_id = :id";
         $insSql = "INSERT INTO site_contacts (site_id, contact_id, role) VALUES (:eid, :cid, :role)";
     } elseif ($type === 'subnet') {
+        $oldSql = "SELECT contact_id, role FROM subnet_contacts WHERE subnet_id = :id";
         $delSql = "DELETE FROM subnet_contacts WHERE subnet_id = :id";
         $insSql = "INSERT INTO subnet_contacts (subnet_id, contact_id, role) VALUES (:eid, :cid, :role)";
     } else {
         return;
     }
+
+    // #1292: read old assignments before the wholesale DELETE so we can diff
+    $oldSt = $db->prepare($oldSql);
+    $oldSt->execute([':id' => $id]);
+    /** @var list<array<string,mixed>> $oldRows */
+    $oldRows   = $oldSt->fetchAll(PDO::FETCH_ASSOC);
+    $oldById   = [];  // contact_id => role
+    foreach ($oldRows as $r) {
+        $oldById[to_int($r['contact_id'])] = to_str($r['role']);
+    }
+
     $seen = [];
     $deduped = [];
     foreach ($contacts as $c) {
@@ -3841,6 +3963,7 @@ function save_contacts_for_entity(PDO $db, string $type, int $id, array $contact
         $seen[$cid] = true;
         $deduped[] = $c;
     }
+
     $wasInTxn = $db->inTransaction();
     if (!$wasInTxn) $db->beginTransaction();
     try {
@@ -3849,6 +3972,37 @@ function save_contacts_for_entity(PDO $db, string $type, int $id, array $contact
         foreach ($deduped as $c) {
             $ins->execute([':eid' => $id, ':cid' => $c['contact_id'], ':role' => $c['role']]);
         }
+
+        // CR #1307 #2: audit emissions must share the same failure boundary as
+        // the join-row mutation. The previous code committed first and then
+        // audited — an audit failure would leave the data changed but the audit
+        // log empty. Moved inside the transaction so both succeed or both roll
+        // back together.
+        //
+        // #1292: emit diff-based audit events unless suppressed.
+        // Browser form callsites (sites.php, subnets.php) leave the default
+        // (suppressAudit=false) so attach/detach events are now recorded.
+        // No api.php path currently calls this function, so there is no
+        // double-audit risk — suppressAudit is provided for future-proofing.
+        if (!$suppressAudit) {
+            $newById = [];
+            foreach ($deduped as $c) {
+                $newById[$c['contact_id']] = $c['role'];
+            }
+            // Attached: in new set but not in old set
+            foreach ($newById as $cid => $role) {
+                if (!array_key_exists($cid, $oldById)) {
+                    audit($db, 'contact.attach', $type, $id, "contact_id={$cid} role={$role}");
+                }
+            }
+            // Detached: in old set but not in new set
+            foreach ($oldById as $cid => $role) {
+                if (!array_key_exists($cid, $newById)) {
+                    audit($db, 'contact.detach', $type, $id, "contact_id={$cid} role={$role}");
+                }
+            }
+        }
+
         if (!$wasInTxn) $db->commit();
     } catch (\Throwable $e) {
         if (!$wasInTxn && $db->inTransaction()) $db->rollBack();
@@ -4478,6 +4632,7 @@ function save_import_plan(array $plan): string
     if (file_put_contents($path, $json) === false) {
         throw new RuntimeException('Failed to write import plan');
     }
+    // best-effort: tighten perms on the import-plan file after writing
     @chmod($path, 0600);
     return $path;
 }
@@ -5340,6 +5495,7 @@ function ipam_update_check(array $config): ?array
             'header' => "User-Agent: Simple-PHP-IPAM/" . IPAM_VERSION . "\r\n"
                       . "Accept: application/vnd.github+json\r\n",
         ]]);
+        // soft-fetch: network failure silently skips the update check; result stays null
         $raw = @file_get_contents($url, false, $ctx);
         if ($raw !== false && $raw !== '') {
             $releases = json_decode($raw, true);
@@ -5366,7 +5522,9 @@ function ipam_update_check(array $config): ?array
         // Non-critical — silently skip on network failure
     }
 
+    // best-effort: update-check cache write failure just means the check runs again next request
     @file_put_contents($cache, json_encode(['checked' => time(), 'update' => $result]));
+    // best-effort: tighten perms on the update-check cache file
     @chmod($cache, 0600);
     $memo = $result;
     return $result;
@@ -5493,6 +5651,7 @@ function oidc_discovery(array $config): array
     /** @var array<string, mixed> $d */
 
     file_put_contents($cache, json_encode($d));
+    // best-effort: tighten perms on the OIDC discovery cache file
     @chmod($cache, 0600);
     return $d;
 }
@@ -5526,10 +5685,12 @@ function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
     // can see it without us hard-failing this request (we already have
     // a valid in-memory $d to return).
     $encoded = json_encode($d);
+    // soft-write: cache failure is logged and JWKS is re-fetched on the next request (see A.P3 comment above)
     if ($encoded === false || @file_put_contents($cache, $encoded) === false) {
         error_log('oidc_jwks: failed to write JWKS cache to ' . $cache
             . ' — JWKS will be re-fetched on each request until the write succeeds');
     } else {
+        // best-effort: tighten perms on the JWKS cache file after a successful write
         @chmod($cache, 0600);
     }
     return array_values((array)$d['keys']);
@@ -5542,6 +5703,7 @@ function oidc_http_get(string $url): string
         'http' => ['timeout' => 10, 'ignore_errors' => true],
         'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
+    // soft-fetch: network or TLS failure; error is surfaced via RuntimeException to the caller
     $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false || $raw === '') {
         throw new RuntimeException('HTTP GET failed for ' . $url);
@@ -5569,6 +5731,7 @@ function oidc_http_post(string $url, array $params): array
         ],
         'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
+    // soft-fetch: network or TLS failure; error is surfaced via RuntimeException to the caller
     $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false) throw new RuntimeException('Token endpoint request failed');
     $d = json_decode($raw, true);
@@ -5646,6 +5809,7 @@ function ipam_http_status_from_headers(array $headers): int
 function ipam_http_post_json(string $url, array $body, array $headers = []): array
 {
     $ctx = stream_context_create(ipam_http_post_json_options($body, $headers));
+    // soft-fetch: network failure is returned as an error struct; never throws (see docblock)
     $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false) {
         return ['body' => null, 'status' => 0, 'error' => 'HTTP request failed'];
@@ -6843,6 +7007,31 @@ function ipam_totp_decrypt_secret(string $encSecret, string $key): string {
     return $decrypted;
 }
 
+/**
+ * v3.35.0 #946: Non-secret HMAC-SHA256 discriminator for backup-code rows.
+ *
+ * Returns the first 8 hex chars (32 bits) of HMAC-SHA256(code, app_secret).
+ * This value is stored in totp_backup_codes.lookup_key alongside the bcrypt
+ * hash so the verifier can narrow candidates via a SELECT predicate instead
+ * of scanning every unused row. 32-bit truncation is intentional — it is wide
+ * enough to reduce candidate rows to ≤1 in steady state while being narrow
+ * enough to provide no meaningful offline-attack uplift (bcrypt+salt is the
+ * actual security boundary).
+ *
+ * Security note: if app_secret rotates, existing lookup_key values become
+ * stale. The verifier's "OR lookup_key IS NULL" fallback does NOT cover this
+ * case (the column is set, just wrong). Operators who rotate app_secret should
+ * run a one-off migration to NULL-out lookup_key, forcing the slow path until
+ * codes are regenerated. See #946 follow-up for a proposed remedy.
+ */
+function ipam_totp_backup_lookup_key(string $code): string {
+    // Use ipam_app_secret() — the canonical accessor that handles auto-gen,
+    // caching, and config.php reads. Avoids undefined-key warning when
+    // app_secret is absent from the live config array during tests.
+    $secret = ipam_app_secret();
+    return substr(hash_hmac('sha256', $code, $secret), 0, 8);
+}
+
 /** @return list<string> */
 function ipam_totp_generate_backup_codes(int $count = 8): array {
     $codes = [];
@@ -6857,9 +7046,17 @@ function ipam_totp_save_backup_codes(PDO $db, int $userId, array $codes): void {
     $db->beginTransaction();
     try {
         $db->prepare("DELETE FROM totp_backup_codes WHERE user_id = :uid")->execute([':uid' => $userId]);
-        $stmt = $db->prepare("INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :hash)");
+        // v3.35.0 #946: store lookup_key alongside code_hash so the verifier
+        // can narrow candidates via SELECT predicate (O(1) in steady state).
+        $stmt = $db->prepare(
+            "INSERT INTO totp_backup_codes (user_id, code_hash, lookup_key) VALUES (:uid, :hash, :lk)"
+        );
         foreach ($codes as $code) {
-            $stmt->execute([':uid' => $userId, ':hash' => password_hash($code, PASSWORD_DEFAULT)]);
+            $stmt->execute([
+                ':uid'  => $userId,
+                ':hash' => password_hash($code, PASSWORD_DEFAULT),
+                ':lk'   => ipam_totp_backup_lookup_key($code),
+            ]);
         }
         $db->commit();
     } catch (\Throwable $e) {
@@ -6869,12 +7066,39 @@ function ipam_totp_save_backup_codes(PDO $db, int $userId, array $codes): void {
 }
 
 function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool {
+    // v3.35.0 #946: narrow candidates using the non-secret HMAC discriminator.
+    // Rows with lookup_key = :lk: O(1) bcrypt in steady state (≤1 candidate).
+    // Rows with lookup_key IS NULL: legacy rows from before 3.35.0 — bcrypt
+    // scanned as before; they disappear naturally as users cycle their codes.
+    $lk = ipam_totp_backup_lookup_key($code);
     $stmt = $db->prepare(
-        "SELECT id, code_hash FROM totp_backup_codes WHERE user_id = :uid AND used_at IS NULL"
+        "SELECT id, code_hash FROM totp_backup_codes "
+        . "WHERE user_id = :uid AND used_at IS NULL "
+        . "AND (lookup_key = :lk OR lookup_key IS NULL)"
     );
-    $stmt->execute([':uid' => $userId]);
+    $stmt->execute([':uid' => $userId, ':lk' => $lk]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // CR #1307 #3 / closes #1300: after an app_secret rotation every existing
+    // lookup_key becomes a stale HMAC (wrong key material) — those rows have
+    // lookup_key IS NOT NULL and lookup_key != :lk, so the narrowed SELECT
+    // above misses them entirely. If we get zero candidates we fall back to a
+    // full unused-rows scan for this user, restoring the pre-#946 O(N)
+    // worst-case behaviour only on the post-rotation tail. Steady-state (no
+    // rotation) is unaffected: the narrowed path returns ≤1 row and we never
+    // reach this branch. #1300 tracks a follow-up improvement (batch re-key on
+    // rotation) but this fallback closes the hard failure case immediately.
+    if ($rows === []) {
+        $fallback = $db->prepare(
+            "SELECT id, code_hash FROM totp_backup_codes "
+            . "WHERE user_id = :uid AND used_at IS NULL"
+        );
+        $fallback->execute([':uid' => $userId]);
+        $rows = $fallback->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     $nowExpr = ipam_dialect()->now();
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    foreach ($rows as $row) {
         if (password_verify($code, (string)$row['code_hash'])) {
             $consume = $db->prepare(
                 "UPDATE totp_backup_codes SET used_at = {$nowExpr} WHERE id = :id AND used_at IS NULL"

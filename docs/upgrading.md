@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.35.0](#v3350) — refactor wave 4 (lib polish + admin refactor), TOTP backup-code O(1) lookup, `@`-suppression CI linter, `init.php` decomposition, scan consolidation (no breaking changes)
   - [v3.33.0](#v3330) — refactor wave 2 (`api.php` / `import_csv` / `migrations`), ADR-003 `global $config` sweep complete; API list-response flat shape soft-deprecated (no breaking changes)
   - [v3.32.0](#v3320) — code-quality, hardening, and dependency-maintenance release; PHPMailer 7.x, server-side site-hierarchy enforcement (no breaking changes)
   - [v3.31.0](#v3310) — encrypt-at-rest for settings secrets (`IPAMSEC1` envelopes), webhook-secret consolidation, `lib.php` refactor wave 1 finish (no breaking changes)
@@ -119,6 +120,16 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.35.0
+
+- **One schema migration: `3.35.0-totp-backup-lookup-key`.** Adds `totp_backup_codes.lookup_key VARCHAR(16) NULL` + composite index `idx_totp_backup_lookup (user_id, lookup_key)`. Idempotent; no manual action required. Existing rows keep `lookup_key = NULL`; the verifier falls back to a slow scan for them (one release).
+- **New `composer lint:at` CI gate.** Refuses un-justified `@`-suppressions in PHP. Operators forking the codebase: add inline comments or replace with explicit handling.
+- **New `lib/bootstrap_*.php` modules.** `init.php` is now a thin top-level chain; module boot order is preserved.
+- **`lib/scan.php` consolidation.** `scan_run.php` and `cron.php` now delegate scan execution to a shared module; audit-log shape unchanged.
+- **Browser tag/contact attach/detach now audit-logged.** Operators who attached tags via the UI previously left no audit trail; that gap is closed. Audit-log volume on browser POSTs increases moderately.
+- **No breaking changes.** No new config keys. No deprecated APIs removed.
+- **Known limitation: `app_secret` rotation invalidates `totp_backup_codes.lookup_key`.** After rotating `app_secret`, run `UPDATE totp_backup_codes SET lookup_key = NULL` so the verifier falls back to slow-scan until users regenerate codes. Tracked as #1300.
 
 ### v3.33.0
 

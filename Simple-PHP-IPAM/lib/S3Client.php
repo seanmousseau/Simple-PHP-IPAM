@@ -242,6 +242,7 @@ class S3Client implements BackupClientInterface
                 return false;
             }
             if ($result === 'complete' || $result === 'restart_full') {
+                // atomic rename: sidecar holds the only good copy; failure is fatal to preserve it
                 if (!@rename($sidecarPath, $destPath)) {
                     // The download itself succeeded — the sidecar holds the
                     // only good copy of the body. Preserve it for the next
@@ -401,8 +402,11 @@ class S3Client implements BackupClientInterface
                 // #1096 round 2 finding 2026-05-06.)
                 $bodySize = @filesize($sidecarPath);
                 $bodyOnly = is_int($bodySize) ? max(0, $bodySize - $resumeOffset) : 0;
+                // atomic rename to .swap preserves the only copy of body bytes for rollback
                 if ($bodyOnly > 0 && @rename($sidecarPath, $sidecarPath . '.swap')) {
+                    // soft-open: failure handled immediately below with rollback to .swap
                     $src = @fopen($sidecarPath . '.swap', 'rb');
+                    // soft-open: failure handled immediately below with rollback to .swap
                     $dst = @fopen($sidecarPath, 'wb');
                     if ($src !== false && $dst !== false) {
                         // fseek returns 0 on success, -1 on failure.
@@ -423,6 +427,7 @@ class S3Client implements BackupClientInterface
                         // truncated/empty; restore from .swap so the next
                         // call can retry.
                         @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                        // best-effort rollback: restore .swap as canonical sidecar so the next call can retry
                         @rename($sidecarPath . '.swap', $sidecarPath);
                         throw new RuntimeException('S3Client::download: Range-ignored rewrite failed (short copy)');
                     }
@@ -436,6 +441,7 @@ class S3Client implements BackupClientInterface
                         fclose($dst);
                     }
                     @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                    // best-effort rollback: restore .swap as canonical sidecar so the next call can retry
                     @rename($sidecarPath . '.swap', $sidecarPath);
                     throw new RuntimeException('S3Client::download: Range-ignored rewrite failed (handles)');
                 }

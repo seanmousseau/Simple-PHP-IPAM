@@ -543,13 +543,15 @@ END;
 
 -- v3.6.0 #418: TOTP backup codes (one-time recovery codes, bcrypt-hashed)
 CREATE TABLE IF NOT EXISTS totp_backup_codes (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  code_hash TEXT NOT NULL,
-  used_at   TEXT                                          -- NULL = unused
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash  TEXT NOT NULL,
+  used_at    TEXT,                                         -- NULL = unused
+  lookup_key VARCHAR(16) NULL                             -- v3.35.0 #946: HMAC-SHA256 discriminator (non-secret)
 );
 
 CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id);
+CREATE INDEX IF NOT EXISTS idx_totp_backup_lookup ON totp_backup_codes (user_id, lookup_key);
 
 -- v3.6.0 #419: Sliding-window rate-limit buckets
 CREATE TABLE IF NOT EXISTS rate_limit_buckets (

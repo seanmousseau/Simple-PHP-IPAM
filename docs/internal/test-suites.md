@@ -31,9 +31,13 @@ These have no dev-server dependency. Must be green before deploying.
 php -l Simple-PHP-IPAM/<changed-file>.php   # one per changed file
 vendor/bin/phpstan analyse --memory-limit=1G   # default 128M crashes parallel workers
 vendor/bin/phpcs
-vendor/bin/phpunit
+vendor/bin/phpunit --testsuite Unit         # ~2 s, fast iteration — pure PHP, no DB
+vendor/bin/phpunit --testsuite Integration  # ~30 s, DB-touching and file-I/O tests
+vendor/bin/phpunit                          # both suites (Unit runs first)
 semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
 ```
+
+The PHPUnit suite is split into **Unit** (`tests/unit/`) and **Integration** (`tests/integration/`, `tests/Migration/`, `tests/Helpers/`). Run Unit during active development for a ~2 s feedback loop; run Integration (or the full `vendor/bin/phpunit`) before committing. See `testing-guide.md` → "Unit vs Integration" for the classification rule and where to place new tests.
 
 ### PHPUnit against MySQL / Postgres containers
 
@@ -319,25 +323,62 @@ Pick a fresh `NN` outside that set (`10.92`, `10.94`, `10.95`, …) for any new 
 
 The `deleteSubnet()` fixture in `testing/playwright/fixtures/ipam.ts` is now a bounded loop (defence-in-depth against orphan rows when `UNIQUE(cidr, vrf_id)` doesn't dedupe NULL `vrf_id` per SQL standard), but the loop is not a substitute for unique-CIDR-per-spec — the loop only handles the same spec's own orphans, not cross-spec races.
 
-### Dashboard is excluded from visual-regression — manual smoke check during release gate
+### Dashboard visual-regression — mutation-isolated dedicated project (#775, v3.35.0)
 
-`tests/visual-regression.spec.ts` no longer captures `dashboard.php`. Every widget on the dashboard reflects live DB state — security-warning banner (config / app_secret / HTTPS state), Top IPv4 Subnets by Usage (live address counts), Addresses by Site (per-site totals), Expiring Addresses (lease-date sensitive), Recent Activity (audit_log timestamps + ordering). Under the parallel Playwright harness, dozens of workers mutate the shared SQLite DB concurrently with the dashboard capture, so every widget renders differently between baseline-snapshot and re-run. Masking individual widgets via Playwright `mask` failed (variable widget heights leak diff pixels into the surrounding layout); DOM-removal via `page.evaluate` only solved one of five volatile sources. Restoring dashboard VR coverage requires a mutation-isolated capture path (separate worker pool with its own DB, or a serial pre-mutation capture step) — tracked as a v3.20.0 follow-up.
+`dashboard.php` is back in `tests/visual-regression.spec.ts` as of v3.35.0, captured by a set of dedicated Playwright projects (`vr-dashboard-1440`, `vr-dashboard-1024`, `vr-dashboard-768`, `vr-dashboard-375`) that run serially against a freshly-seeded DB.
 
-**Manual smoke check during every release gate.** Because the dashboard is a high-traffic page that can break in obvious ways (broken widget, broken theme, layout collapse on small viewports), the AI agent driving the release gate MUST manually verify it. Procedure:
+**Why a dedicated project is required.** Every dashboard widget reflects live DB state — security-warning banner (config / app_secret / HTTPS state), Top IPv4 Subnets by Usage (live address counts), Addresses by Site (per-site totals), Expiring Addresses (lease-date sensitive), Recent Activity (audit_log timestamps + ordering). Under the shared DB the main E2E suite mutates these values, making VR non-deterministic. The v3.19.0 attempt to mask or DOM-remove individual widgets failed because widget heights vary, leaking diff pixels into the surrounding layout.
+
+**How the isolation works.**
+
+1. `vr-dashboard-setup` is declared as a Playwright project dependency of all four `vr-dashboard-*` capture projects. Playwright fires all declared dependencies before running any dependent project.
+2. The setup step (`tests/vr-dashboard.setup.ts`) calls `bootstrap-app.sh <driver>` to reseed the DB to its canonical demo state, then logs in as admin and writes `tests/vr-dashboard.storage.json` (session cookies).
+3. Each `vr-dashboard-*` capture project injects the stored session via `storageState` in its `use{}` block, navigates to `dashboard.php` in a known-quiet DB, and captures the screenshot.
+4. Standard `vr-*` projects carry `grepInvert: /@vr-dashboard/` so they never run the dashboard test; `vr-dashboard-*` projects carry `grep: /@vr-dashboard/` so they run only the dashboard test. The tag appears in the test title (`dashboard — light @vr-dashboard`).
+
+**Running the dashboard VR projects manually:**
+
+```bash
+bash testing/playwright/bootstrap-app.sh sqlite   # or mysql / pgsql
+cd testing/playwright
+IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+  npx playwright test visual-regression --project=vr-dashboard-setup \
+                                        --project=vr-dashboard-1440 \
+                                        --project=vr-dashboard-1024 \
+                                        --project=vr-dashboard-768  \
+                                        --project=vr-dashboard-375
+```
+
+To capture new baselines after an intentional UI change:
+
+```bash
+# Same command with --update-snapshots
+IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+  npx playwright test visual-regression --project=vr-dashboard-setup \
+                                        --project=vr-dashboard-1440 \
+                                        --project=vr-dashboard-1024 \
+                                        --project=vr-dashboard-768  \
+                                        --project=vr-dashboard-375  \
+                                        --update-snapshots
+git add testing/playwright/tests/visual-regression.spec.ts-snapshots/dashboard*.png
+git commit -m "test(vr): refresh dashboard baselines"
+```
+
+**Manual smoke check — backup procedure (keep until two stable release cycles).**
+
+The automated coverage above is new as of v3.35.0. Until two release cycles confirm it is reliable, the manual check documented in v3.19.0 remains as a backup and is NOT a gate violation to skip once the automated run is green. If the automated `vr-dashboard-*` projects fail for a non-obvious reason during a release gate, fall back to the manual procedure:
 
 1. After `bootstrap-app.sh sqlite` is up, use the Playwright MCP to navigate to `https://127.0.0.1:8443/dashboard.php` (after logging in as `demo`/`demo`) at viewport widths 1440, 1024, 768, and 375.
 2. At each viewport, take a screenshot via `browser_take_screenshot` and **read it** (multimodal — the agent has visual access to PNGs).
 3. Check for: missing widgets (top-subnets, by-site, expiring-addresses, recent-activity, metrics row), broken layout (overflow, collapsed columns, off-canvas elements), broken theme switch (light vs dark — toggle via the data-theme attribute), zero-data states (empty tables should show a graceful empty state, not a broken table head).
 4. If anything looks wrong, treat it as a release-blocking failure and surface to the user before pushing.
-5. Repeat the same pass for the **mysql** and **pgsql** drivers — dashboard rendering differences across engines are the most common visible regressions.
-
-Skipping this manual check during a release run is a gate violation. The check is fast (~30 seconds per driver) and catches the failure mode that automated VR was supposed to but cannot reliably cover under parallelism.
+5. Repeat the same pass for the **mysql** and **pgsql** drivers.
 
 ### Visual-regression baselines are platform-suffixed and need refreshing on intentional UI/seed changes
 
 `testing/playwright/tests/visual-regression.spec.ts-snapshots/` holds per-platform PNG baselines (`*-darwin.png`, `*-linux.png`). Filenames include the host OS because Chromium's text shaping and AA differ between CoreText (macOS) and HarfBuzz+FreeType (Linux Docker), producing low-amplitude pixel diffs even when the bundled `@font-face` woff2s render identically.
 
-CI's `playwright.yml` job runs in Linux Docker, so it only validates and refreshes `*-linux.png` baselines. **Darwin baselines drift over time** — every release that grows `demo_seed.php` (more rows on the captured pages) or restructures a captured page will eventually push the rendered page taller than the committed darwin baseline, and a local-mac VR run shows a cluster of visual-regression failures with the signature: `Expected an image WIDTHpx by Hpx, received WIDTHpx by H'px` where `H' < H`, on `subnets-*` / `addresses-*` / `search-*` across the 4 viewports. (Dashboard is excluded from automated VR — see the section above.)
+CI's `playwright.yml` job runs in Linux Docker, so it only validates and refreshes `*-linux.png` baselines. **Darwin baselines drift over time** — every release that grows `demo_seed.php` (more rows on the captured pages) or restructures a captured page will eventually push the rendered page taller than the committed darwin baseline, and a local-mac VR run shows a cluster of visual-regression failures with the signature: `Expected an image WIDTHpx by Hpx, received WIDTHpx by H'px` where `H' < H`, on `subnets-*` / `addresses-*` / `search-*` / `dashboard-*` across the 4 viewports.
 
 **This is not a regression.** It is platform-suffixed baseline maintenance debt.
 

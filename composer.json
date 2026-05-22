@@ -1,6 +1,6 @@
 {
     "name": "seanmousseau/simple-php-ipam",
-    "description": "Simple PHP IPAM — lightweight IPv4/IPv6 address management",
+    "description": "Simple PHP IPAM \u2014 lightweight IPv4/IPv6 address management",
     "type": "project",
     "license": "MIT",
     "prefer-stable": true,
@@ -31,20 +31,27 @@
         "post-update-cmd": [
             "bash testing/scripts/check-composer-lock-drift.sh"
         ],
-        "test": "phpunit",
+        "test": [
+            "@test:unit",
+            "@test:integration"
+        ],
         "phpstan": "phpstan analyse --memory-limit=1G",
         "phpcs": "phpcs",
         "phpcbf": "phpcbf",
         "audit-icons": "php tools/audit-icons-svg.php",
+        "lint:at": "php testing/scripts/lint-at-suppressions.php",
         "lint": [
             "@phpstan",
             "@phpcs",
-            "@audit-icons"
+            "@audit-icons",
+            "@lint:at"
         ],
         "ci-gate": [
             "@test",
             "@lint"
-        ]
+        ],
+        "test:unit": "phpunit --testsuite Unit",
+        "test:integration": "phpunit --testsuite Integration"
     },
     "scripts-descriptions": {
         "test": "Run the PHPUnit test suite.",
@@ -52,7 +59,8 @@
         "phpcs": "PSR-12 style check with project exclusions (see phpcs.xml.dist).",
         "phpcbf": "Auto-fix PSR-12 style violations where safe.",
         "audit-icons": "Verify icons.svg sprite has no dead symbols or missing references (#942).",
-        "lint": "Run all static-quality gates: phpstan + phpcs + audit-icons.",
+        "lint:at": "Check that every @-suppressed I/O call has an adjacent justifying comment.",
+        "lint": "Run all static-quality gates: phpstan + phpcs + audit-icons + lint:at.",
         "ci-gate": "Full local CI gate: PHPUnit + lint. Run before pushing. Does not include the dockerized 3-driver bootstrap (see testing/bootstrap-app.sh)."
     },
     "config": {

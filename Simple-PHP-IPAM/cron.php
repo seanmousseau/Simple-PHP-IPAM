@@ -76,7 +76,9 @@ if (!flock($cronLockHandle, LOCK_EX | LOCK_NB)) {
 // Release on shutdown — covers normal exit, fatal errors, and uncaught throws.
 register_shutdown_function(static function () use ($cronLockHandle): void {
     if (is_resource($cronLockHandle)) {
+        // best-effort: release lock and close handle on every exit path including fatal errors
         @flock($cronLockHandle, LOCK_UN);
+        // best-effort: close the lock file handle on every exit path including fatal errors
         @fclose($cronLockHandle);
     }
 });
@@ -86,6 +88,7 @@ $db       = ipam_db($config);
 // Apply admin-configured timezone from DB settings now that $db is open. All
 // downstream date() calls in this cron run pick up the new zone.
 $tz = to_str(ipam_setting('branding.timezone'));
+// best-effort: invalid or empty timezone string falls back to UTC
 if ($tz === '' || !@date_default_timezone_set($tz)) {
     date_default_timezone_set('UTC');
 }
@@ -527,81 +530,31 @@ try {
             'ts'           => $now,
         ]);
     } else {
-    // Fetch every active schedule and filter "is due" in PHP so the query
-    // stays engine-agnostic — SQLite's `datetime(col, '+N minutes')` and
-    // `||` string concatenation are not portable to MySQL / Postgres. The
-    // filter is cheap: scan_schedules is bounded by subnet count and each
-    // row is a simple strtotime + integer comparison.
-    $dueStmt = $db->query("
-        SELECT s.id, s.cidr, ss.method, ss.tcp_port, ss.interval_minutes, ss.last_run_at
-        FROM subnets s
-        JOIN scan_schedules ss ON ss.subnet_id = s.id
-        WHERE ss.is_active = 1
-        ORDER BY ss.last_run_at ASC
-    ");
-    if ($dueStmt === false) throw new \RuntimeException('Scan schedule query failed');
-
-    /** @var list<array<string, mixed>> $candidates */
-    $candidates = $dueStmt->fetchAll();
-    $nowTs = time();
-    $dueSubnets = [];
-    foreach ($candidates as $row) {
-        $lastRun = $row['last_run_at'] ?? null;
-        if ($lastRun === null || $lastRun === '') {
-            $dueSubnets[] = $row;
-            continue;
-        }
-        $lastTs = strtotime(to_str($lastRun) . ' UTC');
-        if ($lastTs === false) continue;
-        $intervalMinutes = to_int($row["interval_minutes"] ?? 0);
-        if (($nowTs - $lastTs) >= ($intervalMinutes * 60)) {
-            $dueSubnets[] = $row;
-        }
-    }
+    // Delegate due-subnet selection and per-subnet bookkeeping to the shared
+    // helpers in lib/scan.php (#1291). The engine-agnostic interval check
+    // and the last_run_at update + (cron) audit row are all handled there.
+    $dueSubnets = ipam_scan_select_due_subnets($db);
 
     if (count($dueSubnets) === 0) {
         $emit(['task' => 'scan', 'skipped' => true, 'reason' => 'no schedules due', 'ts' => $now]);
     } else {
-        $updateLastRun = $db->prepare(
-            "UPDATE scan_schedules SET last_run_at = " . ipam_dialect()->now() . ", updated_at = " . ipam_dialect()->now() . " WHERE subnet_id = :sid"
-        );
         $scanSummary = [
-            'scanned_subnets' => 0,
-            'total_hosts'     => 0,
-            'total_up'        => 0,
-            'total_down'      => 0,
+            'scanned_subnets'    => 0,
+            'total_hosts'        => 0,
+            'total_up'           => 0,
+            'total_down'         => 0,
             'total_stale_marked' => 0,
         ];
 
         foreach ($dueSubnets as $sub) {
-            $subnetId = to_int($sub['id']);
+            $subnetId = to_int($sub['id'] ?? 0);
             $cidr     = to_str($sub['cidr'] ?? '');
             $method   = to_str($sub['method'] ?? 'icmp');
             $tcpPort  = isset($sub['tcp_port']) ? to_int($sub['tcp_port']) : null;
-            if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
 
-            $start   = microtime(true);
-            $stats   = ipam_scan_subnet($db, $subnetId, $method, $tcpPort);
-            $elapsed = round(microtime(true) - $start, 2);
-
-            $updateLastRun->execute([':sid' => $subnetId]);
-
-            // #1161 (PASS-C F-S2-04): scheduled scans were previously invisible
-            // in the audit log. Mirror api_scan_run's format with a (cron) tag.
-            audit(
-                $db,
-                'scan.run',
-                'subnet',
-                $subnetId,
-                sprintf(
-                    'method=%s scanned=%d up=%d down=%d stale_marked=%d (cron)',
-                    $method,
-                    $stats['scanned'],
-                    $stats['up'],
-                    $stats['down'],
-                    $stats['stale_marked']
-                )
-            );
+            // ipam_scan_run_for_subnet() runs the scan, updates last_run_at,
+            // and writes the scan.run audit row with the (cron) tag (#1161).
+            $stats = ipam_scan_run_for_subnet($db, $sub, 'cron');
 
             $emit([
                 'task'         => 'scan',
@@ -613,7 +566,7 @@ try {
                 'up'           => $stats['up'],
                 'down'         => $stats['down'],
                 'stale_marked' => $stats['stale_marked'],
-                'elapsed_sec'  => $elapsed,
+                'elapsed_sec'  => $stats['elapsed_sec'],
                 'ts'           => $now,
             ]);
 

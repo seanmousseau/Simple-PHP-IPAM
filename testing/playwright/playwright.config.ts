@@ -54,12 +54,20 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /visual-regression/,
+      testIgnore: /visual-regression|vr-dashboard/,
       use: { ...devices['Desktop Chrome'] },
     },
+
+    // ── Standard VR projects (non-dashboard pages) ───────────────────────────
+    // These run against whatever DB state the main suite left behind.
+    // Dashboard tests carry the @vr-dashboard tag and are excluded via
+    // grepInvert so they are only captured by the mutation-isolated
+    // vr-dashboard-* projects below.
     {
       name: 'vr-1440',
       testMatch: /visual-regression/,
+      testIgnore: /vr-dashboard/,
+      grepInvert: /@vr-dashboard/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
@@ -69,6 +77,8 @@ export default defineConfig({
     {
       name: 'vr-1024',
       testMatch: /visual-regression/,
+      testIgnore: /vr-dashboard/,
+      grepInvert: /@vr-dashboard/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1024, height: 768 },
@@ -78,6 +88,8 @@ export default defineConfig({
     {
       name: 'vr-768',
       testMatch: /visual-regression/,
+      testIgnore: /vr-dashboard/,
+      grepInvert: /@vr-dashboard/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 768, height: 1024 },
@@ -87,10 +99,84 @@ export default defineConfig({
     {
       name: 'vr-375',
       testMatch: /visual-regression/,
+      testIgnore: /vr-dashboard/,
+      grepInvert: /@vr-dashboard/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 375, height: 812 },
         deviceScaleFactor: 1,
+      },
+    },
+
+    // ── Dashboard VR projects (mutation-isolated, #775) ──────────────────────
+    // These run serially against a freshly-seeded DB so dashboard widgets
+    // (top-subnets, by-site, expiring-addresses, recent-activity) capture
+    // deterministic, known-quiet state. The setup project re-bootstraps the
+    // app container before any screenshot is taken.
+    //
+    // Playwright fires project dependencies in declaration order. Declare the
+    // setup project first so its DB reseed completes before any vr-dashboard-*
+    // capture begins.
+    {
+      name: 'vr-dashboard-setup',
+      testMatch: /vr-dashboard\.setup/,
+      fullyParallel: false,
+      workers: 1,
+    },
+    {
+      name: 'vr-dashboard-1440',
+      testMatch: /visual-regression/,
+      fullyParallel: false,
+      workers: 1,
+      dependencies: ['vr-dashboard-setup'],
+      grep: /@vr-dashboard/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 900 },
+        deviceScaleFactor: 1,
+        storageState: 'tests/vr-dashboard.storage.json',
+      },
+    },
+    {
+      name: 'vr-dashboard-1024',
+      testMatch: /visual-regression/,
+      fullyParallel: false,
+      workers: 1,
+      dependencies: ['vr-dashboard-setup'],
+      grep: /@vr-dashboard/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1024, height: 768 },
+        deviceScaleFactor: 1,
+        storageState: 'tests/vr-dashboard.storage.json',
+      },
+    },
+    {
+      name: 'vr-dashboard-768',
+      testMatch: /visual-regression/,
+      fullyParallel: false,
+      workers: 1,
+      dependencies: ['vr-dashboard-setup'],
+      grep: /@vr-dashboard/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 768, height: 1024 },
+        deviceScaleFactor: 1,
+        storageState: 'tests/vr-dashboard.storage.json',
+      },
+    },
+    {
+      name: 'vr-dashboard-375',
+      testMatch: /visual-regression/,
+      fullyParallel: false,
+      workers: 1,
+      dependencies: ['vr-dashboard-setup'],
+      grep: /@vr-dashboard/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 375, height: 812 },
+        deviceScaleFactor: 1,
+        storageState: 'tests/vr-dashboard.storage.json',
       },
     },
   ],

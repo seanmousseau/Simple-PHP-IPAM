@@ -608,8 +608,10 @@ CREATE TABLE IF NOT EXISTS totp_backup_codes (
   user_id     BIGINT UNSIGNED NOT NULL,
   code_hash   TEXT NOT NULL,
   used_at     DATETIME,
+  lookup_key  VARCHAR(16) NULL COMMENT 'v3.35.0 #946: HMAC-SHA256 discriminator (non-secret)',
   PRIMARY KEY (id),
   KEY idx_totp_backup_codes_user (user_id),
+  KEY idx_totp_backup_lookup (user_id, lookup_key),
   CONSTRAINT fk_totp_backup_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

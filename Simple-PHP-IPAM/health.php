@@ -16,6 +16,7 @@ $cachedAt   = null;
 $data       = null;
 
 if (!$noCache && is_file($cacheFile)) {
+    // best-effort: cache read failure just falls through to a fresh collection pass
     $raw = @file_get_contents($cacheFile);
     if ($raw !== false) {
         $decoded = @json_decode($raw, true);
@@ -259,8 +260,9 @@ if ($data === null) {
         'tmp_size'     => $tmpSize,
     ];
 
-    // Cache to disk
+    // Cache to disk — both writes are best-effort; a full disk silently serves uncached data
     @file_put_contents($cacheFile, json_encode($data));
+    // best-effort: tighten perms on the health cache file
     @chmod($cacheFile, 0600);
 }
 
