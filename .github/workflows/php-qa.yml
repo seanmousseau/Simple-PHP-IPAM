@@ -260,6 +260,15 @@ jobs:
       - name: Start php -S (mariadb)
         if: matrix.engine == 'mariadb'
         run: |
+          # #944: explicitly migrate the live engine DB BEFORE starting php -S.
+          # See mysql slot above for the full rationale.
+          php -r '
+            $config = require "Simple-PHP-IPAM/config.php";
+            require "Simple-PHP-IPAM/lib.php";
+            $db = ipam_db($config);
+            ipam_db_init($db);
+            echo "live DB migrated\n";
+          '
           php -S 127.0.0.1:8080 -t Simple-PHP-IPAM > /tmp/php-s.log 2>&1 &
           echo $! > /tmp/php-s.pid
           for i in $(seq 1 30); do
