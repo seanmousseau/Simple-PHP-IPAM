@@ -25,6 +25,7 @@ require_once __DIR__ . '/lib/secret.php'; // settings-secret encrypt-at-rest cry
 require_once __DIR__ . '/lib/backup.php';
 require_once __DIR__ . '/lib/auth_step_up.php';
 require_once __DIR__ . '/lib/csv_import.php'; // CSV-import wizard logic (ADR-004, B13, #925)
+require_once __DIR__ . '/lib/scan.php';       // shared scan-loop helpers (ADR-004, #1291)
 
 /* ---------------- View helpers (v3.8.0, #522) ---------------- */
 

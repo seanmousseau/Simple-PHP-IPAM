@@ -100,38 +100,16 @@ if ($specificId > 0) {
     ");
     $st->execute([':id' => $specificId]);
     $row = $st->fetch();
-    if (!$row) {
+    if (!is_array($row)) {
         fwrite(STDERR, "Error: subnet ID $specificId not found.\n");
         exit(1);
     }
     $toScan[] = $row;
 } else {
     // All subnets with an active schedule that is due. Interval check is
-    // done in PHP so the query stays engine-agnostic (SQLite's
-    // `datetime(col, '+N minutes')` + `||` concatenation is not portable).
-    $st = $db->prepare("
-        SELECT s.id, s.cidr, s.description, s.ip_version,
-               ss.method, ss.tcp_port, ss.interval_minutes, ss.is_active,
-               ss.last_run_at
-        FROM subnets s
-        JOIN scan_schedules ss ON ss.subnet_id = s.id
-        WHERE ss.is_active = 1
-        ORDER BY ss.last_run_at ASC
-    ");
-    $st->execute();
-    $nowTs = time();
-    $toScan = array_values(array_filter(
-        $st->fetchAll(),
-        static function ($row) use ($nowTs): bool {
-            if (!is_array($row)) return false;
-            $lastRun = $row['last_run_at'] ?? null;
-            if ($lastRun === null || $lastRun === '') return true;
-            $lastTs = strtotime(to_str($lastRun) . ' UTC');
-            if ($lastTs === false) return false;
-            $intervalMinutes = to_int($row['interval_minutes'] ?? 0);
-            return ($nowTs - $lastTs) >= ($intervalMinutes * 60);
-        }
-    ));
+    // done in PHP by ipam_scan_select_due_subnets() so the query stays
+    // engine-agnostic — see lib/scan.php (#1291).
+    $toScan = ipam_scan_select_due_subnets($db);
 }
 
 if (count($toScan) === 0) {
@@ -143,14 +121,15 @@ if (count($toScan) === 0) {
 // Run scans
 // ---------------------------------------------------------------------------
 $summary = ['scanned_subnets' => 0, 'total_hosts' => 0, 'total_up' => 0, 'total_down' => 0, 'total_stale_marked' => 0];
-$updateLastRun = $db->prepare("UPDATE scan_schedules SET last_run_at = " . ipam_dialect()->now() . ", updated_at = " . ipam_dialect()->now() . " WHERE subnet_id = :sid");
 
 foreach ($toScan as $subnet) {
-    $subnetId   = (int) $subnet['id'];
-    $cidr       = is_string($subnet['cidr']) ? $subnet['cidr'] : '';
-    $method     = $methodOverride ?? (is_string($subnet['method']) ? $subnet['method'] : 'icmp');
-    $tcpPort    = $portOverride   ?? (isset($subnet['tcp_port']) ? (int) $subnet['tcp_port'] : null);
-    if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
+    $subnetId = to_int($subnet['id'] ?? 0);
+    $cidr     = to_str($subnet['cidr'] ?? '');
+    $method   = $methodOverride ?? to_str($subnet['method'] ?? 'icmp');
+    $tcpPort  = $portOverride   ?? (isset($subnet['tcp_port']) ? to_int($subnet['tcp_port']) : null);
+    if (!in_array($method, ['icmp', 'tcp', 'both'], true)) {
+        $method = 'icmp';
+    }
 
     if ($dryRun) {
         echo json_encode([
@@ -163,14 +142,15 @@ foreach ($toScan as $subnet) {
         continue;
     }
 
-    $start  = microtime(true);
-    $stats  = ipam_scan_subnet($db, $subnetId, $method, $tcpPort, $staleThresh);
-    $elapsed = round(microtime(true) - $start, 2);
+    // Apply CLI overrides into the subnet row before delegating, so
+    // ipam_scan_run_for_subnet() sees the effective method and port.
+    $effectiveSubnet = $subnet;
+    $effectiveSubnet['method']   = $method;
+    $effectiveSubnet['tcp_port'] = $tcpPort;
 
-    // Update last_run_at if there's a schedule row
-    $updateLastRun->execute([':sid' => $subnetId]);
+    $stats = ipam_scan_run_for_subnet($db, $effectiveSubnet, 'cli', $staleThresh);
 
-    $result = [
+    echo json_encode([
         'subnet_id'    => $subnetId,
         'cidr'         => $cidr,
         'method'       => $method,
@@ -179,15 +159,14 @@ foreach ($toScan as $subnet) {
         'up'           => $stats['up'],
         'down'         => $stats['down'],
         'stale_marked' => $stats['stale_marked'],
-        'elapsed_sec'  => $elapsed,
+        'elapsed_sec'  => $stats['elapsed_sec'],
         'ts'           => date('c'),
-    ];
-    echo json_encode($result) . "\n";
+    ]) . "\n";
 
     $summary['scanned_subnets']++;
-    $summary['total_hosts']       += $stats['scanned'];
-    $summary['total_up']          += $stats['up'];
-    $summary['total_down']        += $stats['down'];
+    $summary['total_hosts']        += $stats['scanned'];
+    $summary['total_up']           += $stats['up'];
+    $summary['total_down']         += $stats['down'];
     $summary['total_stale_marked'] += $stats['stale_marked'];
 }
 
