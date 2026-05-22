@@ -23,15 +23,12 @@ interface VRPage {
   name: string;
   path: string;
   skipAuth?: boolean;
+  /** Optional Playwright grep tag (e.g. '@vr-dashboard'). When set the test
+   *  title includes this tag so a project's `grep` option can select or
+   *  de-select it without touching any other project's test list. */
+  tag?: string;
 }
 
-// Dashboard intentionally excluded — every widget on it (security-warning
-// banner, top-subnets, by-site, expiring-addresses, recent-activity) reflects
-// live DB state that mutates under parallel test workers, making VR coverage
-// fundamentally unstable in this harness. Tracked as a v3.20.0 follow-up to
-// restore coverage with a mutation-isolated capture path. Until then,
-// dashboard rendering changes are a manual smoke-test item during release prep.
-//
 // `subnets` was VR-covered v3.26.0–v3.31.0 but is excluded again as of
 // v3.32.0 (#1251). When #1206 re-enabled the vr-* projects in CI it surfaced
 // that the CI job runs the vr-* step AFTER the main E2E suite, in the same
@@ -39,7 +36,7 @@ interface VRPage {
 // so the suite-created rows make the page ~600 px taller than a clean-seed
 // baseline (`Expected 1440x3024, received 1440x3626`) — a structural height
 // mismatch, not a rendering drift. Restoring coverage needs the same
-// mutation-isolated capture path tracked for the dashboard (#1251).
+// mutation-isolated capture path tracked for the dashboard.
 // `search` stays covered — its default view does not grow with suite rows.
 //
 // Backup & Restore tabs (#1040, v3.21.0):
@@ -49,12 +46,22 @@ interface VRPage {
 //     the dashboard: they render destination/schedule/history rows that
 //     other tests create and tear down. Re-evaluate once the dashboard
 //     mutation-isolation work lands.
+//
+// Dashboard (#775, v3.35.0):
+//   Restored with a mutation-isolated capture path. The `@vr-dashboard` tag
+//   routes this page to the `vr-dashboard-*` projects in playwright.config.ts,
+//   which declare a `vr-dashboard-setup` dependency that re-bootstraps the app
+//   against a freshly-seeded DB before any screenshot is taken. The standard
+//   `vr-*` projects exclude tagged tests (grep inverse), so the dashboard is
+//   never captured against a mutated DB.
 const PAGES: VRPage[] = [
   { name: 'addresses', path: 'addresses.php' },
   { name: 'search',    path: 'search.php' },
   { name: 'login', path: 'login.php', skipAuth: true },
   { name: 'backup-admin-notifications', path: 'backup_admin.php?tab=notifications' },
   { name: 'backup-admin-restore', path: 'backup_admin.php?tab=restore' },
+  // Dashboard: mutation-isolated via dedicated vr-dashboard-* projects (#775).
+  { name: 'dashboard', path: 'dashboard.php', tag: '@vr-dashboard' },
 ];
 
 const THEMES = ['light', 'dark'] as const;
@@ -79,7 +86,16 @@ test.describe('visual regression baseline', () => {
 
   for (const theme of THEMES) {
     for (const pg of PAGES) {
-      test(`${pg.name} — ${theme}`, async ({ page }) => {
+      // Include the page's grep tag (if any) in the test title so Playwright
+      // project-level `grep` options can select or exclude it. For example,
+      // vr-dashboard-* projects pass `grep: /@vr-dashboard/` to capture only
+      // the dashboard, while standard vr-* projects pass
+      // `grepInvert: /@vr-dashboard/` to skip it — all without modifying PAGES.
+      const title = pg.tag
+        ? `${pg.name} — ${theme} ${pg.tag}`
+        : `${pg.name} — ${theme}`;
+
+      test(title, async ({ page }) => {
         test.setTimeout(30_000);
 
         // Suppress animations for deterministic screenshots
@@ -88,7 +104,13 @@ test.describe('visual regression baseline', () => {
         if (pg.skipAuth) {
           await page.goto(pg.path);
         } else {
-          await login(page, ADMIN_USER, ADMIN_PASS);
+          // vr-dashboard-* projects inject storageState at the project level
+          // (playwright.config.ts), so the browser context is already
+          // authenticated. For non-dashboard pages the context is fresh and
+          // we log in here as before.
+          if (!pg.tag) {
+            await login(page, ADMIN_USER, ADMIN_PASS);
+          }
           await page.goto(pg.path);
         }
 
