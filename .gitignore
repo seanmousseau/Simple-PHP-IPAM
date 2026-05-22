@@ -28,6 +28,8 @@ Thumbs.db
 # Playwright test artifacts
 test-results/
 .playwright-mcp/
+# vr-dashboard setup writes session cookies here — never commit
+testing/playwright/tests/vr-dashboard.storage.json
 
 # Session/scratch files
 .remember/
