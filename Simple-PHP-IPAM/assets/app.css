@@ -20,20 +20,26 @@
   --shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 16px rgba(0,0,0,.04);
   --nav-bg:rgba(255,255,255,.88);
 
+  /* Spacing scale — ADR-007-2 migration to Open Props.
+     Tokens here remain named --space-N for compat with ~300 existing
+     references in app.css; values now alias OP's --size-* where the
+     scales match exactly (rem-based, identical px at the default 16px
+     root font-size). Tokens with no OP equivalent keep their px literal.
+     OP source: assets/vendor/open-props.min.css. */
   --space-0:0;
-  --space-1:2px;
-  --space-2:4px;
-  --space-3:6px;
-  --space-4:8px;
-  --space-5:10px;
-  --space-6:12px;
-  --space-7:14px;
-  --space-8:16px;
-  --space-9:20px;
-  --space-10:24px;
-  --space-11:40px;
-  --space-12:48px;
-  --space-13:60px;
+  --space-1:2px;             /* no OP match — smallest OP size is --size-1 (4px) */
+  --space-2:var(--size-1);   /* OP: 0.25rem = 4px */
+  --space-3:6px;             /* no OP match */
+  --space-4:var(--size-2);   /* OP: 0.5rem = 8px */
+  --space-5:10px;            /* no OP match */
+  --space-6:12px;            /* no OP match */
+  --space-7:14px;            /* no OP match */
+  --space-8:var(--size-3);   /* OP: 1rem = 16px */
+  --space-9:var(--size-4);   /* OP: 1.25rem = 20px */
+  --space-10:var(--size-5);  /* OP: 1.5rem = 24px */
+  --space-11:40px;           /* no OP match */
+  --space-12:var(--size-8);  /* OP: 3rem = 48px */
+  --space-13:60px;           /* no OP match */
 
   --z-base:1;
   --z-sticky:2;
@@ -49,15 +55,19 @@
   --z-toast:9000;
   --z-page-overlay:9999;
 
-  --radius-xs:3px;
-  --radius-sm:4px;
-  --radius-md:6px;
-  --radius-lg:8px;
-  --radius-xl:10px;
-  --radius-2xl:12px;
-  --radius-3xl:14px;
-  --radius-4xl:16px;
-  --radius-pill:999px;
+  /* Radius scale — ADR-007-2 migration to Open Props.
+     IPAM's compact UI uses a denser radius scale than OP. Only
+     --radius-4xl and --radius-pill align with OP values. The rest
+     stay as px literals; closing #1256 does not require value parity. */
+  --radius-xs:3px;                /* no OP match (OP --radius-1 = 2px) */
+  --radius-sm:4px;                /* no OP match */
+  --radius-md:6px;                /* no OP match (OP --radius-2 = 5px, close but not equal) */
+  --radius-lg:8px;                /* no OP match */
+  --radius-xl:10px;               /* no OP match */
+  --radius-2xl:12px;              /* no OP match */
+  --radius-3xl:14px;              /* no OP match */
+  --radius-4xl:var(--radius-3);   /* OP: 1rem = 16px */
+  --radius-pill:var(--radius-round); /* OP: 1e5px — same visual effect (full pill) */
 
   --font-size-2xs:.65rem;
   --font-size-xs:.75rem;
@@ -79,14 +89,18 @@
   --font-sans:'Fira Sans',system-ui,-apple-system,sans-serif;
   --font-mono:'Fira Code',ui-monospace,'SFMono-Regular','Consolas',monospace;
 
-  /* Typographic scale */
-  --text-xs:   0.6875rem;
-  --text-sm:   0.8125rem;
-  --text-base: 0.875rem;
-  --text-md:   1rem;
-  --text-lg:   1.125rem;
-  --text-xl:   1.25rem;
-  --text-2xl:  1.5rem;
+  /* Typographic scale — ADR-007-2 migration to Open Props.
+     The 15-step --font-size-* scale above is intentionally untouched
+     in this PR — #953 will rewrite it as a 6-step scale, so a deep
+     OP alias here would be immediately undone. The --text-* scale
+     below aliases OP where values match. */
+  --text-xs:   0.6875rem;            /* no OP match */
+  --text-sm:   0.8125rem;            /* no OP match */
+  --text-base: 0.875rem;             /* no OP match */
+  --text-md:   var(--font-size-1);   /* OP: 1rem */
+  --text-lg:   1.125rem;             /* no OP match (OP --font-size-2 = 1.1rem, close) */
+  --text-xl:   var(--font-size-3);   /* OP: 1.25rem */
+  --text-2xl:  var(--font-size-4);   /* OP: 1.5rem */
 }
 
 @font-face{font-family:'Fira Sans';src:url('fonts/FiraSans-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
