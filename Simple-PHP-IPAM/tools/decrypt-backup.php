@@ -336,7 +336,9 @@ try {
         if (!$toStdout && !$outPreExisted) {
             $cleanupOnFailure[] = $finalTmp;
         }
+        // soft-open: failure is handled immediately below with cleanup and RuntimeException
         $in  = @fopen($inPath, 'rb');
+        // soft-open: failure is handled immediately below with cleanup and RuntimeException
         $out = @fopen($copyTmp, 'wb');
         if ($in === false || $out === false) {
             if ($in !== false) {
@@ -364,6 +366,7 @@ try {
             fclose($in);
             fclose($out);
         }
+        // atomic rename; failure is fatal for verbatim copy path
         if (!@rename($copyTmp, $finalTmp)) {
             // nosemgrep -- $copyTmp is a tool-generated sibling temp path, no user input
             @unlink($copyTmp);
@@ -397,6 +400,7 @@ try {
 
 // ── Emit ─────────────────────────────────────────────────────────────────
 if ($toStdout) {
+    // soft-open: failure is handled immediately below with cleanup and dbu_die
     $fh = @fopen($finalTmp, 'rb');
     if ($fh === false) {
         // nosemgrep -- $finalTmp is a tool-generated temp path, no user input
