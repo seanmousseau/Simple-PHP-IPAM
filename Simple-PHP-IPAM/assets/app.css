@@ -1,24 +1,39 @@
 :root{
-  --bg:#ffffff;
-  --fg:#111111;
-  --muted:#586174;
-  --border:#d9dde5;
-  --border-strong:#c5cbd6;
-  --card:#fafbfc;
-  --card-2:#f3f5f8;
-  --link:#0b57d0;
-  --danger:#b00020;
-  --success:#0f9d58;
-  --warn:#b26a00;
-  --btn:#111111;
-  --btnfg:#ffffff;
-  --btn-secondary:#eef1f5;
-  --btn-secondary-fg:#111111;
-  --brand:#16a34a;
-  --badge-bg:#eef1f5;
-  --input-bg:#ffffff;
-  --shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 16px rgba(0,0,0,.04);
-  --nav-bg:rgba(255,255,255,.88);
+  /* Color tokens — ADR-007-3 consolidation (#1257).
+     Light and dark values resolve via CSS light-dark() against the
+     nearest ancestor's `color-scheme`. The `html[data-theme=light|dark]`
+     toggles below pin that scheme; without a toggle, the OS preference
+     wins. Values are unchanged from the previous 4-block layout — this
+     is a structural cleanup, not a palette migration.
+     Reference OP grays (assets/vendor/open-props.min.css) noted in
+     comments where the IPAM neutral is close to an OP gray; IPAM keeps
+     its slightly cooler tint as brand identity. */
+  color-scheme: light dark;
+  --bg:                light-dark(#ffffff, #0e1116);                                                                /* OP closest: --gray-0/--gray-10 */
+  --fg:                light-dark(#111111, #e7eaf0);                                                                /* OP closest: --gray-12/--gray-2 */
+  --muted:             light-dark(#586174, #a8b0bf);                                                                /* OP closest: --gray-7/--gray-5 */
+  --border:            light-dark(#d9dde5, #2a2f3a);                                                                /* OP closest: --gray-3/--gray-9 */
+  --border-strong:     light-dark(#c5cbd6, #394150);                                                                /* OP closest: --gray-4/--gray-8 */
+  --card:              light-dark(#fafbfc, #151a22);                                                                /* OP closest: --gray-0/--gray-10 */
+  --card-2:            light-dark(#f3f5f8, #1b2230);                                                                /* OP closest: --gray-1/--gray-9 */
+  --link:              light-dark(#0b57d0, #7ab0ff);                                                                /* brand-defined; OP --blue-* sibling */
+  --danger:            light-dark(#b00020, #ff5c7a);                                                                /* brand-defined */
+  --success:           light-dark(#0f9d58, #22C55E);                                                                /* brand-defined */
+  --warn:              light-dark(#b26a00, #ffbf66);                                                                /* brand-defined */
+  --btn:               light-dark(#111111, #22C55E);                                                                /* brand-defined (light=black, dark=brand green) */
+  --btnfg:             light-dark(#ffffff, #0a1a0d);                                                                /* brand-defined */
+  --btn-secondary:     light-dark(#eef1f5, #1b2230);                                                                /* OP closest: --gray-1.5/--gray-9 */
+  --btn-secondary-fg:  light-dark(#111111, #e7eaf0);                                                                /* matches --fg */
+  --brand:             light-dark(#16a34a, #22C55E);                                                                /* brand-defined */
+  --badge-bg:          light-dark(#eef1f5, #1b2230);                                                                /* matches --btn-secondary */
+  --input-bg:          light-dark(#ffffff, #0f141c);                                                                /* matches --bg light; subtly darker in dark */
+  /* --shadow: 2-stack box-shadow can't live inside light-dark() because the
+     function takes exactly 2 comma-separated args; shadow stacks themselves
+     contain top-level commas. Split into near/far halves so each half fits. */
+  --shadow-near:       light-dark(0 1px 2px rgba(0,0,0,.05), 0 1px 2px rgba(0,0,0,.25));
+  --shadow-far:        light-dark(0 6px 16px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.25));
+  --shadow:            var(--shadow-near), var(--shadow-far);
+  --nav-bg:            light-dark(rgba(255,255,255,.88), rgba(14,17,22,.88));
 
   --space-0:0;
   --space-1:2px;
@@ -95,81 +110,18 @@
 @font-face{font-family:'Fira Sans';src:url('fonts/FiraSans-Bold.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap}
 @font-face{font-family:'Fira Code';src:url('fonts/fira-code-subset.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
 
-@media (prefers-color-scheme: dark){
-  :root{
-    --bg:#0e1116;
-    --fg:#e7eaf0;
-    --muted:#a8b0bf;
-    --border:#2a2f3a;
-    --border-strong:#394150;
-    --card:#151a22;
-    --card-2:#1b2230;
-    --link:#7ab0ff;
-    --danger:#ff5c7a;
-    --success:#22C55E;
-    --warn:#ffbf66;
-    --btn:#22C55E;
-    --btnfg:#0a1a0d;
-    --brand:#22C55E;
-    --btn-secondary:#1b2230;
-    --btn-secondary-fg:#e7eaf0;
-    --badge-bg:#1b2230;
-    --input-bg:#0f141c;
-    --shadow:0 1px 2px rgba(0,0,0,.25), 0 8px 24px rgba(0,0,0,.25);
-    --nav-bg:rgba(14,17,22,.88);
-  }
-}
-html[data-theme="light"]{
-  --bg:#ffffff;
-  --fg:#111111;
-  --muted:#586174;
-  --border:#d9dde5;
-  --border-strong:#c5cbd6;
-  --card:#fafbfc;
-  --card-2:#f3f5f8;
-  --link:#0b57d0;
-  --danger:#b00020;
-  --success:#0f9d58;
-  --warn:#b26a00;
-  --btn:#111111;
-  --btnfg:#ffffff;
-  --brand:#16a34a;
-  --btn-secondary:#eef1f5;
-  --btn-secondary-fg:#111111;
-  --badge-bg:#eef1f5;
-  --input-bg:#ffffff;
-  --shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 16px rgba(0,0,0,.04);
-  --nav-bg:rgba(255,255,255,.88);
-}
-html[data-theme="dark"]{
-  --bg:#0e1116;
-  --fg:#e7eaf0;
-  --muted:#a8b0bf;
-  --border:#2a2f3a;
-  --border-strong:#394150;
-  --card:#151a22;
-  --card-2:#1b2230;
-  --link:#7ab0ff;
-  --danger:#ff5c7a;
-  --success:#22C55E;
-  --warn:#ffbf66;
-  --btn:#22C55E;
-  --btnfg:#0a1a0d;
-  --brand:#22C55E;
-  --btn-secondary:#1b2230;
-  --btn-secondary-fg:#e7eaf0;
-  --badge-bg:#1b2230;
-  --input-bg:#0f141c;
-  --shadow:0 1px 2px rgba(0,0,0,.25), 0 8px 24px rgba(0,0,0,.25);
-  --nav-bg:rgba(14,17,22,.88);
-}
-html[data-theme="dark"] ::-webkit-calendar-picker-indicator{
-  filter:invert(1);
-}
+/* Theme switches — ADR-007-3 (#1257).
+   :root above declares `color-scheme: light dark` so light-dark() resolves
+   against the OS preference by default. These two rules pin the scheme
+   when the user has explicitly toggled, overriding the OS preference. */
+html[data-theme="light"]{color-scheme:light;}
+html[data-theme="dark"]{color-scheme:dark;}
+
+/* Dark-mode calendar picker indicator: filter has no light-dark()
+   equivalent, so this stays as a separate selector pair. */
+html[data-theme="dark"] ::-webkit-calendar-picker-indicator{filter:invert(1);}
 @media(prefers-color-scheme:dark){
-  html:not([data-theme]) ::-webkit-calendar-picker-indicator{
-    filter:invert(1);
-  }
+  html:not([data-theme="light"]) ::-webkit-calendar-picker-indicator{filter:invert(1);}
 }
 
 *{box-sizing:border-box}
