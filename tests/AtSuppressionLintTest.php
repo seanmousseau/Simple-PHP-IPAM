@@ -4,59 +4,21 @@ declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/../testing/scripts/lint-at-suppressions.php';
+
 final class AtSuppressionLintTest extends TestCase
 {
-    /**
-     * Runs the linter against a fixture file.
-     *
-     * @return array{0:string,1:int} stdout+stderr and exit code
-     */
-    private function runLinter(string $fixtureRelative): array
-    {
-        $rootDir = dirname(__DIR__);
-        $script = $rootDir . '/testing/scripts/lint-at-suppressions.php';
-        $fixture = __DIR__ . '/' . $fixtureRelative;
-
-        $desc = [
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ];
-
-        // Test harness: paths constrained to __DIR__ constant + static fixture paths
-        // nosemgrep: CWE-94 — test code only, not user input
-        $proc = proc_open(
-            ['php', $script, $fixture],
-            $desc,
-            $pipes
-        );
-
-        if (!is_resource($proc)) {
-            throw new RuntimeException('Failed to start linter process');
-        }
-
-        $stdout = stream_get_contents($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]);
-        $out = $stdout . $stderr;
-
-        foreach ($pipes as $p) {
-            fclose($p);
-        }
-
-        return [$out, proc_close($proc)];
-    }
-
     public function testLinterFlagsUncommentedAtSuppression(): void
     {
-        [$out, $code] = $this->runLinter('fixtures/at-suppression/bad.php');
-
-        $this->assertStringContainsString('bad.php', $out, 'linter must name the offending file');
-        $this->assertNotSame(0, $code, 'linter must exit non-zero on un-justified @');
+        $result = lint_at_check_file(__DIR__ . '/fixtures/at-suppression/bad.php');
+        $this->assertNotNull($result, 'linter must flag the un-justified @ in bad.php');
+        $this->assertStringEndsWith('bad.php', $result['file']);
+        $this->assertSame(5, $result['line']);
     }
 
     public function testLinterAcceptsCommentedAtSuppression(): void
     {
-        [$_out, $code] = $this->runLinter('fixtures/at-suppression/good.php');
-
-        $this->assertSame(0, $code);
+        $result = lint_at_check_file(__DIR__ . '/fixtures/at-suppression/good.php');
+        $this->assertNull($result, 'linter must accept the justified @ in good.php');
     }
 }

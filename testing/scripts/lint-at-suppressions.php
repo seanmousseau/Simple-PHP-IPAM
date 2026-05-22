@@ -12,9 +12,12 @@ declare(strict_types=1);
  * Usage:
  *   php testing/scripts/lint-at-suppressions.php                 # scan whole app
  *   php testing/scripts/lint-at-suppressions.php path/to/file.php  # check single file
+ *
+ * Also re-includable from tests: defines functions only at top level; CLI
+ * bootstrap only runs when this file is the invoked script.
  */
 
-$targets = [
+const LINT_AT_TARGETS = [
     'file_get_contents',
     'file_put_contents',
     'chmod',
@@ -33,17 +36,17 @@ $targets = [
     'date_default_timezone_set',
 ];
 
-$pattern = '/@(' . implode('|', array_map('preg_quote', $targets)) . ')\s*\(/';
+function lint_at_pattern(): string
+{
+    return '/@(' . implode('|', array_map('preg_quote', LINT_AT_TARGETS)) . ')\s*\(/';
+}
 
 /**
- * Check if a line has a justifying comment.
- *
- * Rule: same line contains //, OR previous line starts with //, OR previous line starts with *
+ * Same line contains //, OR previous line starts with //, OR previous line starts with *.
  */
-function hasCommentJustification(string $line, string $prevLine): bool
+function lint_at_has_justification(string $line, string $prevLine): bool
 {
     $prevTrimmed = trim($prevLine);
-    $lineTrimmed = trim($line);
 
     return str_contains($line, '//') ||
            str_starts_with($prevTrimmed, '//') ||
@@ -53,21 +56,20 @@ function hasCommentJustification(string $line, string $prevLine): bool
 /**
  * Check a single file for un-justified @-suppressions.
  *
- * @return array{found:bool,file:string,line:int,content:string}|null
+ * @return array{file:string,line:int,content:string}|null
  */
-function lintFile(string $path, string $pattern): ?array
+function lint_at_check_file(string $path): ?array
 {
     $lines = @file($path);
     if ($lines === false) {
         return null;
     }
-
+    $pattern = lint_at_pattern();
     foreach ($lines as $i => $line) {
-        if (preg_match($pattern, $line, $m)) {
+        if (preg_match($pattern, $line)) {
             $prev = $lines[$i - 1] ?? '';
-            if (!hasCommentJustification($line, $prev)) {
+            if (!lint_at_has_justification($line, $prev)) {
                 return [
-                    'found' => true,
                     'file' => $path,
                     'line' => $i + 1,
                     'content' => trim($line),
@@ -75,52 +77,73 @@ function lintFile(string $path, string $pattern): ?array
             }
         }
     }
-
     return null;
 }
 
-// Determine target paths
-$paths = [];
-
-// phpstan: $argc and $argv are always defined in CLI context
-if (isset($argc) && $argc > 1) {
-    // Explicit files passed as args
-    for ($i = 1; $i < $argc; ++$i) {
-        if (isset($argv[$i])) {
-            $paths[] = $argv[$i];
+/**
+ * Check a list of files. Returns the first offender or null if all clean.
+ *
+ * @param list<string> $paths
+ * @return array{file:string,line:int,content:string}|null
+ */
+function lint_at_check_paths(array $paths): ?array
+{
+    foreach ($paths as $path) {
+        $result = lint_at_check_file($path);
+        if ($result !== null) {
+            return $result;
         }
     }
-} else {
-    // Recursive scan of Simple-PHP-IPAM/
-    $root = dirname(__DIR__) . '/../Simple-PHP-IPAM';
+    return null;
+}
+
+/**
+ * Recursively enumerate .php files under a directory, skipping vendor/ and node_modules/.
+ *
+ * @return list<string>
+ */
+function lint_at_enumerate(string $root): array
+{
+    $out = [];
     $rii = new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)
     );
-
     /** @var \SplFileInfo $f */
     foreach ($rii as $f) {
-        if ($f->getExtension() === 'php') {
-            $fpath = $f->getPathname();
-            if (!str_contains($fpath, '/vendor/') && !str_contains($fpath, '/node_modules/')) {
-                $paths[] = $fpath;
-            }
+        if ($f->getExtension() !== 'php') {
+            continue;
         }
+        $fpath = $f->getPathname();
+        if (str_contains($fpath, '/vendor/') || str_contains($fpath, '/node_modules/')) {
+            continue;
+        }
+        $out[] = $fpath;
     }
+    return $out;
 }
 
-// Lint each path; report first offender and exit 1
-foreach ($paths as $path) {
-    $result = lintFile($path, $pattern);
-    if ($result !== null && $result['found']) {
+// CLI bootstrap — runs only when this file is invoked directly, not when require'd from a test.
+$script = isset($_SERVER['SCRIPT_FILENAME']) && is_string($_SERVER['SCRIPT_FILENAME'])
+    ? $_SERVER['SCRIPT_FILENAME']
+    : '';
+if (PHP_SAPI === 'cli' && $script !== '' && realpath($script) === __FILE__) {
+    $paths = [];
+    if (isset($argc, $argv) && $argc > 1) {
+        for ($i = 1; $i < $argc; ++$i) {
+            $paths[] = (string) $argv[$i];
+        }
+    } else {
+        $paths = lint_at_enumerate(dirname(__DIR__) . '/../Simple-PHP-IPAM');
+    }
+    $offender = lint_at_check_paths($paths);
+    if ($offender !== null) {
         fwrite(STDERR, sprintf(
             "%s:%d: un-justified @-suppression: %s\n",
-            $result['file'],
-            $result['line'],
-            $result['content']
+            $offender['file'],
+            $offender['line'],
+            $offender['content']
         ));
         exit(1);
     }
+    exit(0);
 }
-
-// All good
-exit(0);
