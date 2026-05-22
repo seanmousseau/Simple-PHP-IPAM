@@ -86,6 +86,7 @@ if ($step === 1 && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ??
             if (!move_uploaded_file(to_str($upload['tmp_name']), $dest)) {
                 $err = 'Failed to store uploaded file.';
             } else {
+                // best-effort: tighten perms on the uploaded tmp file; move_uploaded_file already wrote it
                 @chmod($dest, 0600);
                 $sample = file_get_contents($dest, false, null, 0, 4096);
                 if ($sample === false) $sample = '';
