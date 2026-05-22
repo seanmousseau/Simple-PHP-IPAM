@@ -12,15 +12,14 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.34.0
+## What's new in v3.35.0
 
-Refactor Wave 3 — frontend modularization. A pure code-quality release: no schema migrations, no new config keys, no new pages, no operator action required. Closes 9 milestone-#58 issues plus 3 polish umbrellas (#949 #950 #952) with per-item disposition.
+Refactor Wave 4 — lib polish + admin refactor. A pure code-quality release closing milestone #85. One schema migration (TOTP backup-code lookup discriminator); no new operator-facing pages; no new config keys; no operator action required.
 
-- **`assets/app.js` split into 46 per-concern modules under `assets/modules/`.** The former 3,439-line monolith is gone. Each concern (theme, command palette, drawer, forms, sidebar, dashboard prefs, contact picker, DHCP export, TOTP, SMTP test, backup admin, restore confirm gate, passkey enroll/verify, step-up prompt, …) now lives in its own `<script defer>` file. Numeric/letter filename prefix (`00-bootstrap.js` → `c5-sudo-replay-resume.js`) encodes the dependency chain — `20-drawer.js` lands `window.IpamDrawer` before `80-command-palette.js` consumes it. CSP unchanged.
-- **Frontend regression spec (`testing/playwright/tests/frontend-modules.spec.ts`)** pins three invariants: (a) canonical 46-module emit order, (b) `window.IpamDrawer` surface contract, (c) `prefers-reduced-motion` flatten rule. Closes #939 (split) and #1047 (test umbrella) together.
-- **Migration closure style standardised (#951)** — 43 legacy `function(PDO $db)` closures rewritten to `static function (PDO $db): void`; `2.1.0-vrfs` body dedented; `2.6.0-settings` shape harmonised with the rest of the registry.
-- **Polish landed** — dead `display_datetime()` wrapper removed; `_redirect_uri_is_safe()` extracted from duplicated stash/consume validation; unused `$config` parameters dropped from housekeeping + import helpers; `users.php`/`api.php`/`presentation.php` consistency fixes; api.php early-error paths routed through canonical `api_json()`.
-- **New `tests/JsModulesParityTest.php`** asserts byte-identical module lists in `lib/presentation.php` and `demo_gate.php` — drift gate for the two parallel emit sites.
+- **TOTP backup-code verification is now O(1).** A non-secret HMAC discriminator (`lookup_key`) is stored alongside each bcrypt-hashed code. At verify time the verifier narrows the candidate set before performing any bcrypt work, so at most one hash is checked per login. The bcrypt+salt of the code itself remains the security boundary. Migration `3.35.0-totp-backup-lookup-key` is idempotent.
+- **Browser tag and contact changes are now audit-logged.** Attach/detach operations performed through the UI previously left no audit trail. `save_tags_for_entity` and `save_contacts_for_entity` now emit `tag.attach` / `tag.detach` / `contact.attach` / `contact.detach` rows matching the API audit shape.
+- **`@`-suppression CI linter.** `composer lint:at` refuses any `@`-suppressed I/O call without an inline justification comment. All 157 existing suppressions swept and annotated; the gate runs in CI on every push.
+- **Internal refactors** — `init.php` decomposed into four `lib/bootstrap_*.php` modules (435L → 141L); scan execution extracted to `lib/scan.php`; phpunit split into fast Unit (~2.3s) and DB-touching Integration (~30s) suites; dashboard visual-regression coverage restored with a mutation-isolated Playwright project.
 
 [Full changelog →](CHANGELOG.md)
 
