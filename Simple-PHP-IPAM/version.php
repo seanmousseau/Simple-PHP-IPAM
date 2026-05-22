@@ -2,5 +2,5 @@
 declare(strict_types=1);
 
 if (!defined('IPAM_VERSION')) {
-    define('IPAM_VERSION', '3.34.0');
+    define('IPAM_VERSION', '3.35.0');
 }
