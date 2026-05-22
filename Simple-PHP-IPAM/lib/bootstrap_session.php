@@ -93,9 +93,19 @@ function ipam_bootstrap_session(array $config): void
         // best-effort: directory may already exist if another request raced us
         @mkdir($sessionSaveDir, 0700, true);
     }
-    if (is_dir($sessionSaveDir) && is_writable($sessionSaveDir)) {
-        ini_set('session.save_path', $sessionSaveDir);
+    // CR #1307 #4 / #1292 review: fail closed if data/sessions cannot be
+    // created or is not writable. Continuing with PHP's default save_path
+    // (typically /tmp) would silently fall back to a shared directory,
+    // weakening the per-install session isolation that #532 established.
+    // Boot must stop here rather than silently degrade security.
+    if (!is_dir($sessionSaveDir) || !is_writable($sessionSaveDir)) {
+        throw new \RuntimeException(
+            "IPAM boot failed: session save directory '{$sessionSaveDir}' "
+            . "cannot be created or is not writable. "
+            . "Check permissions on data/ or create data/sessions/ with 0700 manually."
+        );
     }
+    ini_set('session.save_path', $sessionSaveDir);
 
     ini_set('session.use_strict_mode', '1');
     ini_set('session.use_only_cookies', '1');

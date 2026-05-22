@@ -16,5 +16,4 @@ return [
         'site_key'   => '',
         'secret_key' => '',
     ],
-    'app_secret' => 'Q2a5kQjN14WH2PiZs6VIIM82bfjFij5aXoKzRtm5wvc=',
 ];

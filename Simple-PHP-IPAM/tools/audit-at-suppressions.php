@@ -52,14 +52,20 @@ foreach ($rii as $f) {
     foreach ($lines as $i => $line) {
         if (preg_match($pattern, $line, $m)) {
             $prev = trim($lines[$i - 1] ?? '');
-            $sameLine = trim($line);
 
-            // Check for justifying comment: previous line starts with // or *,
-            // or same line contains //
-            $hasComment = str_contains($prev, '//') ||
+            // CR #1307 #7: tighter heuristic — strip string literals before
+            // matching '//' so a URL or '//' inside a quoted value doesn't
+            // count as a justifying comment. Same logic as lint-at-suppressions.php.
+            $strippedLine = (string) preg_replace(
+                '/\'(?:\\\\.|[^\\\\\'])*\'|"(?:\\\\.|[^\\\\"])*"/',
+                '',
+                $line
+            );
+            $hasInlineComment = str_contains($strippedLine, '//');
+
+            $hasComment = $hasInlineComment ||
                           str_starts_with($prev, '//') ||
-                          str_starts_with($prev, '*') ||
-                          str_contains($sameLine, '//');
+                          str_starts_with($prev, '*');
 
             echo str_replace($root . '/', '', $path) . "\t"
                 . ($i + 1) . "\t"
