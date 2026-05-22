@@ -38,7 +38,7 @@ final class InitBootstrapTest extends TestCase
     }
 
     #[DataProvider('bootstrapModules')]
-    public function testEachBootstrapModuleFileExists(string $module, string $func): void
+    public function testEachBootstrapModuleFileExists(string $module): void
     {
         $path = dirname(__DIR__) . "/Simple-PHP-IPAM/lib/{$module}.php";
         $this->assertFileExists($path, "{$module}.php must exist under lib/");
