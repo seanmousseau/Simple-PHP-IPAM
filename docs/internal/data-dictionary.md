@@ -660,6 +660,7 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `user_id` | `INTEGER` | `BIGINT UNSIGNED` | `BIGINT` | NO |  |  |
 | `code_hash` | `TEXT` | `TEXT` | `TEXT` | NO |  |  |
 | `used_at` | `TEXT` | `DATETIME` | `TIMESTAMP WITH TIME ZONE` | YES |  | NULL = unused |
+| `lookup_key` | `VARCHAR(16)` | `VARCHAR(16) COMMENT 'v3.35.0 #946: HMAC-SHA256 discriminator (non-secret)'` | `VARCHAR(16)` | YES |  | v3.35.0 #946: HMAC-SHA256 discriminator (non-secret) |
 
 **Foreign keys**
 

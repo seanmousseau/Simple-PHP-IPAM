@@ -6888,6 +6888,31 @@ function ipam_totp_decrypt_secret(string $encSecret, string $key): string {
     return $decrypted;
 }
 
+/**
+ * v3.35.0 #946: Non-secret HMAC-SHA256 discriminator for backup-code rows.
+ *
+ * Returns the first 8 hex chars (32 bits) of HMAC-SHA256(code, app_secret).
+ * This value is stored in totp_backup_codes.lookup_key alongside the bcrypt
+ * hash so the verifier can narrow candidates via a SELECT predicate instead
+ * of scanning every unused row. 32-bit truncation is intentional — it is wide
+ * enough to reduce candidate rows to ≤1 in steady state while being narrow
+ * enough to provide no meaningful offline-attack uplift (bcrypt+salt is the
+ * actual security boundary).
+ *
+ * Security note: if app_secret rotates, existing lookup_key values become
+ * stale. The verifier's "OR lookup_key IS NULL" fallback does NOT cover this
+ * case (the column is set, just wrong). Operators who rotate app_secret should
+ * run a one-off migration to NULL-out lookup_key, forcing the slow path until
+ * codes are regenerated. See #946 follow-up for a proposed remedy.
+ */
+function ipam_totp_backup_lookup_key(string $code): string {
+    // Use ipam_app_secret() — the canonical accessor that handles auto-gen,
+    // caching, and config.php reads. Avoids undefined-key warning when
+    // app_secret is absent from the live config array during tests.
+    $secret = ipam_app_secret();
+    return substr(hash_hmac('sha256', $code, $secret), 0, 8);
+}
+
 /** @return list<string> */
 function ipam_totp_generate_backup_codes(int $count = 8): array {
     $codes = [];
@@ -6902,9 +6927,17 @@ function ipam_totp_save_backup_codes(PDO $db, int $userId, array $codes): void {
     $db->beginTransaction();
     try {
         $db->prepare("DELETE FROM totp_backup_codes WHERE user_id = :uid")->execute([':uid' => $userId]);
-        $stmt = $db->prepare("INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :hash)");
+        // v3.35.0 #946: store lookup_key alongside code_hash so the verifier
+        // can narrow candidates via SELECT predicate (O(1) in steady state).
+        $stmt = $db->prepare(
+            "INSERT INTO totp_backup_codes (user_id, code_hash, lookup_key) VALUES (:uid, :hash, :lk)"
+        );
         foreach ($codes as $code) {
-            $stmt->execute([':uid' => $userId, ':hash' => password_hash($code, PASSWORD_DEFAULT)]);
+            $stmt->execute([
+                ':uid'  => $userId,
+                ':hash' => password_hash($code, PASSWORD_DEFAULT),
+                ':lk'   => ipam_totp_backup_lookup_key($code),
+            ]);
         }
         $db->commit();
     } catch (\Throwable $e) {
@@ -6914,10 +6947,17 @@ function ipam_totp_save_backup_codes(PDO $db, int $userId, array $codes): void {
 }
 
 function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool {
+    // v3.35.0 #946: narrow candidates using the non-secret HMAC discriminator.
+    // Rows with lookup_key = :lk: O(1) bcrypt in steady state (≤1 candidate).
+    // Rows with lookup_key IS NULL: legacy rows from before 3.35.0 — bcrypt
+    // scanned as before; they disappear naturally as users cycle their codes.
+    $lk = ipam_totp_backup_lookup_key($code);
     $stmt = $db->prepare(
-        "SELECT id, code_hash FROM totp_backup_codes WHERE user_id = :uid AND used_at IS NULL"
+        "SELECT id, code_hash FROM totp_backup_codes "
+        . "WHERE user_id = :uid AND used_at IS NULL "
+        . "AND (lookup_key = :lk OR lookup_key IS NULL)"
     );
-    $stmt->execute([':uid' => $userId]);
+    $stmt->execute([':uid' => $userId, ':lk' => $lk]);
     $nowExpr = ipam_dialect()->now();
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         if (password_verify($code, (string)$row['code_hash'])) {
