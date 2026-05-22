@@ -49,7 +49,7 @@ setup('vr-dashboard: reseed quiescent DB and save auth storage', async ({ page, 
   try {
     // Use execFileSync with an argument array (not a shell string) so there is
     // no path for shell injection, even if IPAM_DRIVER were somehow tainted.
-    execFileSync('bash', ['testing/bootstrap-app.sh', driver], {
+    execFileSync('bash', ['testing/playwright/bootstrap-app.sh', driver], {
       cwd: repoRoot,
       stdio: 'inherit',
       env: { ...process.env },
