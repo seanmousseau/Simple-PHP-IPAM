@@ -99,7 +99,7 @@ function ipam_scan_select_due_subnets(PDO $db, ?int $now = null): array
  *                                           'id', 'method', and optionally 'tcp_port'.
  * @param  string               $source      'cron' | 'cli'  — controls audit emission.
  * @param  int                  $staleThresh Consecutive misses before stale-marking.
- * @return array<string, mixed>  Keys: scanned, up, down, stale_marked, elapsed_sec.
+ * @return array{scanned: int, up: int, down: int, stale_marked: int, elapsed_sec: float}
  */
 function ipam_scan_run_for_subnet(
     PDO $db,

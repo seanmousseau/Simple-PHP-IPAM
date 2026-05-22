@@ -4,70 +4,83 @@ declare(strict_types=1);
 use PHPUnit\Framework\TestCase;
 
 /**
- * Source-level regression test pinning that cron.php emits a `scan.run`
- * audit row per scanned subnet.
+ * Source-level regression test pinning that the scan-loop emits a `scan.run`
+ * audit row per scheduled subnet with the (cron) tag. (#1161, PASS-C F-S2-04)
  *
- * Scheduled scans were previously invisible in the audit log — api_scan_run
- * and scan_run.php both audit, but cron.php did not. (#1161, PASS-C F-S2-04)
+ * In v3.35.0 (#1291) the emission moved from cron.php's inline loop into
+ * ipam_scan_run_for_subnet() in lib/scan.php. The source-level assertions
+ * now target lib/scan.php; the behavioural guarantee (audit row written on
+ * source='cron', not written on source='cli') is covered by ScanLoopTest.
  *
- * A functional test would require executing cron.php end-to-end with a
- * full app bootstrap, which is heavy. The source-level test pins the
- * emission location, action string, entity type, and the (cron) tag that
- * disambiguates the surface in the audit log.
+ * cron.php is still checked to confirm it delegates to ipam_scan_run_for_subnet()
+ * with source='cron' inside its due-subnet loop, so the (cron) tag cannot be
+ * accidentally dropped by a future refactor of the entry-point.
  */
 final class CronScanAuditTest extends TestCase
 {
-    private string $cronSource = '';
+    private string $scanLibSource = '';
+    private string $cronSource    = '';
 
     protected function setUp(): void
     {
-        $path = __DIR__ . '/../Simple-PHP-IPAM/cron.php';
-        $src = file_get_contents($path);
+        $libPath = __DIR__ . '/../Simple-PHP-IPAM/lib/scan.php';
+        $src = file_get_contents($libPath);
+        $this->assertNotFalse($src, 'lib/scan.php must be readable');
+        $this->scanLibSource = $src;
+
+        $cronPath = __DIR__ . '/../Simple-PHP-IPAM/cron.php';
+        $src = file_get_contents($cronPath);
         $this->assertNotFalse($src, 'cron.php must be readable');
         $this->cronSource = $src;
     }
 
+    /**
+     * lib/scan.php must contain the audit(... 'scan.run' ...) call with $subnetId.
+     */
     public function testEmitsAuditScanRun(): void
     {
         $this->assertMatchesRegularExpression(
             "/audit\\(\\s*\\\$db,\\s*'scan\\.run',\\s*'subnet',\\s*\\\$subnetId,/",
-            $this->cronSource,
-            "cron.php must call audit(\$db, 'scan.run', 'subnet', \$subnetId, ...) inside the scanner loop"
+            $this->scanLibSource,
+            "lib/scan.php must call audit(\$db, 'scan.run', 'subnet', \$subnetId, ...) inside ipam_scan_run_for_subnet()"
         );
     }
 
+    /**
+     * The audit details in lib/scan.php must carry the (cron) tag.
+     */
     public function testAuditDetailsHaveCronTag(): void
     {
-        // The (cron) suffix disambiguates the surface from api_scan_run and
-        // scan_run.php in the audit log UI. Tie the check to the
-        // audit(... 'scan.run' ...) invocation so a (cron) substring buried
-        // in a comment elsewhere in cron.php can't satisfy the assertion.
         $this->assertMatchesRegularExpression(
             '/audit\(\s*\$db,\s*\'scan\.run\',\s*\'subnet\',\s*\$subnetId,.*\(cron\)/s',
-            $this->cronSource,
-            'cron-emitted scan.run rows must carry a (cron) tag in details, scoped to the scan.run audit call'
+            $this->scanLibSource,
+            'lib/scan.php scan.run audit rows must carry a (cron) tag in details'
         );
     }
 
+    /**
+     * cron.php must call ipam_scan_run_for_subnet() with source='cron' inside
+     * its due-subnet loop so the (cron) tag is preserved after the refactor.
+     */
     public function testAuditCallSitsInsideDueSubnetsLoop(): void
     {
         $loopStart = strpos($this->cronSource, 'foreach ($dueSubnets as $sub)');
-        $this->assertNotFalse($loopStart, 'expected foreach ($dueSubnets as $sub) loop in cron.php');
+        $this->assertNotFalse($loopStart, "expected foreach (\$dueSubnets as \$sub) loop in cron.php");
 
-        $auditPos = strpos($this->cronSource, "'scan.run'", $loopStart);
+        // cron.php must call ipam_scan_run_for_subnet with 'cron' inside the loop.
+        $delegatePos = strpos($this->cronSource, "ipam_scan_run_for_subnet(\$db, \$sub, 'cron')", $loopStart);
         $this->assertNotFalse(
-            $auditPos,
-            'audit call for scan.run must appear after the foreach ($dueSubnets) opening'
+            $delegatePos,
+            "cron.php must call ipam_scan_run_for_subnet(\$db, \$sub, 'cron') inside the foreach (\$dueSubnets) loop"
         );
 
-        // Confirm it's still inside that block by checking it comes before the
-        // 'task' => 'scan' emit which is the next discriminator inside the loop.
+        // Confirm the call precedes the per-subnet \$emit so bookkeeping order is preserved.
         $emitPos = strpos($this->cronSource, "'task'         => 'scan'", $loopStart);
-        $this->assertNotFalse($emitPos);
+        $this->assertNotFalse($emitPos, "expected per-subnet emit inside the due-subnets loop");
         $this->assertLessThan(
             $emitPos,
-            $auditPos,
-            'audit call must precede the per-subnet $emit so summary and audit stay coupled'
+            $delegatePos,
+            'ipam_scan_run_for_subnet() call must precede the per-subnet $emit'
         );
     }
 }
