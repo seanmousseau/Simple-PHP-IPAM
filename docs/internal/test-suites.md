@@ -31,9 +31,13 @@ These have no dev-server dependency. Must be green before deploying.
 php -l Simple-PHP-IPAM/<changed-file>.php   # one per changed file
 vendor/bin/phpstan analyse --memory-limit=1G   # default 128M crashes parallel workers
 vendor/bin/phpcs
-vendor/bin/phpunit
+vendor/bin/phpunit --testsuite Unit         # ~2 s, fast iteration — pure PHP, no DB
+vendor/bin/phpunit --testsuite Integration  # ~30 s, DB-touching and file-I/O tests
+vendor/bin/phpunit                          # both suites (Unit runs first)
 semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
 ```
+
+The PHPUnit suite is split into **Unit** (`tests/unit/`) and **Integration** (`tests/integration/`, `tests/Migration/`, `tests/Helpers/`). Run Unit during active development for a ~2 s feedback loop; run Integration (or the full `vendor/bin/phpunit`) before committing. See `testing-guide.md` → "Unit vs Integration" for the classification rule and where to place new tests.
 
 ### PHPUnit against MySQL / Postgres containers
 
