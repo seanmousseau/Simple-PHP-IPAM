@@ -4463,6 +4463,76 @@ function ipam_migrations(): array
             }
         },
 
+        // v3.35.0 #946: non-secret HMAC lookup discriminator for backup codes.
+        // Adds lookup_key (VARCHAR 16, nullable) to totp_backup_codes so the
+        // verifier can narrow candidates by SELECT-predicate instead of
+        // iterating every unused row and calling password_verify on each.
+        // Existing rows keep lookup_key = NULL; the verifier falls back to
+        // the full bcrypt scan for them for one release — no backfill because
+        // the original plaintexts are unknown by definition.
+        // apply_migrations() has already set PRAGMA foreign_keys = OFF and
+        // wrapped this closure in a transaction (invariant #2).
+        '3.35.0-totp-backup-lookup-key' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            // Guard: if the table doesn't exist yet (e.g. a migration-test
+            // fixture that marks pre-TOTP migrations as applied without
+            // creating the table), skip silently. The table is created by
+            // the 3.6.0-totp migration or by schema.sql on fresh installs.
+            if ($driver === 'sqlite') {
+                $tables = array_column(
+                    ipam_query_or_throw($db, "SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
+                    'name'
+                );
+                if (!in_array('totp_backup_codes', $tables, true)) {
+                    return;
+                }
+            } else {
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $tblChk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    . "WHERE table_name = 'totp_backup_codes' AND table_schema = {$schemaFn}"
+                );
+                $tblChk->execute();
+                if ((int) $tblChk->fetchColumn() === 0) {
+                    return;
+                }
+            }
+
+            // Check whether the column already exists (idempotent re-run guard).
+            $hasCol = false;
+            if ($driver === 'sqlite') {
+                $cols = array_column(
+                    ipam_query_or_throw($db, "PRAGMA table_info(totp_backup_codes)")->fetchAll(),
+                    'name'
+                );
+                $hasCol = in_array('lookup_key', $cols, true);
+            } else {
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $chk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    . "WHERE table_name = 'totp_backup_codes' AND column_name = 'lookup_key' "
+                    . "AND table_schema = {$schemaFn}"
+                );
+                $chk->execute();
+                $hasCol = (int) $chk->fetchColumn() > 0;
+            }
+
+            if (!$hasCol) {
+                $db->exec("ALTER TABLE totp_backup_codes ADD COLUMN lookup_key VARCHAR(16) NULL");
+            }
+
+            // Composite index on (user_id, lookup_key) — makes the narrowed
+            // WHERE user_id = :uid AND (lookup_key = :lk OR lookup_key IS NULL)
+            // an index-range scan rather than a full-table scan.
+            // IF NOT EXISTS is portable across SQLite, MySQL, and PostgreSQL.
+            $db->exec(
+                "CREATE INDEX IF NOT EXISTS idx_totp_backup_lookup "
+                . "ON totp_backup_codes (user_id, lookup_key)"
+            );
+        },
+
     ];
 }
 
