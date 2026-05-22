@@ -179,6 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             $dbPath = to_str($config['db_path']);
             $backupPath = $dbPath . '.pre-import-' . date('YmdHis') . '.bak';
             try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
+            // safety copy before import; failure sets $err and aborts the import transaction
             if (!@copy($dbPath, $backupPath)) {
                 $err = 'Could not create a pre-import backup of the database. Import aborted for safety.';
             }
