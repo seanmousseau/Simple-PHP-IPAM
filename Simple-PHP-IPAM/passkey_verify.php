@@ -218,6 +218,6 @@ page_header('Sign in with Passkey');
   </form>
   <?php endif ?>
 
-  <p class="muted" id="passkey-status" style="font-size:.85rem;margin-top:.75rem"></p>
+  <p class="muted" id="passkey-status" style="font-size:var(--text-sm);margin-top:.75rem"></p>
 </div>
 <?php page_footer(); ?>

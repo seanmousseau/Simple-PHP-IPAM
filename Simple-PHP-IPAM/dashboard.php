@@ -133,7 +133,7 @@ $cnt30d     = is_array($expRow) ? to_int($expRow['cnt_30d'])     : 0;
 function render_sparkline(array $points, int $w = 80, int $h = 24): string
 {
     if (count($points) < 2) {
-        return '<span class="muted" style="font-size:.75rem">Collecting&hellip;</span>';
+        return '<span class="muted" style="font-size:var(--text-xs)">Collecting&hellip;</span>';
     }
     $n   = count($points);
     $pts = [];
@@ -246,11 +246,18 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
             <td class="muted"><?= e(to_str($s['description'])) ?></td>
             <td><?= e((string)$used) ?></td>
             <td><?= e((string)$cap) ?></td>
+            <?php
+              $barLevel = $pct >= $dashCrit ? 'critical' : ($pct >= $dashWarn ? 'warning' : 'normal');
+              $barAriaLabel = "Utilization {$pct}%, {$barLevel} level";
+            ?>
             <td class="mw-90">
-              <div class="util-bar-block">
+              <div class="util-bar-block" role="meter" aria-label="<?= e($barAriaLabel) ?>" aria-valuenow="<?= $pct ?>" aria-valuemin="0" aria-valuemax="100">
                 <div class="util-bar-fill <?= $barClass ?>" data-pct="<?= $pct ?>"></div>
               </div>
               <span class="muted font-xs"><?= $pct ?>%</span>
+              <?php if ($barLevel !== 'normal'): ?>
+                <span class="sr-only"><?= e(ucfirst($barLevel)) ?> level</span>
+              <?php endif; ?>
             </td>
             <td><?= render_sparkline($sparklines[to_int($s['id'])] ?? []) ?></td>
           </tr>
@@ -273,7 +280,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
         <?php if (current_user()['role'] === 'admin'): ?>
           <a href="sites.php" class="action-pill"><?= icon('map-pin') ?> Manage Sites</a>
         <?php else: ?>
-          <p class="muted" style="font-size:.85rem">Ask an administrator to configure sites.</p>
+          <p class="muted" style="font-size:var(--text-sm)">Ask an administrator to configure sites.</p>
         <?php endif; ?>
       </div>
     <?php else: ?>
@@ -435,7 +442,7 @@ if (current_user()['role'] === 'admin'):
   ?>
     <div class="kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem">
       <div>
-        <div class="muted" style="font-size:.85rem">Last run</div>
+        <div class="muted" style="font-size:var(--text-sm)">Last run</div>
         <?php if (is_array($lastRun)):
             $lrStatus = to_str($lastRun['status']);
             $lrClass  = 'badge-' . $lrStatus;
@@ -443,14 +450,14 @@ if (current_user()['role'] === 'admin'):
           <div><a href="backup_admin.php?tab=history" style="color:inherit"><?= e(to_str($lastRun['started_at'])) ?></a></div>
           <div><span class="badge <?= e($lrClass) ?>"><?= e($lrStatus) ?></span> · <?= e(to_str($lastRun['dest_name'] ?? '?')) ?></div>
           <?php if ($lrStatus === 'failed' && to_str($lastRun['error_message'] ?? '') !== ''): ?>
-            <div class="muted" style="font-size:.8rem;margin-top:.25rem"><?= e(substr(to_str($lastRun['error_message']), 0, 80)) ?>…</div>
+            <div class="muted" style="font-size:var(--text-xs);margin-top:.25rem"><?= e(substr(to_str($lastRun['error_message']), 0, 80)) ?>…</div>
           <?php endif; ?>
         <?php else: ?>
           <div class="muted">No backups yet</div>
         <?php endif; ?>
       </div>
       <div>
-        <div class="muted" style="font-size:.85rem">Next scheduled</div>
+        <div class="muted" style="font-size:var(--text-sm)">Next scheduled</div>
         <?php if (is_array($nextRun)): ?>
           <div><?= e(to_str($nextRun['next_run_at'])) ?></div>
         <?php else: ?>
@@ -458,12 +465,12 @@ if (current_user()['role'] === 'admin'):
         <?php endif; ?>
       </div>
       <div>
-        <div class="muted" style="font-size:.85rem">Total stored</div>
+        <div class="muted" style="font-size:var(--text-sm)">Total stored</div>
         <div><?= number_format($totalCount) ?> runs</div>
         <div><?= e($sizeFmt($totalBytes)) ?></div>
       </div>
       <div>
-        <div class="muted" style="font-size:.85rem">Destinations</div>
+        <div class="muted" style="font-size:var(--text-sm)">Destinations</div>
         <div><?= number_format($bdCount) ?> active</div>
         <a href="backup_admin.php?tab=destinations" class="action-pill button-secondary" style="margin-top:.4rem">Manage</a>
       </div>

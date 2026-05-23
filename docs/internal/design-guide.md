@@ -12,27 +12,31 @@ Vanilla CSS in `assets/app.css` (~3000 lines, CSS custom properties for theming)
 
 ---
 
-## Theme system
+## Design tokens
 
-Theme is controlled by `html[data-theme]` with three values: `auto` (default), `light`, `dark`. `auto` defers to `prefers-color-scheme`. The setting is persisted per user in `users.theme` and re-applied on login via `login_user()`.
+Per **ADR-007** (`docs/internal/architecture-decisions/007-open-props-adoption.md`), `assets/app.css` consumes [Open Props](https://open-props.style) as the underlying token base, layered with IPAM-specific brand values where the OP scale doesn't fit a compact admin UI.
 
-CSS uses custom properties exclusively for theme-able values. The full palette:
+**Token surface (`:root` in `app.css`):**
 
-| Variable | Light | Dark | Use |
-|---|---|---|---|
-| `--bg` | page background | | Outermost surface |
-| `--fg` | foreground text | | Default text |
-| `--muted` | secondary text | | Helper text, timestamps |
-| `--border` | divider lines | | All borders |
-| `--card` | elevated surface | | Cards, modals, sidebar |
-| `--danger` | red | | Destructive actions, errors |
-| `--success` | green | | Success states, confirmations |
-| `--warn` | amber | | Warning callouts |
-| `--link` | accent | | Links, primary actions |
-| `--btn` / `--btnfg` | button bg / fg | | Default button |
-| `--badge-bg` | badge fill | | Badges |
+| Layer | Tokens | Source |
+|---|---|---|
+| Color (light + dark) | `--bg`, `--fg`, `--muted`, `--border`, `--border-strong`, `--card`, `--card-2`, `--link`, `--danger`, `--success`, `--warn`, `--btn`, `--btnfg`, `--btn-secondary`, `--btn-secondary-fg`, `--brand`, `--badge-bg`, `--input-bg`, `--nav-bg`, `--shadow` (composed from `--shadow-near` + `--shadow-far`) | **Brand-defined.** Each token uses CSS `light-dark(<light>, <dark>)`; the chosen scheme is pinned by `html[data-theme="light\|dark"] { color-scheme: ... }`. Closest OP gray noted in comment for reference; IPAM keeps its cool-toned neutrals as brand identity. |
+| Spacing | `--space-1` … `--space-13` | **6 alias OP** `--size-{1,2,3,4,5,8}` where values match exactly (4 / 8 / 16 / 20 / 24 / 48 px). The remaining 7 (2 / 6 / 10 / 12 / 14 / 40 / 60 px) have no OP equivalent and stay as px literals. |
+| Radius | `--radius-xs` … `--radius-4xl`, `--radius-pill` | **2 alias OP** `--radius-3` and `--radius-round` (16 px and full pill). The other 7 have no OP equivalent. |
+| Typography (6-step) | `--text-xs` (12) · `--text-sm` (14) · `--text-base` (16) · `--text-lg` (20) · `--text-xl` (24) · `--text-2xl` (32) | **5 alias OP** `--font-size-{0,1,3,4,5}`; the 14px `--text-sm` (body default) stays as a brand-defined intermediate. **The legacy `--font-size-{2xs..8xl}` 14-step scale and the prior 7-step `--text-*` scale are kept as deprecation aliases** pointing at one of the six canonical sizes, so existing var() callers still resolve. New rules should use the 6-step scale directly. |
+| Z-index | `--z-sticky`, `--z-topbar`, `--z-overlay`, `--z-drawer`, `--z-nav-overlay`, `--z-nav-drawer`, `--z-dropdown`, `--z-col-vis`, `--z-spinner`, `--z-toast`, `--z-page-overlay` | **Brand registry.** Each layer has exactly one z value; do not introduce ad-hoc z-indices. |
+| Misc | `--focus-ring`, `--font-sans`, `--font-mono` | Brand-defined. |
 
-**Never hardcode a colour.** Use a variable. If the colour you need doesn't exist, add a variable; don't bypass.
+**Theme controls.** `html[data-theme]` takes three values: `auto` (default — defers to `prefers-color-scheme`), `light`, `dark`. The setting is persisted per user in `users.theme` and re-applied on login via `login_user()`. With ADR-007-3 in place, `light` and `dark` toggles set `color-scheme` on the `html` element; `auto` leaves it as `light dark` so `light-dark()` resolves against the OS preference.
+
+**Adding a new token.**
+
+- Color: add a `light-dark()` declaration on `:root`; do not add new `[data-theme=dark]` override blocks.
+- Spacing / radius: if the value exists in Open Props, alias it (`var(--size-N)` or `var(--radius-N)`); otherwise add a px literal with a `/* no OP match */` comment.
+- Never hardcode a colour in a rule. Use a token. If the token you need doesn't exist, add it; don't bypass.
+- Typography: use one of the six `--text-*` sizes. Do not introduce a 7th step. Do not use raw `rem`/`px` font-sizes in new CSS — that recreates the drift #953 collapsed.
+
+**Browser support.** `light-dark()` requires Chrome 123+ (Mar 2024) / Safari 17.5 (May 2024) / Firefox 120 (Nov 2023). The project assumes modern evergreen browsers (already used: `:has()`, `:focus-visible`, `:where()`).
 
 ---
 
@@ -90,14 +94,34 @@ Destructive actions render a `<button class="button-danger">` with a `data-confi
 
 Card titles use `<h2>` for the page-level card and `<h3>` for cards inside that. Don't skip heading levels.
 
-### Status indicators
+### Badges, pills, and status utilities
 
-| Class | Use |
-|---|---|
-| `.status-used`, `.status-reserved`, `.status-free` | Address status pill |
-| `.badge` | Generic small label |
-| `.badge-update` | "Update available" indicator in footer |
-| `.muted`, `.danger`, `.success`, `.warning` | Inline text colour utilities |
+Three **functionally distinct** primitives exist for small inline indicators. They look superficially similar but serve different purposes — don't fold them into one class. This is the documented taxonomy; new code follows it.
+
+| Primitive | Role | Interactive | Has visual chrome (box/border/bg)? | Examples |
+|---|---|---|---|---|
+| **`.badge`** + `.badge-*` variants | Non-interactive **label** | No | Yes — bordered pill with `--badge-bg` background | Role badges (`.badge-role-admin`), device types (`.badge-type-router`), update indicator (`.badge-update`), tag pills |
+| **`.nav-pill`** / **`.action-pill`** | Interactive **button**, pill-shaped | Yes | Yes — same shape as `.badge` but with hover state | Top nav items, inline row actions ("Add Subnet", "Bulk Update", "Export CSV") |
+| **`.status-{used,reserved,free}`** / **`.status-badge`** | Color **utility** for inline status — text-only | Sometimes (`.status-badge[data-addr-id]` is clickable) | **No** — just `color` + `font-weight: 600` | Dashboard KPI counts, addresses.php status cell |
+
+#### When to use which
+
+- **A non-interactive label** that names a category, role, type, or version → `.badge` (+ tinted variant).
+- **A clickable button** that triggers navigation or an action → `.nav-pill` (top nav) or `.action-pill` (row/page actions). Not a badge.
+- **Coloring text/numbers** by status without adding a box → `.status-{used,reserved,free}`. Used for counts on the dashboard and the click-to-cycle status cell on addresses.php.
+- **A new color-coded label primitive** that doesn't fit any of the three above → first ask whether the existing variants (`.badge-success/.badge-muted/.badge-broadcast/.badge-gateway/...`) cover it. If not, add a new `.badge-*` variant; don't introduce a 4th primitive.
+
+#### Variant tinting convention
+
+Every `.badge-*` color variant uses the same recipe: `color-mix(in srgb, var(--accent) 12-15%, var(--badge-bg) 85-88%)` for background, full `var(--accent)` for foreground, and a 35-40% mix for the border. This keeps every tinted badge legible in both themes (the `--badge-bg` and `--border` tokens flip on dark mode automatically via `light-dark()`).
+
+#### Footgun
+
+`.status-badge[data-addr-id]:hover` currently sets `text-decoration: underline` to advertise clickability. That is *intentional* — don't strip it; it's the only at-rest affordance for the click-to-cycle interaction. Pattern is similar to but **opposite** of the sidebar brand link (#958), which deliberately suppresses the underline.
+
+#### Out of scope (do not add)
+
+- A unified `.badge--{status,tag,filter,action}` BEM hierarchy — buttons and color utilities don't belong under the badge umbrella; forcing them in either strips button interactivity or adds chrome to colored numbers. The current 3-primitive split is the right shape.
 
 ### Utilisation bars (subnet allocation gauges)
 
@@ -140,6 +164,12 @@ The codebase is largely WCAG 2.1 AA compliant; do not regress it. Concrete rules
 - Tap targets ≥ 44px on mobile (the sidebar overlay, command palette, and primary buttons all already comply).
 - Don't disable focus outlines; theme them via `:focus-visible` instead.
 - Use Heroicons + visible text together for nav items — icon-only nav fails screen readers.
+- **Color is never the sole signal** (WCAG 1.4.1). Every color-coded status must pair with a non-color counterpart — text, icon, bar width, percentage number, or `<span class="sr-only">` for screen-reader announcement. Examples in-tree (closed by #956):
+    - **`.util-bar-fill--warn` / `--crit`** — wrap the `.util-bar` (or `.util-bar-block`) in `role="meter"` with `aria-label` describing the level and `aria-valuenow/min/max`. Add `<span class="sr-only">{Warning|Critical} level</span>` adjacent to the percent number when above threshold.
+    - **`health_dot()` in `health.php`** — already emits `aria-label` on the dot; also emits a sibling `<span class="sr-only">{OK|Warning|Critical}</span>` so the level is announced in plain text.
+    - **`.status-used/reserved/free`** — the surrounding label (`<div class="label">Used</div>`) or column header is the non-color signal; no additional sr-only text needed.
+    - **`.status-badge.status-*`** — the visible text (`used`/`reserved`/`free`) is itself the non-color signal.
+- The `.sr-only` utility class in `app.css` is the standard "visually hidden, accessible to AT" helper. Use it for any screen-reader-only text that pairs with a visual signal.
 
 ---
 

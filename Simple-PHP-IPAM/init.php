@@ -36,7 +36,7 @@ set_exception_handler(static function (\Throwable $e): void {
     echo '<!doctype html><html lang="en"><head><meta charset="utf-8">';
     echo '<meta name="viewport" content="width=device-width,initial-scale=1">';
     echo '<title>Simple PHP IPAM — Configuration error</title>';
-    echo '<style>body{font:16px system-ui,-apple-system,sans-serif;max-width:720px;margin:80px auto;padding:0 24px;color:#1e293b;background:#f8fafc}h1{font-size:24px;margin:0 0 16px;color:#991b1b}.msg{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;padding:16px 20px;border-radius:6px;margin:20px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;word-break:break-word}.hint{color:#64748b;font-size:14px;margin-top:24px}</style>';
+    echo '<style>body{font:16px system-ui,-apple-system,sans-serif;max-width:720px;margin:80px auto;padding:0 24px;color:#1e293b;background:#f8fafc}h1{font-size:var(--text-xl,1.5rem);margin:0 0 16px;color:#991b1b}.msg{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;padding:16px 20px;border-radius:6px;margin:20px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--text-sm,0.875rem);word-break:break-word}.hint{color:#64748b;font-size:var(--text-sm,0.875rem);margin-top:24px}</style>';
     echo '</head><body>';
     echo '<h1>Configuration error</h1>';
     echo '<p>Simple PHP IPAM could not start. The server reports:</p>';

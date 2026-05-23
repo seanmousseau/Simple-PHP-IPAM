@@ -128,7 +128,7 @@ page_header('Scan History');
           <span class="badge">Inactive</span>
         <?php endif ?>
         <?php if ($schedLast !== ''): ?>
-          <span class="muted" style="font-size:.85rem">Last run: <?= e(ipam_format_datetime($schedLast)) ?></span>
+          <span class="muted" style="font-size:var(--text-sm)">Last run: <?= e(ipam_format_datetime($schedLast)) ?></span>
         <?php endif ?>
       <?php else: ?>
         <span class="muted">No schedule configured.</span>
@@ -174,7 +174,7 @@ page_header('Scan History');
     <div class="card"><p class="muted">No scan results yet. Schedule a scan or run <code>php scan_run.php --subnet-id=<?= (int)$subnetId ?></code> from the CLI.</p></div>
   <?php else: ?>
   <div class="card" style="overflow-x:auto;margin-bottom:24px">
-    <h3 style="margin:0 0 12px">Scan Run History <span class="muted" style="font-weight:normal;font-size:.875rem">(last <?= count($runs) ?> runs)</span></h3>
+    <h3 style="margin:0 0 12px">Scan Run History <span class="muted" style="font-weight:normal;font-size:var(--text-sm)">(last <?= count($runs) ?> runs)</span></h3>
     <div class="table-wrap">
     <table>
       <thead>
@@ -198,12 +198,19 @@ page_header('Scan History');
           <td class="success"><strong><?= $up ?></strong></td>
           <td class="<?= $down > 0 ? 'danger' : 'muted' ?>"><?= $down ?></td>
           <td><?= $tot ?></td>
+          <?php
+            $scanLevel = $pct < 50 ? 'critical' : ($pct < 80 ? 'warning' : 'normal');
+            $scanAria  = "Scan success rate {$pct}%, {$scanLevel} level";
+          ?>
           <td>
-            <div class="util-bar" style="width:120px">
+            <div class="util-bar" style="width:120px" role="meter" aria-label="<?= e($scanAria) ?>" aria-valuenow="<?= $pct ?>" aria-valuemin="0" aria-valuemax="100">
               <div class="util-bar-fill<?= $pct < 80 ? ' util-bar-fill--warn' : '' ?><?= $pct < 50 ? ' util-bar-fill--crit' : '' ?>"
                    data-pct="<?= $pct ?>" style="width:<?= $pct ?>%"></div>
             </div>
             <?= $pct ?>%
+            <?php if ($scanLevel !== 'normal'): ?>
+              <span class="sr-only"><?= e(ucfirst($scanLevel)) ?> level</span>
+            <?php endif; ?>
           </td>
         </tr>
         <?php endforeach ?>

@@ -540,7 +540,7 @@ function wh_status_badge(mixed $status): string
 <div id='wh-form-overlay' style='display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:var(--z-overlay)'></div>
 <div id='wh-form-drawer' style='display:none;position:fixed;top:0;right:0;width:min(480px,100vw);height:100vh;background:var(--card);border-left:1px solid var(--border);z-index:var(--z-drawer);overflow-y:auto;padding:1.5rem'>
   <div class='row' style='align-items:center;margin-bottom:1.25rem'>
-    <strong id='wh-drawer-title' style='flex:1;font-size:1.1rem'>Add webhook</strong>
+    <strong id='wh-drawer-title' style='flex:1;font-size:var(--text-base)'>Add webhook</strong>
     <button type='button' id='wh-drawer-close' aria-label='Close'>&times;</button>
   </div>
   <form method='post' id='wh-form'>
@@ -566,7 +566,7 @@ function wh_status_badge(mixed $status): string
       <div class='row' style='gap:.5rem'>
         <input type='text' name='secret' id='wh-f-secret' required
           value='<?= e(to_str($_POST['secret'] ?? '')) ?>' placeholder='hex secret'
-          style='flex:1;font-family:var(--font-mono);font-size:.8rem'>
+          style='flex:1;font-family:var(--font-mono);font-size:var(--text-xs)'>
         <button type='button' id='wh-gen-secret' class='action-pill'>Generate</button>
       </div>
     </label>
@@ -577,7 +577,7 @@ function wh_status_badge(mixed $status): string
       <label style='display:flex;align-items:center;gap:.5rem;margin:.25rem 0;cursor:pointer'>
         <input type='checkbox' name='events[]' value='<?= e($ev) ?>' class='wh-event-cb'
           <?= in_array($ev, (array)($_POST['events'] ?? []), true) ? 'checked' : '' ?>>
-        <code style='font-size:.82rem'><?= e($ev) ?></code>
+        <code style='font-size:var(--text-sm)'><?= e($ev) ?></code>
       </label>
       <?php endforeach; ?>
     </fieldset>

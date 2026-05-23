@@ -242,7 +242,7 @@ page_header('Sites');
                       data-collapsible-group-id="<?= $siteId ?>"
                       aria-expanded="true"
                       aria-label="Toggle child sites for <?= e(to_str($site['name'])) ?>"><?= icon('chevron-down') ?></button>
-              <span class="badge muted" style="font-size:.75rem"><?= $childCounts[$siteId] ?> <?= $childCounts[$siteId] === 1 ? 'site' : 'sites' ?></span>
+              <span class="badge muted" style="font-size:var(--text-xs)"><?= $childCounts[$siteId] ?> <?= $childCounts[$siteId] === 1 ? 'site' : 'sites' ?></span>
             <?php endif; ?>
           </td>
           <td class="muted"><?= e(ipam_format_datetime(to_str($site['created_at']))) ?></td>

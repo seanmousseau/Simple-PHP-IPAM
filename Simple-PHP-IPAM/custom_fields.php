@@ -302,7 +302,7 @@ page_header('Custom Fields');
 
       <!-- Live type preview -->
       <div class="mt-8" id="cf-preview-wrap">
-        <div class="muted" style="font-size:.8rem;margin-bottom:4px">Preview (what users will see):</div>
+        <div class="muted" style="font-size:var(--text-xs);margin-bottom:4px">Preview (what users will see):</div>
         <div id="cf-preview-text"><input type="text" placeholder="Free text value" disabled style="width:100%;max-width:280px"></div>
         <div id="cf-preview-number" hidden><input type="number" step="any" placeholder="0" disabled style="width:120px"></div>
         <div id="cf-preview-date"   hidden><input type="date" disabled></div>
