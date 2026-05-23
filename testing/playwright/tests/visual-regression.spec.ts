@@ -27,6 +27,11 @@ interface VRPage {
    *  title includes this tag so a project's `grep` option can select or
    *  de-select it without touching any other project's test list. */
   tag?: string;
+  /** CSS selectors masked out of the screenshot. Use for regions whose
+   *  content drifts across runs (e.g. audit_log rows whose count varies
+   *  with every login in the suite). Masked regions render as solid
+   *  pink in the captured PNG and are excluded from pixel comparison. */
+  maskSelectors?: string[];
 }
 
 // `subnets` was VR-covered v3.26.0–v3.31.0 but is excluded again as of
@@ -61,7 +66,16 @@ const PAGES: VRPage[] = [
   { name: 'backup-admin-notifications', path: 'backup_admin.php?tab=notifications' },
   { name: 'backup-admin-restore', path: 'backup_admin.php?tab=restore' },
   // Dashboard: mutation-isolated via dedicated vr-dashboard-* projects (#775).
-  { name: 'dashboard', path: 'dashboard.php', tag: '@vr-dashboard' },
+  // Recent-activity widget is masked (#1311) because audit_log rows
+  // accumulate across the test suite — the mutation-isolated bootstrap
+  // reseeds the schema but every test login leaves a row, so the visible
+  // row count drifts between runs even on a "clean" seed.
+  {
+    name: 'dashboard',
+    path: 'dashboard.php',
+    tag: '@vr-dashboard',
+    maskSelectors: ['[data-widget="recent-activity"]'],
+  },
 ];
 
 const THEMES = ['light', 'dark'] as const;
@@ -117,9 +131,10 @@ test.describe('visual regression baseline', () => {
         await page.waitForLoadState('networkidle');
         await setTheme(page, theme);
 
+        const masks = (pg.maskSelectors ?? []).map(sel => page.locator(sel));
         await expect(page).toHaveScreenshot(
           `${pg.name}-${theme}.png`,
-          SCREENSHOT_OPTS,
+          { ...SCREENSHOT_OPTS, mask: masks },
         );
       });
     }
