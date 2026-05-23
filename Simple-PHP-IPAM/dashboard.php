@@ -246,11 +246,18 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
             <td class="muted"><?= e(to_str($s['description'])) ?></td>
             <td><?= e((string)$used) ?></td>
             <td><?= e((string)$cap) ?></td>
+            <?php
+              $barLevel = $pct >= $dashCrit ? 'critical' : ($pct >= $dashWarn ? 'warning' : 'normal');
+              $barAriaLabel = "Utilization {$pct}%, {$barLevel} level";
+            ?>
             <td class="mw-90">
-              <div class="util-bar-block">
+              <div class="util-bar-block" role="meter" aria-label="<?= e($barAriaLabel) ?>" aria-valuenow="<?= $pct ?>" aria-valuemin="0" aria-valuemax="100">
                 <div class="util-bar-fill <?= $barClass ?>" data-pct="<?= $pct ?>"></div>
               </div>
               <span class="muted font-xs"><?= $pct ?>%</span>
+              <?php if ($barLevel !== 'normal'): ?>
+                <span class="sr-only"><?= e(ucfirst($barLevel)) ?> level</span>
+              <?php endif; ?>
             </td>
             <td><?= render_sparkline($sparklines[to_int($s['id'])] ?? []) ?></td>
           </tr>

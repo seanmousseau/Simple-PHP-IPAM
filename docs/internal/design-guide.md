@@ -165,6 +165,12 @@ The codebase is largely WCAG 2.1 AA compliant; do not regress it. Concrete rules
 - Tap targets ≥ 44px on mobile (the sidebar overlay, command palette, and primary buttons all already comply).
 - Don't disable focus outlines; theme them via `:focus-visible` instead.
 - Use Heroicons + visible text together for nav items — icon-only nav fails screen readers.
+- **Color is never the sole signal** (WCAG 1.4.1). Every color-coded status must pair with a non-color counterpart — text, icon, bar width, percentage number, or `<span class="sr-only">` for screen-reader announcement. Examples in-tree (closed by #956):
+    - **`.util-bar-fill--warn` / `--crit`** — wrap the `.util-bar` (or `.util-bar-block`) in `role="meter"` with `aria-label` describing the level and `aria-valuenow/min/max`. Add `<span class="sr-only">{Warning|Critical} level</span>` adjacent to the percent number when above threshold.
+    - **`health_dot()` in `health.php`** — already emits `aria-label` on the dot; also emits a sibling `<span class="sr-only">{OK|Warning|Critical}</span>` so the level is announced in plain text.
+    - **`.status-used/reserved/free`** — the surrounding label (`<div class="label">Used</div>`) or column header is the non-color signal; no additional sr-only text needed.
+    - **`.status-badge.status-*`** — the visible text (`used`/`reserved`/`free`) is itself the non-color signal.
+- The `.sr-only` utility class in `app.css` is the standard "visually hidden, accessible to AT" helper. Use it for any screen-reader-only text that pairs with a visual signal.
 
 ---
 

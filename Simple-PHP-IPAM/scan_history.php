@@ -198,12 +198,19 @@ page_header('Scan History');
           <td class="success"><strong><?= $up ?></strong></td>
           <td class="<?= $down > 0 ? 'danger' : 'muted' ?>"><?= $down ?></td>
           <td><?= $tot ?></td>
+          <?php
+            $scanLevel = $pct < 50 ? 'critical' : ($pct < 80 ? 'warning' : 'normal');
+            $scanAria  = "Scan success rate {$pct}%, {$scanLevel} level";
+          ?>
           <td>
-            <div class="util-bar" style="width:120px">
+            <div class="util-bar" style="width:120px" role="meter" aria-label="<?= e($scanAria) ?>" aria-valuenow="<?= $pct ?>" aria-valuemin="0" aria-valuemax="100">
               <div class="util-bar-fill<?= $pct < 80 ? ' util-bar-fill--warn' : '' ?><?= $pct < 50 ? ' util-bar-fill--crit' : '' ?>"
                    data-pct="<?= $pct ?>" style="width:<?= $pct ?>%"></div>
             </div>
             <?= $pct ?>%
+            <?php if ($scanLevel !== 'normal'): ?>
+              <span class="sr-only"><?= e(ucfirst($scanLevel)) ?> level</span>
+            <?php endif; ?>
           </td>
         </tr>
         <?php endforeach ?>

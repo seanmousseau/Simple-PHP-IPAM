@@ -271,8 +271,19 @@ if ($data === null) {
  * ---------------------------------------------------------------------- */
 function health_dot(string $level): string
 {
-    $cls = match ($level) { 'ok' => 'ok', 'warn' => 'warn', 'crit' => 'crit', default => 'warn' };
-    return '<span class="health-dot ' . $cls . '" aria-label="' . e($level) . '"></span>';
+    // C4 / #956: the colored dot is the visible signal; pair it with a
+    // visually-hidden text equivalent so the severity is announced by
+    // screen readers and survives a forced-monochrome rendering. The
+    // aria-label on the dot remains for AT that consume role-described
+    // graphics directly; the .sr-only span is the belt-and-suspenders
+    // text node that always announces.
+    [$cls, $word] = match ($level) {
+        'ok'   => ['ok',   'OK'],
+        'crit' => ['crit', 'Critical'],
+        default => ['warn', 'Warning'],  // 'warn' and any unknown level
+    };
+    return '<span class="health-dot ' . $cls . '" aria-label="' . e($level) . '"></span>'
+         . '<span class="sr-only">' . e($word) . '</span>';
 }
 
 function health_row(string $label, string $value, string $level = ''): void

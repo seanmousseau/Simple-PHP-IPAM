@@ -147,6 +147,24 @@
 html[data-theme="light"]{color-scheme:light;}
 html[data-theme="dark"]{color-scheme:dark;}
 
+/* Screen-reader-only utility — C4 / #956.
+   Standard a11y pattern: visually hidden, accessible to assistive tech.
+   Used to pair color-only signals (util-bar severity, health-dot status)
+   with text equivalents for WCAG 1.4.1. Two existing consumers in
+   change_password.php were relying on this class without a definition;
+   defining it here fixes that latent bug too. */
+.sr-only{
+  position:absolute;
+  width:1px;
+  height:1px;
+  padding:0;
+  margin:-1px;
+  overflow:hidden;
+  clip:rect(0,0,0,0);
+  white-space:nowrap;
+  border:0;
+}
+
 /* Dark-mode calendar picker indicator: filter has no light-dark()
    equivalent, so this stays as a separate selector pair. */
 html[data-theme="dark"] ::-webkit-calendar-picker-indicator{filter:invert(1);}
