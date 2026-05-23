@@ -83,21 +83,41 @@
   --radius-4xl:var(--radius-3);   /* OP: 1rem = 16px */
   --radius-pill:var(--radius-round); /* OP: 1e5px — same visual effect (full pill) */
 
-  --font-size-2xs:.65rem;
-  --font-size-xs:.75rem;
-  --font-size-sm:.78rem;
-  --font-size-md:.82rem;
-  --font-size-base:.85rem;
-  --font-size-lg:.88rem;
-  --font-size-xl:.9rem;
-  --font-size-2xl:.92rem;
-  --font-size-3xl:.95rem;
-  --font-size-4xl:1rem;
-  --font-size-5xl:1.05rem;
-  --font-size-6xl:1.15rem;
-  --font-size-7xl:1.35rem;
-  --font-size-8xl:1.6rem;
-  /* --font-size-9xl (1.9rem) removed in #957 — zero references. */
+  /* Type scale — C1 / #953.
+     6-step scale at 12 / 14 / 16 / 20 / 24 / 32 px (assuming default
+     16px root). Five of the six alias OP --font-size-* tokens directly;
+     14px (--text-sm, body default) stays as a brand-defined intermediate
+     because OP's scale jumps from 12px to 16px without it.
+     The legacy 14-step --font-size-N and old 7-step --text-* tokens
+     below are kept as deprecation aliases pointing at one of the six
+     canonical sizes, so existing ~190 var() callers continue to resolve.
+     Net: 14 distinct production sizes (11/12/13/14/14.4/14.72/16/18/...)
+     collapse to 6. */
+  --text-xs:   var(--font-size-0);   /* 12px - OP */
+  --text-sm:   0.875rem;             /* 14px - body default, no OP match */
+  --text-base: var(--font-size-1);   /* 16px - OP */
+  --text-lg:   var(--font-size-3);   /* 20px - OP */
+  --text-xl:   var(--font-size-4);   /* 24px - OP */
+  --text-2xl:  var(--font-size-5);   /* 32px - OP */
+
+  /* --text-md retained as deprecation alias (was 1rem in v3.35.0). */
+  --text-md:   var(--text-base);     /* 16px */
+
+  /* Legacy --font-size-* deprecation aliases (rounded to nearest 6-step). */
+  --font-size-2xs: var(--text-xs);   /* was .65rem (10.4px)  → 12px */
+  --font-size-xs:  var(--text-xs);   /* was .75rem (12px)    → 12px */
+  --font-size-sm:  var(--text-sm);   /* was .78rem (12.5px)  → 14px */
+  --font-size-md:  var(--text-sm);   /* was .82rem (13.1px)  → 14px */
+  --font-size-base:var(--text-sm);   /* was .85rem (13.6px)  → 14px */
+  --font-size-lg:  var(--text-sm);   /* was .88rem (14.1px)  → 14px */
+  --font-size-xl:  var(--text-sm);   /* was .9rem  (14.4px)  → 14px */
+  --font-size-2xl: var(--text-sm);   /* was .92rem (14.72px) → 14px */
+  --font-size-3xl: var(--text-base); /* was .95rem (15.2px)  → 16px */
+  --font-size-4xl: var(--text-base); /* was 1rem   (16px)    → 16px */
+  --font-size-5xl: var(--text-base); /* was 1.05rem(16.8px)  → 16px */
+  --font-size-6xl: var(--text-lg);   /* was 1.15rem(18.4px)  → 20px */
+  --font-size-7xl: var(--text-lg);   /* was 1.35rem(21.6px)  → 20px */
+  --font-size-8xl: var(--text-xl);   /* was 1.6rem (25.6px)  → 24px */
 
   --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px var(--link);
   --font-sans:'Fira Sans',system-ui,-apple-system,sans-serif;
@@ -120,18 +140,6 @@
      single-token change. */
   --space-section: var(--space-8);
 
-  /* Typographic scale — ADR-007-2 migration to Open Props.
-     The 15-step --font-size-* scale above is intentionally untouched
-     in this PR — #953 will rewrite it as a 6-step scale, so a deep
-     OP alias here would be immediately undone. The --text-* scale
-     below aliases OP where values match. */
-  --text-xs:   0.6875rem;            /* no OP match */
-  --text-sm:   0.8125rem;            /* no OP match */
-  --text-base: 0.875rem;             /* no OP match */
-  --text-md:   var(--font-size-1);   /* OP: 1rem */
-  --text-lg:   1.125rem;             /* no OP match (OP --font-size-2 = 1.1rem, close) */
-  --text-xl:   var(--font-size-3);   /* OP: 1.25rem */
-  --text-2xl:  var(--font-size-4);   /* OP: 1.5rem */
 }
 
 @font-face{font-family:'Fira Sans';src:url('fonts/FiraSans-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
@@ -199,7 +207,9 @@ body{
   background:var(--bg);
   color:var(--fg);
   font-family:var(--font-sans);
-  font-size:var(--text-base);
+  /* C1 / #953 — desktop body uses --text-sm (14px). #954's mobile bump
+     to 1rem (16px) inside @media (max-width: 768px) overrides this. */
+  font-size:var(--text-sm);
   margin:0;
   line-height:1.5;
 }
@@ -417,7 +427,7 @@ tr.highlight{
   gap:var(--space-4);
   align-items:center;
   color:var(--muted);
-  font-size:.94rem;
+  font-size:var(--text-sm);
   margin-bottom:var(--space-5);
 }
 .breadcrumbs a{
@@ -463,7 +473,7 @@ tr.highlight{
   box-shadow:var(--shadow);
 }
 .metric .label{color:var(--muted);font-size:var(--font-size-2xl)}
-.metric .value{font-size:1.65rem;font-weight:700;margin-top:var(--space-3)}
+.metric .value{font-size:var(--text-xl);font-weight:700;margin-top:var(--space-3)}
 
 table{
   border-collapse:collapse;
@@ -607,17 +617,17 @@ button:disabled{opacity:.6;cursor:not-allowed}
   padding:3px var(--space-5);
   border:1px solid var(--border);
   border-radius:var(--radius-pill);
-  font-size:12px;
+  font-size:var(--text-xs);
   background:var(--badge-bg);
 }
 .status-used{color:var(--success);font-weight:600}
 .status-reserved{color:var(--warn);font-weight:600}
 .status-free{color:var(--muted);font-weight:600}
-.badge-network{background:color-mix(in srgb,var(--muted) 15%,var(--badge-bg) 85%);color:var(--muted);font-size:.7rem;padding:2px 6px}
+.badge-network{background:color-mix(in srgb,var(--muted) 15%,var(--badge-bg) 85%);color:var(--muted);font-size:var(--text-xs);padding:2px 6px}
 .badge-muted{background:color-mix(in srgb,var(--muted) 10%,var(--badge-bg) 90%);color:var(--muted);border-color:color-mix(in srgb,var(--muted) 30%,var(--border) 70%)}
 .badge-success{background:color-mix(in srgb,var(--success) 12%,var(--badge-bg) 88%);color:var(--success);border-color:color-mix(in srgb,var(--success) 35%,var(--border) 65%)}
-.badge-broadcast{background:color-mix(in srgb,var(--warn) 15%,var(--badge-bg) 85%);color:var(--warn);font-size:.7rem;padding:2px 6px}
-.badge-gateway{background:color-mix(in srgb,var(--link) 15%,var(--badge-bg) 85%);color:var(--link);font-size:.7rem;padding:2px 6px}
+.badge-broadcast{background:color-mix(in srgb,var(--warn) 15%,var(--badge-bg) 85%);color:var(--warn);font-size:var(--text-xs);padding:2px 6px}
+.badge-gateway{background:color-mix(in srgb,var(--link) 15%,var(--badge-bg) 85%);color:var(--link);font-size:var(--text-xs);padding:2px 6px}
 .audit-details{display:inline-block;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;cursor:pointer}
 .audit-details.audit-details--expanded{max-width:none;white-space:normal;overflow-wrap:break-word;cursor:pointer}
 .badge-role-admin{
@@ -643,8 +653,8 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .badge-type-firewall{background:color-mix(in srgb,var(--danger) 15%,var(--badge-bg) 85%);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--border) 60%)}
 .badge-type-other{background:var(--badge-bg);color:var(--muted);border-color:var(--border)}
 /* Compact nested table for device interfaces */
-.table-compact td,.table-compact th{padding:4px var(--space-8);font-size:.85rem}
-.device-ifaces h4{margin:0 0 var(--space-8);font-size:.875rem;font-weight:600;color:var(--muted)}
+.table-compact td,.table-compact th{padding:4px var(--space-8);font-size:var(--text-sm)}
+.device-ifaces h4{margin:0 0 var(--space-8);font-size:var(--text-sm);font-weight:600;color:var(--muted)}
 .util-bar{
   display:inline-block;
   width:60px;
@@ -862,7 +872,7 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
      the desktop's 14px default felt cramped. Only affects text that
      inherits from body without an explicit font-size — most components
      define their own --font-size-* token. */
-  body{font-size:1rem}
+  body{font-size:var(--text-base)}
   .page{padding:var(--space-7)}
   .footer-meta{padding:var(--space-4) var(--space-7)}
   .nav-wrap{
@@ -872,7 +882,7 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
   .nav-links{gap:var(--space-3)}
   .nav-pill{padding:7px 9px;font-size:var(--font-size-2xl)}
   th,td{padding:var(--space-4) var(--space-5);font-size:var(--font-size-xl)}
-  h1{font-size:1.45rem}
+  h1{font-size:var(--text-xl)}
   h2{font-size:var(--font-size-6xl)}
   .grid.cols-2,.grid.cols-3{
     grid-template-columns:1fr;
@@ -901,7 +911,7 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
   .footer-meta{padding:var(--space-3) var(--space-5)}
   .nav-wrap{padding:var(--space-4) var(--space-5)}
   .nav-pill{padding:var(--space-3) var(--space-4);font-size:var(--font-size-lg)}
-  h1{font-size:1.25rem}
+  h1{font-size:var(--text-lg)}
   .card{padding:var(--space-6)}
   .metric{padding:var(--space-5) var(--space-6)}
   th,td{padding:var(--space-3) var(--space-4);font-size:var(--font-size-base)}
@@ -912,7 +922,7 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
   position:fixed;top:0;left:0;width:100%;height:100%;
   background:rgba(0,0,0,.55);z-index:var(--z-page-overlay);
   display:flex;flex-direction:column;align-items:center;justify-content:center;
-  color:#fff;font-size:1.2rem;gap:var(--space-8);
+  color:#fff;font-size:var(--text-lg);gap:var(--space-8);
 }
 .spinner-overlay .spinner{
   width:48px;height:48px;border:5px solid rgba(255,255,255,.3);
@@ -947,7 +957,7 @@ thead th{position:sticky;top:0;z-index:var(--z-sticky);background:var(--card-2)}
 .nav-toggle{
   display:none;
   background:none;border:none;cursor:pointer;
-  font-size:1.4rem;color:var(--fg);padding:var(--space-2) var(--space-4);
+  font-size:var(--text-xl);color:var(--fg);padding:var(--space-2) var(--space-4);
   line-height:1;flex-shrink:0;
 }
 #nav-drawer{
@@ -965,7 +975,7 @@ body.nav-open #nav-drawer{transform:translateX(0);visibility:visible;pointer-eve
 body.nav-open .nav-drawer-overlay{display:block}
 #nav-drawer .drawer-close{
   align-self:flex-end;background:none;border:none;cursor:pointer;
-  font-size:1.2rem;color:var(--muted);padding:var(--space-2) var(--space-8) var(--space-6);
+  font-size:var(--text-lg);color:var(--muted);padding:var(--space-2) var(--space-8) var(--space-6);
 }
 #nav-drawer a,#nav-drawer button.nav-drawer-btn{
   display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;
@@ -1089,7 +1099,7 @@ html[data-theme=dark] .map-node-inner:hover{background:rgba(255,255,255,.06);}
 .map-desc{font-size:var(--font-size-base);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .map-util{display:flex;align-items:center;gap:5px;margin-left:auto;}
 .map-util .util-bar{width:60px;}
-.map-pct{font-size:.8rem;min-width:30px;}
+.map-pct{font-size:var(--text-xs);min-width:30px;}
 .map-cap{padding:var(--space-4) var(--space-6);color:var(--muted);font-style:italic;font-size:var(--font-size-xl);}
 
 /* ---- Inline cell editing (#254) ---- */
@@ -1161,7 +1171,7 @@ td[data-editable].cell-saving{opacity:.5;}
 .cc-row a{color:var(--link)}
 .cc-label{font-weight:600;color:var(--fg);margin-right:var(--space-2)}
 .contact-card-trigger{cursor:pointer}
-.cc-close{position:absolute;top:var(--space-2);right:var(--space-2);background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--muted);border-radius:var(--radius-sm);width:28px;height:28px;display:flex;align-items:center;justify-content:center;line-height:1;transition:color .15s,background .15s}
+.cc-close{position:absolute;top:var(--space-2);right:var(--space-2);background:none;border:none;cursor:pointer;font-size:var(--text-base);color:var(--muted);border-radius:var(--radius-sm);width:28px;height:28px;display:flex;align-items:center;justify-content:center;line-height:1;transition:color .15s,background .15s}
 .cc-close:hover{color:var(--fg);background:color-mix(in srgb,var(--fg) 8%,transparent)}
 .cc-close:focus-visible{outline:2px solid var(--link);outline-offset:2px}
 
@@ -1185,11 +1195,11 @@ td[data-editable].cell-saving{opacity:.5;}
 }
 .cb-close{
   position:absolute;right:10px;top:10px;background:none;border:none;
-  font-size:1.4rem;cursor:pointer;color:var(--muted);line-height:1;z-index:1;
+  font-size:var(--text-xl);cursor:pointer;color:var(--muted);line-height:1;z-index:1;
 }
 #contact-browse-input{
   display:block;width:100%;box-sizing:border-box;
-  padding:var(--space-7) var(--space-12) var(--space-7) var(--space-8);font-size:1rem;
+  padding:var(--space-7) var(--space-12) var(--space-7) var(--space-8);font-size:var(--text-base);
   background:var(--card);color:var(--fg);border:none;border-bottom:1px solid var(--border);outline:none;
 }
 #contact-browse-list{list-style:none;margin:0;padding:0;max-height:360px;overflow-y:auto}
@@ -1438,8 +1448,8 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 /* ── Dashboard chart empty state (v3.11.0 #644) ─────────────────────── */
 .chart-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;gap:var(--space-3)}
 .chart-empty .icon{width:32px;height:32px;color:var(--muted);opacity:.5}
-.chart-empty__msg{margin:0;color:var(--muted);font-size:.875rem;text-align:center}
-.chart-empty__cta{font-size:.8125rem;color:var(--link)}
+.chart-empty__msg{margin:0;color:var(--muted);font-size:var(--text-sm);text-align:center}
+.chart-empty__cta{font-size:var(--text-sm);color:var(--link)}
 
 /* ── Collapsible row toggle (v3.11.0 #632 #633) ─────────────────────── */
 .collapsible-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:none;border:none;cursor:pointer;color:var(--muted);padding:0;border-radius:var(--radius-sm);flex-shrink:0}
@@ -1464,9 +1474,9 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 /* ── TOTP enrollment (v3.6.0 #418) ──────────────────────────────────── */
 .totp-qr-container{display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px}
 .totp-qr-container canvas{border:4px solid #fff;border-radius:8px}
-.totp-secret-box{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;word-break:break-all;letter-spacing:.05em}
+.totp-secret-box{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--text-sm);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;word-break:break-all;letter-spacing:.05em}
 .totp-backup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin:16px 0}
-.totp-backup-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;text-align:center;letter-spacing:.1em}
+.totp-backup-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--text-sm);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;text-align:center;letter-spacing:.1em}
 
 /* ===== Sidebar layout (v3.8.0 #512) ===================================== */
 .layout-root{display:flex;min-height:100vh}

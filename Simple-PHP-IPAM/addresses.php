@@ -731,7 +731,7 @@ ipam_skeleton_flush();
                 if ($broadcastBin !== null && hash_equals($broadcastBin, $ipBin)) echo ' <span class="badge badge-broadcast" title="Broadcast address">Bcast</span>';
             }
             if (to_str($a['hostname'] ?? '') === 'gateway') echo ' <span class="badge badge-gateway" title="Gateway address">GW</span>';
-            if (!empty($a['is_stale'])): ?> <span class="badge" style="background:var(--danger);color:#fff;font-size:.7rem" title="Host missed recent scans">Stale</span><?php endif ?>
+            if (!empty($a['is_stale'])): ?> <span class="badge" style="background:var(--danger);color:#fff;font-size:var(--text-xs)" title="Host missed recent scans">Stale</span><?php endif ?>
           </td>
           <td<?= $isWrite ? ' data-editable="hostname" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['hostname'])) ?></td>
           <td<?= $isWrite ? ' data-editable="owner" data-addr-id="' . $aid . '"' : '' ?>><?php
@@ -768,8 +768,8 @@ ipam_skeleton_flush();
             <div class="actions-inline">
               <a href="address_history.php?address_id=<?= to_int($a['id']) ?>">History</a>
               <button type="button" class="ping-btn" data-address-id="<?= to_int($a['id']) ?>"
-                      data-csrf="<?= e(csrf_token()) ?>" style="font-size:.8rem;padding:2px 8px">Ping</button>
-              <span class="ping-result-<?= to_int($a['id']) ?> muted" style="font-size:.8rem"></span>
+                      data-csrf="<?= e(csrf_token()) ?>" style="font-size:var(--text-xs);padding:2px 8px">Ping</button>
+              <span class="ping-result-<?= to_int($a['id']) ?> muted" style="font-size:var(--text-xs)"></span>
             </div>
 
             <details class="mt-6"<?= $isHighlighted ? ' open' : '' ?>>

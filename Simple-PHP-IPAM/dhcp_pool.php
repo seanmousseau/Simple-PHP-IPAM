@@ -316,7 +316,7 @@ page_header('DHCP Pools');
     <button type="button" class="action-pill" id="dhcp-export-kea">Download Kea JSON</button>
     <button type="button" class="action-pill button-secondary" id="dhcp-preview-btn">Preview</button>
   </div>
-  <textarea id="dhcp-preview-output" readonly style="display:none;width:100%;margin-top:0.75rem;height:220px;font-family:var(--font-mono);font-size:0.8rem;resize:vertical;" spellcheck="false"></textarea>
+  <textarea id="dhcp-preview-output" readonly style="display:none;width:100%;margin-top:0.75rem;height:220px;font-family:var(--font-mono);font-size:var(--text-xs);resize:vertical;" spellcheck="false"></textarea>
 </div>
 
 

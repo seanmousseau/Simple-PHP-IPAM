@@ -292,9 +292,9 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
     <?php endif; ?>
     <p><button type="submit">Login</button></p>
     <?php if (demo_mode_enabled()): ?>
-      <p class="muted" style="margin-top:8px;font-size:.85rem;">Demo credentials: <strong>demo</strong> / <strong>demo</strong></p>
+      <p class="muted" style="margin-top:8px;font-size:var(--text-sm);">Demo credentials: <strong>demo</strong> / <strong>demo</strong></p>
     <?php else: ?>
-      <p class="muted" style="margin-top:6px;font-size:.85rem;"><a href="forgot_password.php">Forgot password?</a></p>
+      <p class="muted" style="margin-top:6px;font-size:var(--text-sm);"><a href="forgot_password.php">Forgot password?</a></p>
     <?php endif; ?>
     <?php if ($firstRun): ?>
       <p class="muted" style="margin-top:10px;">First run: use bootstrap admin from <code>config.php</code>, then change it.</p>
@@ -316,7 +316,7 @@ if ($idleSeconds > 0):
         ? round($idleMins / 60, 1) . ' hr'
         : $idleMins . ' min';
 ?>
-  <p class="muted text-center" style="font-size:.82rem;margin-top:14px;">Sessions expire after <?= e($idleLabel) ?> of inactivity.</p>
+  <p class="muted text-center" style="font-size:var(--text-sm);margin-top:14px;">Sessions expire after <?= e($idleLabel) ?> of inactivity.</p>
 <?php endif; ?>
 </div><!-- /.login-wrap -->
 <?php page_footer();

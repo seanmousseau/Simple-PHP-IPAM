@@ -128,7 +128,7 @@ page_header('Scan History');
           <span class="badge">Inactive</span>
         <?php endif ?>
         <?php if ($schedLast !== ''): ?>
-          <span class="muted" style="font-size:.85rem">Last run: <?= e(ipam_format_datetime($schedLast)) ?></span>
+          <span class="muted" style="font-size:var(--text-sm)">Last run: <?= e(ipam_format_datetime($schedLast)) ?></span>
         <?php endif ?>
       <?php else: ?>
         <span class="muted">No schedule configured.</span>
@@ -174,7 +174,7 @@ page_header('Scan History');
     <div class="card"><p class="muted">No scan results yet. Schedule a scan or run <code>php scan_run.php --subnet-id=<?= (int)$subnetId ?></code> from the CLI.</p></div>
   <?php else: ?>
   <div class="card" style="overflow-x:auto;margin-bottom:24px">
-    <h3 style="margin:0 0 12px">Scan Run History <span class="muted" style="font-weight:normal;font-size:.875rem">(last <?= count($runs) ?> runs)</span></h3>
+    <h3 style="margin:0 0 12px">Scan Run History <span class="muted" style="font-weight:normal;font-size:var(--text-sm)">(last <?= count($runs) ?> runs)</span></h3>
     <div class="table-wrap">
     <table>
       <thead>
