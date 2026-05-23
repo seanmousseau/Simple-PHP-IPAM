@@ -114,7 +114,7 @@ jobs:
           IPAM_ADMIN_PASS: demo
           IPAM_DRIVER: ${{ matrix.driver }}
           CI: 'true'
-        run: npx playwright test --project=vr-1440 --project=vr-1024 --project=vr-768 --project=vr-375
+        run: npx playwright test --project=vr-1440 --project=vr-1024 --project=vr-768 --project=vr-375 --project=vr-dashboard-1440 --project=vr-dashboard-1024 --project=vr-dashboard-768 --project=vr-dashboard-375
 
       - name: Container logs on failure
         if: failure()
