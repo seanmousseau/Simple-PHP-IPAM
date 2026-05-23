@@ -12,27 +12,32 @@ Vanilla CSS in `assets/app.css` (~3000 lines, CSS custom properties for theming)
 
 ---
 
-## Theme system
+## Design tokens
 
-Theme is controlled by `html[data-theme]` with three values: `auto` (default), `light`, `dark`. `auto` defers to `prefers-color-scheme`. The setting is persisted per user in `users.theme` and re-applied on login via `login_user()`.
+Per **ADR-007** (`docs/internal/architecture-decisions/007-open-props-adoption.md`), `assets/app.css` consumes [Open Props](https://open-props.style) as the underlying token base, layered with IPAM-specific brand values where the OP scale doesn't fit a compact admin UI.
 
-CSS uses custom properties exclusively for theme-able values. The full palette:
+**Token surface (`:root` in `app.css`):**
 
-| Variable | Light | Dark | Use |
-|---|---|---|---|
-| `--bg` | page background | | Outermost surface |
-| `--fg` | foreground text | | Default text |
-| `--muted` | secondary text | | Helper text, timestamps |
-| `--border` | divider lines | | All borders |
-| `--card` | elevated surface | | Cards, modals, sidebar |
-| `--danger` | red | | Destructive actions, errors |
-| `--success` | green | | Success states, confirmations |
-| `--warn` | amber | | Warning callouts |
-| `--link` | accent | | Links, primary actions |
-| `--btn` / `--btnfg` | button bg / fg | | Default button |
-| `--badge-bg` | badge fill | | Badges |
+| Layer | Tokens | Source |
+|---|---|---|
+| Color (light + dark) | `--bg`, `--fg`, `--muted`, `--border`, `--border-strong`, `--card`, `--card-2`, `--link`, `--danger`, `--success`, `--warn`, `--btn`, `--btnfg`, `--btn-secondary`, `--btn-secondary-fg`, `--brand`, `--badge-bg`, `--input-bg`, `--nav-bg`, `--shadow` (composed from `--shadow-near` + `--shadow-far`) | **Brand-defined.** Each token uses CSS `light-dark(<light>, <dark>)`; the chosen scheme is pinned by `html[data-theme="light|dark"] { color-scheme: ... }`. Closest OP gray noted in comment for reference; IPAM keeps its cool-toned neutrals as brand identity. |
+| Spacing | `--space-1` … `--space-13` | **6 alias OP** `--size-{1,2,3,4,5,8}` where values match exactly (4 / 8 / 16 / 20 / 24 / 48 px). The remaining 7 (2 / 6 / 10 / 12 / 14 / 40 / 60 px) have no OP equivalent and stay as px literals. |
+| Radius | `--radius-xs` … `--radius-4xl`, `--radius-pill` | **2 alias OP** `--radius-3` and `--radius-round` (16 px and full pill). The other 7 have no OP equivalent. |
+| Typography (15-step) | `--font-size-2xs` … `--font-size-8xl` | **Untouched** — owned by #953 (6-step type-scale rewrite). |
+| Typography (semantic) | `--text-xs` … `--text-2xl` | **3 alias OP** `--font-size-{1,3,4}` (`--text-md`, `--text-xl`, `--text-2xl`). |
+| Z-index | `--z-sticky`, `--z-topbar`, `--z-overlay`, `--z-drawer`, `--z-nav-overlay`, `--z-nav-drawer`, `--z-dropdown`, `--z-col-vis`, `--z-spinner`, `--z-toast`, `--z-page-overlay` | **Brand registry.** Each layer has exactly one z value; do not introduce ad-hoc z-indices. |
+| Misc | `--focus-ring`, `--font-sans`, `--font-mono` | Brand-defined. |
 
-**Never hardcode a colour.** Use a variable. If the colour you need doesn't exist, add a variable; don't bypass.
+**Theme controls.** `html[data-theme]` takes three values: `auto` (default — defers to `prefers-color-scheme`), `light`, `dark`. The setting is persisted per user in `users.theme` and re-applied on login via `login_user()`. With ADR-007-3 in place, `light` and `dark` toggles set `color-scheme` on the `html` element; `auto` leaves it as `light dark` so `light-dark()` resolves against the OS preference.
+
+**Adding a new token.**
+
+- Color: add a `light-dark()` declaration on `:root`; do not add new `[data-theme=dark]` override blocks.
+- Spacing / radius: if the value exists in Open Props, alias it (`var(--size-N)` or `var(--radius-N)`); otherwise add a px literal with a `/* no OP match */` comment.
+- Never hardcode a colour in a rule. Use a token. If the token you need doesn't exist, add it; don't bypass.
+- Typography: do not extend `--font-size-*` until #953 lands.
+
+**Browser support.** `light-dark()` requires Chrome 123+ (Mar 2024) / Safari 17.5 (May 2024) / Firefox 120 (Nov 2023). The project assumes modern evergreen browsers (already used: `:has()`, `:focus-visible`, `:where()`).
 
 ---
 

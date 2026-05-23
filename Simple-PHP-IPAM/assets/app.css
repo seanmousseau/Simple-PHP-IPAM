@@ -41,7 +41,7 @@
      scales match exactly (rem-based, identical px at the default 16px
      root font-size). Tokens with no OP equivalent keep their px literal.
      OP source: assets/vendor/open-props.min.css. */
-  --space-0:0;
+  /* --space-0 (0) removed in #957 — zero references. */
   --space-1:2px;             /* no OP match — smallest OP size is --size-1 (4px) */
   --space-2:var(--size-1);   /* OP: 0.25rem = 4px */
   --space-3:6px;             /* no OP match */
@@ -56,11 +56,10 @@
   --space-12:var(--size-8);  /* OP: 3rem = 48px */
   --space-13:60px;           /* no OP match */
 
-  --z-base:1;
+  /* z-index registry — #957 removed --z-base (0 refs) and --z-drawer-overlay (0 refs). */
   --z-sticky:2;
   --z-topbar:50;
   --z-overlay:100;
-  --z-drawer-overlay:179;
   --z-drawer:180;
   --z-nav-overlay:199;
   --z-nav-drawer:200;
@@ -98,7 +97,7 @@
   --font-size-6xl:1.15rem;
   --font-size-7xl:1.35rem;
   --font-size-8xl:1.6rem;
-  --font-size-9xl:1.9rem;
+  /* --font-size-9xl (1.9rem) removed in #957 — zero references. */
 
   --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px var(--link);
   --font-sans:'Fira Sans',system-ui,-apple-system,sans-serif;
