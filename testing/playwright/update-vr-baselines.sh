@@ -21,11 +21,29 @@
 #   bash testing/playwright/update-vr-baselines.sh
 #   bash testing/playwright/update-vr-baselines.sh --project=vr-768 --project=vr-375
 #
-# Footguns: the container image MUST match the `@playwright/test` version
-# pinned in `testing/playwright/package.json` (the runtime version-check is
-# strict — a v1.59.1 container against a v1.60.0 install exits at startup
-# with zero useful output). The image tag is derived from package.json
-# below; bump it whenever you bump `@playwright/test`.
+# Footguns:
+#
+# 1. The container image MUST match the `@playwright/test` version pinned
+#    in `testing/playwright/package.json` (the runtime version-check is
+#    strict — a v1.59.1 container against a v1.60.0 install exits at
+#    startup with zero useful output). The image tag is derived from
+#    package.json below; bump it whenever you bump `@playwright/test`.
+#
+# 2. **Sub-pixel font-rendering drift between the noble image and GitHub
+#    Actions' ubuntu-latest runner.** The fontconfig/freetype/libc stack
+#    on `mcr.microsoft.com/playwright:vX.Y.Z-noble` is close to but not
+#    identical to the one on `ubuntu-latest` with `npx playwright install`.
+#    Tight-tolerance comparisons on dense small text (e.g. `login` at
+#    `vr-375`) can land ~0.02 pixel-ratio different even though both
+#    environments report "Linux". When CI fails on a subset of *-linux.png
+#    baselines, the canonical source of truth is the CI artifact:
+#      a. `gh run download <run-id> --pattern "*playwright*" --dir /tmp/ci`
+#      b. The committed `*-linux.png` shares its SHA1 with one of the
+#         `data/<sha1>.png` files in the artifact (CI used it as the
+#         "expected" baseline). The OTHER `data/<sha1>.png` files at the
+#         same dimensions are the CI "actual" screenshots that failed.
+#      c. `cp /tmp/ci/.../data/<other-sha1>.png <broken-baseline>.png`
+#      d. Commit + push; CI passes on the next run.
 
 set -euo pipefail
 
