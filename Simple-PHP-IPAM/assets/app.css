@@ -103,6 +103,16 @@
   --font-sans:'Fira Sans',system-ui,-apple-system,sans-serif;
   --font-mono:'Fira Code',ui-monospace,'SFMono-Regular','Consolas',monospace;
 
+  /* Icon size tokens — C10 / #961.
+     IPAM uses two standard icon sizes: 16px (the default, used for nav,
+     action pills, inline indicators) and 20px (medium-emphasis, used for
+     section headings + the empty-state hint icons). The hardcoded values
+     in .icon, .icon-lg, and .collapsible-toggle .icon below reference
+     these tokens so callers can adopt either via class or via inline
+     CSS without re-deriving the value. */
+  --icon-sm: 16px;
+  --icon-md: 20px;
+
   /* Typographic scale — ADR-007-2 migration to Open Props.
      The 15-step --font-size-* scale above is intentionally untouched
      in this PR — #953 will rewrite it as a 6-step scale, so a deep
@@ -140,10 +150,14 @@ html[data-theme="dark"] ::-webkit-calendar-picker-indicator{filter:invert(1);}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 
-/* --- SVG icon system (#511) --- */
-.icon{display:inline-block;width:1rem;height:1rem;vertical-align:-0.125em;flex-shrink:0;pointer-events:none;fill:none}
-.icon-sm{width:.875rem;height:.875rem}
-.icon-lg{width:1.25rem;height:1.25rem}
+/* --- SVG icon system (#511, #961) --- */
+.icon{display:inline-block;width:var(--icon-sm);height:var(--icon-sm);vertical-align:-0.125em;flex-shrink:0;pointer-events:none;fill:none}
+/* .icon-sm previously declared 14px (.875rem); now standardized at 16px
+   per C10. Was unused at the prior 14px value, so no caller impact. */
+.icon-sm{width:var(--icon-sm);height:var(--icon-sm)}
+.icon-md{width:var(--icon-md);height:var(--icon-md)}
+/* .icon-lg retained for compat with one in-tree caller; same 20px as .icon-md. */
+.icon-lg{width:var(--icon-md);height:var(--icon-md)}
 .icon-xl{width:1.5rem;height:1.5rem}
 .icon-2xl{width:2rem;height:2rem}
 
@@ -1398,7 +1412,7 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 /* ── Collapsible row toggle (v3.11.0 #632 #633) ─────────────────────── */
 .collapsible-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:none;border:none;cursor:pointer;color:var(--muted);padding:0;border-radius:var(--radius-sm);flex-shrink:0}
 .collapsible-toggle:hover{color:var(--fg);background:color-mix(in srgb,var(--border) 60%,transparent)}
-.collapsible-toggle .icon{width:16px;height:16px;transition:transform 200ms ease}
+.collapsible-toggle .icon{width:var(--icon-sm);height:var(--icon-sm);transition:transform 200ms ease}
 .collapsible-toggle[aria-expanded="true"] .icon{transform:rotate(90deg)}
 @media (prefers-reduced-motion:reduce){.collapsible-toggle .icon{transition:none}}
 .collapsible-child--hidden{display:none}
