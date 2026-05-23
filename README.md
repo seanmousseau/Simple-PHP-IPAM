@@ -12,14 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.35.0
+## What's new in v3.36.0
 
-Refactor Wave 4 — lib polish + admin refactor. A pure code-quality release closing milestone #85. One schema migration (TOTP backup-code lookup discriminator); no new operator-facing pages; no new config keys; no operator action required.
+UX foundation — design system. The token vocabulary and accessibility primitives every subsequent UX release will consume. No schema migrations, no new config keys, no new operator-facing pages, no operator action required.
 
-- **TOTP backup-code verification is now O(1).** A non-secret HMAC discriminator (`lookup_key`) is stored alongside each bcrypt-hashed code. At verify time the verifier narrows the candidate set before performing any bcrypt work, so at most one hash is checked per login. The bcrypt+salt of the code itself remains the security boundary. Migration `3.35.0-totp-backup-lookup-key` is idempotent.
-- **Browser tag and contact changes are now audit-logged.** Attach/detach operations performed through the UI previously left no audit trail. `save_tags_for_entity` and `save_contacts_for_entity` now emit `tag.attach` / `tag.detach` / `contact.attach` / `contact.detach` rows matching the API audit shape.
-- **`@`-suppression CI linter.** `composer lint:at` refuses any `@`-suppressed I/O call without an inline justification comment. All 157 existing suppressions swept and annotated; the gate runs in CI on every push.
-- **Internal refactors** — `init.php` decomposed into four `lib/bootstrap_*.php` modules (435L → 141L); scan execution extracted to `lib/scan.php`; phpunit split into fast Unit (~2.3s) and DB-touching Integration (~30s) suites; dashboard visual-regression coverage restored with a mutation-isolated Playwright project.
+- **Design tokens unified.** Open Props is now the underlying CSS token base (per ADR-007). The accidental 14-step `font-size` ramp in production CSS collapses to a documented 6-step scale (12 / 14 / 16 / 20 / 24 / 32 px). New `--text-xs/sm/base/lg/xl/2xl`, `--icon-sm/md`, and `--space-section` tokens cover most of the new design vocabulary; legacy token names are kept as deprecation aliases so existing CSS keeps working.
+- **Dark-mode tokens consolidated via CSS `light-dark()`.** Three duplicated 22-line token blocks become one. Browser support floor: Chrome 123+ / Safari 17.5 / Firefox 120 (all GA since mid-2024).
+- **Accessibility — WCAG 1.4.1.** New `.sr-only` utility. Dashboard utilization bars now expose `role="meter"` with `aria-label` + `aria-valuenow/min/max` and a screen-reader-only severity label when above the warn/crit threshold. `health_dot()` announces level in plain text alongside the colored dot. Mobile body font-size bumped to 16px to stop iOS Safari auto-zooming on form-input focus.
+- **Dashboard visual-regression coverage is actually working.** The `vr-dashboard-*` Playwright projects added in v3.35.0 had been silently no-op because the audit-log "Recent Activity" widget accumulates rows across the suite. The widget is now masked; coverage is live across 4 viewports × 2 themes.
+- **Internal: `testing/playwright/update-vr-baselines.sh`** — one-command regeneration of `*-darwin.png` (host) and `*-linux.png` (inside the Playwright noble container). Documents the recurring SDK/image version-mismatch and sub-pixel font-drift footguns.
 
 [Full changelog →](CHANGELOG.md)
 

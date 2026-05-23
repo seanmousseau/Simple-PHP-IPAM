@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.36.0] - 2026-05-23
+
+UX foundation — design system. Lays the token vocabulary and accessibility primitives that every subsequent UX release in the v3.37+ stream will consume. Adopts Open Props (per ADR-007) as the underlying CSS token base, collapses the accidental 14-step type ramp into a documented 6-step scale, switches dark-mode token overrides to CSS `light-dark()`, defines screen-reader and icon-size utilities, and re-enables the long-broken dashboard visual-regression coverage with a deterministic mask. **No schema migrations, no new config keys, no new operator-facing pages.** Closes 13 of 17 issues in milestone #59; remaining 4 are scoped follow-ups (see Known limitations).
+
+### Known limitations
+
+- **Legacy `--font-size-{2xs..8xl}` and old `--text-*` tokens kept as deprecation aliases.** All ~190 existing `var(--*)` call sites continue to resolve, but each now points at one of the six canonical `--text-*` sizes. Hard removal of the legacy aliases is **not tracked yet** — file an issue against milestone v3.37.0 if you want it sequenced.
+- **`subnets.php` and `backup_admin.php` Backup/Destinations/History tabs are still excluded from VR coverage.** Same audit-log-drift class of issue as the dashboard, awaiting an equivalent mask. Tracked as #1251 (subnets) and the inline notes at `testing/playwright/tests/visual-regression.spec.ts:32-48`; target milestone TBD.
+- **`subnets.php` map-util bars use color-only signal for severity.** The percent is populated by JS post-load, so the screen-reader-only level text would also need JS. Not in v3.36.0; will fold into a future JS pass. Tracked inline in `Simple-PHP-IPAM/subnets.php:571`; file an issue against milestone v3.37.0 if you want it sequenced.
+- **Scanner performance overhaul (#790) deferred.** Originally listed in milestone #59 as a parallel track; pulled to focus this release on the design-system theme. Remains open against #59; will be re-milestoned to a future release.
+
+### Added
+
+- **6-step type scale (#953, C1).** New `--text-xs/sm/base/lg/xl/2xl` canonical scale at 12/14/16/20/24/32 px. 5 of 6 alias Open Props `--font-size-*` directly; the 14px body-default intermediate stays brand-defined (OP jumps from 12 to 16 with nothing between). Production CSS dropped from 14 distinct sizes to 6.
+- **`--icon-sm: 16px` and `--icon-md: 20px` tokens (#961, C10).** Standard inline icon sizing. `.icon`, `.collapsible-toggle .icon`, and `.icon-lg` now consume them; new `.icon-md` class added for the v3.37+ sidebar / command-palette work.
+- **`--space-section: var(--space-8)` token (#959, C7).** Single source of truth for the gap between adjacent cards and dashboard widgets; `.card + .card`, `.grid`, and `.metric-row` consume it. Rebalancing section rhythm globally is now a single-token change.
+- **`.sr-only` utility class (#956, C4).** Standard visually-hidden helper. Used to pair color-only severity signals (util-bar `warn`/`crit`, `health_dot()`) with screen-reader text equivalents per WCAG 1.4.1. Side benefit: fixes a latent bug in `change_password.php` where two `.sr-only` spans were visible to all users because the class wasn't defined.
+- **VR baseline regeneration helper `testing/playwright/update-vr-baselines.sh` (#954, side-deliverable).** One-command regen for both `*-darwin.png` (host Playwright) and `*-linux.png` (inside `mcr.microsoft.com/playwright:vX.Y.Z-noble`, image tag derived from `package.json`). Documents the two recurring footguns: SDK/container version mismatch and sub-pixel font drift between the noble image and CI's `ubuntu-latest` runner. Used by every visual-change PR in this release.
+- **Dashboard visual-regression coverage actually working (#1311).** PR #775 added the `vr-dashboard-*` projects but the audit_log "Recent Activity" widget accumulates rows across the test suite, drifting the rendered page height between runs. New `VRPage.maskSelectors[]` threads through to Playwright's `toHaveScreenshot({ mask })`; the recent-activity widget is masked. CI workflow now runs all four `vr-dashboard-*` projects on the sqlite matrix slot; 16 baselines committed (8 darwin + 8 linux).
+
+### Changed
+
+- **CSS dark-mode token overrides consolidated via `light-dark()` (#1257, ADR-007-3).** Three duplicated token blocks (`@media (prefers-color-scheme: dark) :root`, `html[data-theme="light"]`, `html[data-theme="dark"]`) — totalling 94 lines — collapsed into one set of `light-dark(<light>, <dark>)` declarations on `:root`, plus tiny `color-scheme` switches on the html element when the user has explicitly toggled. Token drift between OS-preference and toggle paths is now structurally impossible. **Browser support floor:** Chrome 123+ (Mar 2024) / Safari 17.5 (May 2024) / Firefox 120 (Nov 2023).
+- **Spacing / radius / `--text-*` tokens alias Open Props where values match exactly (#1256, ADR-007-2).** 6 of 14 `--space-*` (2/4/8/9/10/12) alias `--size-{1,2,3,4,5,8}`; 2 of 9 `--radius-*` (`4xl` / `pill`) alias `--radius-3` / `--radius-round`; 3 of 7 `--text-*` (`md` / `xl` / `2xl`) alias `--font-size-{1,3,4}`. Rem-based aliases resolve to identical px values; ~300 existing `var()` references continue to work.
+- **Dashboard, scan_history util-bars announce severity to screen readers (#956, WCAG 1.4.1).** `.util-bar` wrapper rendered as `role="meter"` with `aria-label` + `aria-valuenow/min/max`; `<span class="sr-only">{Warning|Critical} level</span>` adjacent to the percent when above threshold.
+- **`health_dot()` (`Simple-PHP-IPAM/health.php`) emits screen-reader text alongside the dot (#956, WCAG 1.4.1).** Sibling `<span class="sr-only">{OK|Warning|Critical}</span>` keeps the visible dot unchanged but ensures the severity is announced.
+- **Mobile body font-size bumped to 16px (#954, C2).** `body { font-size: 1rem }` inside `@media (max-width: 768px)`. Prevents iOS Safari auto-zoom on form-input focus; better readability on phones. Desktop body stays at 14px (`var(--text-sm)`).
+- **`.sidebar-logo-link` no longer picks up `a:hover{text-decoration:underline}` or the default `:visited` color (#958, S9 + C6).** Targeted `:hover` / `:focus` / `:visited` overrides preserve the brand link's at-rest appearance across both themes.
+- **Em-dash empty-cell fallback applied to `bulk_update.php` unconfigured-IP rows and `dhcp_pool.php` no-delete-permission rows (#960, C9).** Last 4 bare `<td></td>` sites in the codebase; matches the convention already in use across `addresses.php`, `audit.php`, `aggregates.php`, and the other list pages.
+
+### Documentation
+
+- **`docs/internal/design-guide.md` rewritten for the post-ADR-007 token system.** "Theme system" section becomes "Design tokens" with a full surface table (color / spacing / radius / typography / z-index / misc) annotated by source (Open Props alias vs brand-defined). New "Badges, pills, and status utilities" section documents the three-primitive split (`.badge` = label, `.nav-pill`/`.action-pill` = button, `.status-*` = color utility) with explicit reasoning for why they should not be unified (closes #955, C3). "Accessibility" section gains a "color is never the sole signal" entry with worked examples.
+- **`docs/internal/coding-guide.md` PR-time gate #9 + `CLAUDE.md` hot-cache invariant #7 corrected.** Both referenced the wrong bootstrap path; canonical is `testing/playwright/bootstrap-app.sh`. Companion fix in `testing/playwright/tests/vr-dashboard.setup.ts` and `testing/scripts/phpunit-against-driver.sh`.
+- **`docs/upgrading.md`** — new `### v3.36.0` section with the design-system + a11y notes for operators.
+
+### Internal
+
+- **`@vr-dashboard` carve-out from local developer Playwright runs is no longer needed.** Once the linux baselines are in (this release), `npx playwright test` runs the full VR matrix including the four `vr-dashboard-*` projects.
+- **CSS source-of-truth: 14 distinct font sizes in production CSS collapsed to 6.** Surveyed via `grep -oE "font-size:\\s*[0-9.]+\\s*(rem|px|em)"`; remaining `em`-based values are intentionally parent-relative and left as-is.
+- **Pre-existing latent bug fixed: `.sr-only` class was referenced in `change_password.php` without a CSS definition** (two visible strings on the change-password page), now correctly hidden.
+- **Dead-token cleanup (#957).** Removed `--space-0`, `--font-size-9xl`, `--z-base`, `--z-drawer-overlay` from `:root` — all had zero call sites.
+
+[3.36.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.35.0...v3.36.0
+
 ## [3.35.0] - 2026-05-22
 
 Refactor Wave 4 — lib polish + admin refactor. A pure code-quality release closing the 7 open issues in milestone #85. One small schema migration (TOTP backup-code lookup discriminator); no new operator-facing pages; no new config keys.

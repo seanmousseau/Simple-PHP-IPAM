@@ -121,6 +121,15 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.36.0
+
+- **No breaking changes. No schema migrations. No new config keys. No operator action required.** v3.36.0 is "UX foundation — design system" — closes 13 of 17 issues in milestone #59. Upgrade with `upgrade.sh` as normal.
+- **CSS browser-support floor raised.** The dark-mode token consolidation uses the CSS Color Module Level 4 `light-dark()` function, which requires Chrome 123+ (Mar 2024), Safari 17.5 (May 2024), or Firefox 120 (Nov 2023). Users on older browsers will see the light-theme tokens regardless of OS preference until they upgrade. Real-world impact is small: ≈98% of global browser traffic per caniuse, and the project already required `:has()` and `:focus-visible` which have similar floors.
+- **Mobile body font-size bumped to 16px** (`@media (max-width: 768px)` only; desktop body stays 14px). Prevents iOS Safari auto-zooming on form-input focus and improves readability. Some mobile screenshots will look slightly different — paragraph text grows a hair where it inherits from body without an explicit `font-size`. Custom CSS overriding `body { font-size: ... }` continues to win.
+- **Type scale collapsed from 14 distinct sizes to 6** (12 / 14 / 16 / 20 / 24 / 32 px). Most pages render visually identically because most call sites already used one of the canonical sizes; the remaining sizes (e.g. 11.9, 14.4, 18.4 px) round to the nearest of the 6. The legacy `--font-size-{2xs..8xl}` and old `--text-*` tokens are kept as deprecation aliases so custom CSS continues to resolve.
+- **Color tokens unchanged at the value level.** IPAM's slightly cool-toned neutrals stay as brand identity (per ADR-007-3 conservative scope). Only the *structural* layout of the dark-mode overrides changed — the rendered colors are identical.
+- **Re-enables `vr-dashboard-*` Playwright projects on CI.** Operators forking the codebase and running CI should not see new failures; baselines for both `*-darwin.png` and `*-linux.png` are committed. If you run Playwright locally, see `testing/playwright/update-vr-baselines.sh` for the regeneration recipe.
+
 ### v3.35.0
 
 - **One schema migration: `3.35.0-totp-backup-lookup-key`.** Adds `totp_backup_codes.lookup_key VARCHAR(16) NULL` + composite index `idx_totp_backup_lookup (user_id, lookup_key)`. Idempotent; no manual action required. Existing rows keep `lookup_key = NULL`; the verifier falls back to a slow scan for them (one release).
