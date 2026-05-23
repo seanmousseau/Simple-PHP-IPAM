@@ -95,14 +95,34 @@ Destructive actions render a `<button class="button-danger">` with a `data-confi
 
 Card titles use `<h2>` for the page-level card and `<h3>` for cards inside that. Don't skip heading levels.
 
-### Status indicators
+### Badges, pills, and status utilities
 
-| Class | Use |
-|---|---|
-| `.status-used`, `.status-reserved`, `.status-free` | Address status pill |
-| `.badge` | Generic small label |
-| `.badge-update` | "Update available" indicator in footer |
-| `.muted`, `.danger`, `.success`, `.warning` | Inline text colour utilities |
+Three **functionally distinct** primitives exist for small inline indicators. They look superficially similar but serve different purposes — don't fold them into one class. This is the documented taxonomy; new code follows it.
+
+| Primitive | Role | Interactive | Has visual chrome (box/border/bg)? | Examples |
+|---|---|---|---|---|
+| **`.badge`** + `.badge-*` variants | Non-interactive **label** | No | Yes — bordered pill with `--badge-bg` background | Role badges (`.badge-role-admin`), device types (`.badge-type-router`), update indicator (`.badge-update`), tag pills |
+| **`.nav-pill`** / **`.action-pill`** | Interactive **button**, pill-shaped | Yes | Yes — same shape as `.badge` but with hover state | Top nav items, inline row actions ("Add Subnet", "Bulk Update", "Export CSV") |
+| **`.status-{used,reserved,free}`** / **`.status-badge`** | Color **utility** for inline status — text-only | Sometimes (`.status-badge[data-addr-id]` is clickable) | **No** — just `color` + `font-weight: 600` | Dashboard KPI counts, addresses.php status cell |
+
+#### When to use which
+
+- **A non-interactive label** that names a category, role, type, or version → `.badge` (+ tinted variant).
+- **A clickable button** that triggers navigation or an action → `.nav-pill` (top nav) or `.action-pill` (row/page actions). Not a badge.
+- **Coloring text/numbers** by status without adding a box → `.status-{used,reserved,free}`. Used for counts on the dashboard and the click-to-cycle status cell on addresses.php.
+- **A new color-coded label primitive** that doesn't fit any of the three above → first ask whether the existing variants (`.badge-success/.badge-muted/.badge-broadcast/.badge-gateway/...`) cover it. If not, add a new `.badge-*` variant; don't introduce a 4th primitive.
+
+#### Variant tinting convention
+
+Every `.badge-*` color variant uses the same recipe: `color-mix(in srgb, var(--accent) 12-15%, var(--badge-bg) 85-88%)` for background, full `var(--accent)` for foreground, and a 35-40% mix for the border. This keeps every tinted badge legible in both themes (the `--badge-bg` and `--border` tokens flip on dark mode automatically via `light-dark()`).
+
+#### Footgun
+
+`.status-badge[data-addr-id]:hover` currently sets `text-decoration: underline` to advertise clickability. That is *intentional* — don't strip it; it's the only at-rest affordance for the click-to-cycle interaction. Pattern is similar to but **opposite** of the sidebar brand link (#958), which deliberately suppresses the underline.
+
+#### Out of scope (do not add)
+
+- A unified `.badge--{status,tag,filter,action}` BEM hierarchy — buttons and color utilities don't belong under the badge umbrella; forcing them in either strips button interactivity or adds chrome to colored numbers. The current 3-primitive split is the right shape.
 
 ### Utilisation bars (subnet allocation gauges)
 
