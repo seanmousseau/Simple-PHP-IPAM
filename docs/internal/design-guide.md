@@ -23,8 +23,7 @@ Per **ADR-007** (`docs/internal/architecture-decisions/007-open-props-adoption.m
 | Color (light + dark) | `--bg`, `--fg`, `--muted`, `--border`, `--border-strong`, `--card`, `--card-2`, `--link`, `--danger`, `--success`, `--warn`, `--btn`, `--btnfg`, `--btn-secondary`, `--btn-secondary-fg`, `--brand`, `--badge-bg`, `--input-bg`, `--nav-bg`, `--shadow` (composed from `--shadow-near` + `--shadow-far`) | **Brand-defined.** Each token uses CSS `light-dark(<light>, <dark>)`; the chosen scheme is pinned by `html[data-theme="light|dark"] { color-scheme: ... }`. Closest OP gray noted in comment for reference; IPAM keeps its cool-toned neutrals as brand identity. |
 | Spacing | `--space-1` … `--space-13` | **6 alias OP** `--size-{1,2,3,4,5,8}` where values match exactly (4 / 8 / 16 / 20 / 24 / 48 px). The remaining 7 (2 / 6 / 10 / 12 / 14 / 40 / 60 px) have no OP equivalent and stay as px literals. |
 | Radius | `--radius-xs` … `--radius-4xl`, `--radius-pill` | **2 alias OP** `--radius-3` and `--radius-round` (16 px and full pill). The other 7 have no OP equivalent. |
-| Typography (15-step) | `--font-size-2xs` … `--font-size-8xl` | **Untouched** — owned by #953 (6-step type-scale rewrite). |
-| Typography (semantic) | `--text-xs` … `--text-2xl` | **3 alias OP** `--font-size-{1,3,4}` (`--text-md`, `--text-xl`, `--text-2xl`). |
+| Typography (6-step) | `--text-xs` (12) · `--text-sm` (14) · `--text-base` (16) · `--text-lg` (20) · `--text-xl` (24) · `--text-2xl` (32) | **5 alias OP** `--font-size-{0,1,3,4,5}`; the 14px `--text-sm` (body default) stays as a brand-defined intermediate. **The legacy `--font-size-{2xs..8xl}` 14-step scale and the prior 7-step `--text-*` scale are kept as deprecation aliases** pointing at one of the six canonical sizes, so existing var() callers still resolve. New rules should use the 6-step scale directly. |
 | Z-index | `--z-sticky`, `--z-topbar`, `--z-overlay`, `--z-drawer`, `--z-nav-overlay`, `--z-nav-drawer`, `--z-dropdown`, `--z-col-vis`, `--z-spinner`, `--z-toast`, `--z-page-overlay` | **Brand registry.** Each layer has exactly one z value; do not introduce ad-hoc z-indices. |
 | Misc | `--focus-ring`, `--font-sans`, `--font-mono` | Brand-defined. |
 
@@ -35,7 +34,7 @@ Per **ADR-007** (`docs/internal/architecture-decisions/007-open-props-adoption.m
 - Color: add a `light-dark()` declaration on `:root`; do not add new `[data-theme=dark]` override blocks.
 - Spacing / radius: if the value exists in Open Props, alias it (`var(--size-N)` or `var(--radius-N)`); otherwise add a px literal with a `/* no OP match */` comment.
 - Never hardcode a colour in a rule. Use a token. If the token you need doesn't exist, add it; don't bypass.
-- Typography: do not extend `--font-size-*` until #953 lands.
+- Typography: use one of the six `--text-*` sizes. Do not introduce a 7th step. Do not use raw `rem`/`px` font-sizes in new CSS — that recreates the drift #953 collapsed.
 
 **Browser support.** `light-dark()` requires Chrome 123+ (Mar 2024) / Safari 17.5 (May 2024) / Firefox 120 (Nov 2023). The project assumes modern evergreen browsers (already used: `:has()`, `:focus-visible`, `:where()`).
 

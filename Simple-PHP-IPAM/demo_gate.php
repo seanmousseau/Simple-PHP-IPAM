@@ -142,7 +142,7 @@ $jsModules = [
 <body>
 <div class="gate-wrap">
   <div style="text-align:center;margin-bottom:12px;">
-    <div class="nav-brand" style="font-size:2rem;display:block;">Simple<span class="nav-brand-php">PHP</span>IPAM</div>
+    <div class="nav-brand" style="font-size:var(--text-2xl);display:block;">Simple<span class="nav-brand-php">PHP</span>IPAM</div>
   </div>
   <h1>Almost there…</h1>
   <?php render_security_banner('demo_gate', 'This is a demo environment. Do not enter real IP data or credentials.'); ?>

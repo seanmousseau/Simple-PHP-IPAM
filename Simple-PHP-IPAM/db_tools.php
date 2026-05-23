@@ -37,7 +37,7 @@ if (
         $mbLimit = (int) round($postMaxBytes / 1024 / 1024);
         $mbSent  = (int) round($_contentLen / 1024 / 1024);
         echo '<!DOCTYPE html><meta charset="utf-8"><title>Upload too large</title>';
-        echo '<style>body{font:16px system-ui,sans-serif;max-width:640px;margin:60px auto;padding:0 20px;color:#222}h1{font-size:24px}code{background:#f4f4f4;padding:2px 6px;border-radius:3px}</style>';
+        echo '<style>body{font:16px system-ui,sans-serif;max-width:640px;margin:60px auto;padding:0 20px;color:#222}h1{font-size:var(--text-xl)}code{background:#f4f4f4;padding:2px 6px;border-radius:3px}</style>';
         echo '<h1>413 — Uploaded file too large</h1>';
         echo "<p>The upload was approximately <strong>{$mbSent}&nbsp;MB</strong>, which exceeds this server's <code>post_max_size</code> limit of <strong>{$mbLimit}&nbsp;MB</strong>.</p>";
         echo '<p>To import a larger SQL dump, raise both <code>post_max_size</code> and <code>upload_max_filesize</code> in one of the following places and try again:</p>';

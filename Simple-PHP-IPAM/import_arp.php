@@ -89,7 +89,7 @@ render_security_banner('import_arp', 'ARP import overwrites MAC address fields o
         <label for="raw"><strong>ARP / Neighbour Data</strong></label><br>
         <textarea name="raw" id="raw" rows="10" style="width:100%;margin-top:4px;font-family:monospace;resize:vertical"
           placeholder="192.168.1.1  aa:bb:cc:dd:ee:ff&#10;192.168.1.2  11:22:33:44:55:66"><?= e(to_str($_POST['raw'] ?? '')) ?></textarea>
-        <div class="muted" style="font-size:.8rem;margin-top:4px">
+        <div class="muted" style="font-size:var(--text-xs);margin-top:4px">
           Accepts space, tab, or comma-separated lines. IP can appear before or after MAC. Extra columns are ignored.
         </div>
       </div>
