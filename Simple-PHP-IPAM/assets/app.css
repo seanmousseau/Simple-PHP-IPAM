@@ -831,6 +831,13 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
 
 /* Mobile — 768px breakpoint */
 @media (max-width: 768px){
+  /* C2 / #954 — bump base body font-size to 16px on mobile. Two reasons:
+     (a) prevents iOS Safari from auto-zooming when focusing a form input
+     whose font-size is < 16px; (b) better readability on phones where
+     the desktop's 14px default felt cramped. Only affects text that
+     inherits from body without an explicit font-size — most components
+     define their own --font-size-* token. */
+  body{font-size:1rem}
   .page{padding:var(--space-7)}
   .footer-meta{padding:var(--space-4) var(--space-7)}
   .nav-wrap{
