@@ -460,7 +460,7 @@ page_header('DHCP Pools');
               </form>
             </td>
             <?php else: ?>
-            <td></td>
+            <td class="muted">—</td>
             <?php endif; ?>
           </tr>
           <?php endif; ?>

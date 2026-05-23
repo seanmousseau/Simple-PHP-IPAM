@@ -512,10 +512,10 @@ page_header('Bulk Update');
         <tr class="muted opacity-70">
           <td><input class="addrbox" type="checkbox" name="unconf_ips[]" value="<?= e($uip) ?>" data-unconf="1"></td>
           <td><?= e($uip) ?></td>
-          <td></td>
-          <td></td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
           <td><span class="muted"><em>free (unconfigured)</em></span></td>
-          <td></td>
+          <td class="muted">—</td>
           <td class="muted">—</td>
         </tr>
       <?php endforeach; ?>
