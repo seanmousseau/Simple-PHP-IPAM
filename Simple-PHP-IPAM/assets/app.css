@@ -113,6 +113,13 @@
   --icon-sm: 16px;
   --icon-md: 20px;
 
+  /* Section rhythm — C7 / #959.
+     One token for the gap between adjacent cards / dashboard widgets
+     and for .grid container gaps. Set to --space-8 (16px) to match the
+     existing consensus; rebalancing section rhythm globally becomes a
+     single-token change. */
+  --space-section: var(--space-8);
+
   /* Typographic scale — ADR-007-2 migration to Open Props.
      The 15-step --font-size-* scale above is intentionally untouched
      in this PR — #953 will rewrite it as a 6-step scale, so a deep
@@ -335,7 +342,7 @@ h3{font-size:var(--text-md);font-weight:600;line-height:1.3}
   padding:var(--space-8);
   box-shadow:var(--shadow);
 }
-.card + .card{margin-top:var(--space-8)}
+.card + .card{margin-top:var(--space-section)}
 
 .table-wrap{
   overflow:auto;
@@ -404,7 +411,7 @@ tr.highlight{
 
 .grid{
   display:grid;
-  gap:var(--space-8);
+  gap:var(--space-section);
   align-items:stretch;
 }
 .grid > .card{
@@ -423,7 +430,7 @@ tr.highlight{
 /* Dashboard metric grid — always 3 columns at ≥640px, collapses to 1 at mobile (#649) */
 .metric-row{
   display:grid;
-  gap:var(--space-8);
+  gap:var(--space-section);
   grid-template-columns:repeat(3,1fr);
 }
 @media(max-width:640px){
