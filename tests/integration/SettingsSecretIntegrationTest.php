@@ -65,7 +65,13 @@ final class SettingsSecretIntegrationTest extends TestCase
         ");
 
         $GLOBALS['db']     = $this->db;
-        $GLOBALS['config'] = [];
+        // Seed app_secret in $config so the encrypt/decrypt path runs
+        // without going through ipam_app_secret()'s realpath(config.php)
+        // autogen branch. Pre-v3.36.1 this was implicit because config.php
+        // was tracked in git and always present in CI; v3.36.1 untracked
+        // config.php so the test must set app_secret explicitly. Value is a
+        // valid 32-byte base64-encoded payload (HKDF input).
+        $GLOBALS['config'] = ['app_secret' => str_repeat('A', 44)];
         $_SESSION          = [];
 
         ipam_setting_cache_bust();

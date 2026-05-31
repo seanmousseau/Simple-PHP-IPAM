@@ -16,18 +16,20 @@ Hotfix: app_secret resilience + release-tarball confidentiality. Triggered by a 
 
 ### Fixed
 
-- **`ipam_setting()` no longer fatal-throws on an undecryptable managed envelope (#TBD).** The v3.31.0 #1233 design failed loud at the boot path to surface intentional `app_secret` rotation, but the same throw made the app un-bootable when `app_secret` was *un*intentionally lost (the v3.36.0 demo regression). Reading a corrupted sensitive setting now logs `ipam_setting: decrypt failed for key <name>: …` via `error_log`, caches and returns the registry default for the rest of the request, and lets the admin reach the Settings UI to resave (which re-encrypts under the current `app_secret`). The "do not silently fall back to the in-memory `config.php` value" half of #1233 is preserved — the row is returned as the registry default, never as a stale config-shaped value. See updated `tests/integration/SettingsSecretIntegrationTest.php::testCorruptEnvelopeForManagedKeyDegradesToRegistryDefault`.
-- **`releases/make_releases.sh` excludes `/config.php`, `/config.php.bak-*`, and `/config.php.prebootstrap-backup` (#TBD).** Fresh-install bootstrap still works because `config.php.example` is shipped and `upgrade.sh` now copies it into place when `$TARGET_DIR/config.php` is missing (with a back-compat fall-through to `config.php` for older tarballs).
-- **`upgrade.sh` fresh-install safety net seeds from `config.php.example` (#TBD).** Companion change to the builder exclude — previously the safety net at line 209 copied the tarball's `config.php`; now it copies `config.php.example` first and falls back to `config.php` only if the operator is upgrading from a pre-v3.36.1 layout.
+- **`ipam_setting()` no longer fatal-throws on an undecryptable managed envelope (#1329).** The v3.31.0 #1233 design failed loud at the boot path to surface intentional `app_secret` rotation, but the same throw made the app un-bootable when `app_secret` was *un*intentionally lost (the v3.36.0 demo regression). Reading a corrupted sensitive setting now logs `ipam_setting: decrypt failed for key <name>: …` via `error_log`, caches and returns the registry default for the rest of the request, and lets the admin reach the Settings UI to resave (which re-encrypts under the current `app_secret`). The "do not silently fall back to the in-memory `config.php` value" half of #1233 is preserved — the row is returned as the registry default, never as a stale config-shaped value. See updated `tests/integration/SettingsSecretIntegrationTest.php::testCorruptEnvelopeForManagedKeyDegradesToRegistryDefault`.
+- **`releases/make_releases.sh` excludes `/config.php`, `/config.php.bak-*`, and `/config.php.prebootstrap-backup` (#1329).** Fresh-install bootstrap still works because `config.php.example` is shipped and `upgrade.sh` now copies it into place when `$TARGET_DIR/config.php` is missing (with a back-compat fall-through to `config.php` for older tarballs).
+- **`upgrade.sh` fresh-install safety net seeds from `config.php.example` (#1329).** Companion change to the builder exclude — previously the safety net at line 209 copied the tarball's `config.php`; now it copies `config.php.example` first and falls back to `config.php` only if the operator is upgrading from a pre-v3.36.1 layout.
 
 ### Added
 
-- **`tools/clear-broken-secret.php` recovery CLI (#TBD).** Headless null-out for managed settings envelopes that can no longer decrypt. Refuses non-sensitive keys, refuses rows that decrypt cleanly, supports `--all-broken` scan, `--dry-run` reporting, and one or more `--key <name>` arguments. Pairs with the new runbook entry. Use it when you cannot log in to resave through the Settings UI, or when scripting a recovery across many installs.
+- **`tools/clear-broken-secret.php` recovery CLI (#1329).** Headless null-out for managed settings envelopes that can no longer decrypt. Refuses non-sensitive keys, refuses rows that decrypt cleanly, supports `--all-broken` scan, `--dry-run` reporting, and one or more `--key <name>` arguments. Pairs with the new runbook entry. Use it when you cannot log in to resave through the Settings UI, or when scripting a recovery across many installs.
 - **Runbook: "Sensitive setting envelope cannot decrypt" (`docs/internal/runbooks.md`).** Symptom → cause → three recovery paths (resave via UI, headless null-out via the new tool, restore the original `app_secret` from a `config.php` backup) — plus the explicit "don't hand-edit the encrypted blob, the Poly1305 MAC will reject any byte you change" warning.
 
 ### Changed
 
 - **`.gitignore` now excludes `Simple-PHP-IPAM/config.php`** and its bootstrap-backup forms so future development commits cannot leak `app_secret` again. The previously-tracked working copy was untracked in this release; recover it via `cp config.php.example config.php` on a fresh clone.
+
+[3.36.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.36.0...v3.36.1
 
 ## [3.36.0] - 2026-05-23
 

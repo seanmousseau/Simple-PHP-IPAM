@@ -178,8 +178,12 @@ $isBroken = function (?string $raw): bool {
 $targets = [];
 
 if ($allBroken) {
-    foreach ($definitions as $key => $def) {
-        if (empty($def['sensitive'])) continue;
+    // CR feedback: scan by the managed-secret list, not the sensitive flag.
+    // Not every sensitive setting is encrypted via the IPAMSEC1 envelope —
+    // `backup_vault_key` is sensitive but stored as a raw key value, so
+    // $isBroken() would never flag it even though "sensitive" would include
+    // it. Use ipam_secret_managed_keys() as the authoritative set.
+    foreach (ipam_secret_managed_keys() as $key) {
         $raw = $readRaw($key);
         if ($isBroken($raw)) {
             $targets[] = $key;
@@ -197,6 +201,16 @@ if ($allBroken) {
         $def = $definitions[$key];
         if (empty($def['sensitive'])) {
             cbs_die("refusing to touch non-sensitive key: $key");
+        }
+        // CR feedback: explicitly reject sensitive-but-not-managed keys with
+        // a clear error rather than the misleading "decrypts cleanly" path.
+        // backup_vault_key is the canonical example — it is sensitive but
+        // stored outside the IPAMSEC1 envelope, so this tool cannot help it.
+        if (!ipam_secret_is_managed_key($key)) {
+            cbs_die(
+                "key $key is sensitive but not stored as a managed IPAMSEC1 envelope; "
+                . "this tool only handles managed envelopes (see ipam_secret_managed_keys())"
+            );
         }
         $raw = $readRaw($key);
         if ($raw === null) {
@@ -228,6 +242,11 @@ try {
     $st = $db->prepare("DELETE FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
     foreach ($targets as $key) {
         $st->execute([':k' => $key]);
+        // CR feedback: audit every clear so recovery runs are visible in
+        // incident forensics. CLI context: current_user() returns the
+        // empty-id sentinel and client_ip() is empty — that's fine, the
+        // action + entity + details (key name) are what an auditor needs.
+        audit($db, 'setting.clear_broken_secret', 'setting', null, $key);
         ipam_setting_cache_bust($key);
     }
     if ($ownTx) $db->commit();
