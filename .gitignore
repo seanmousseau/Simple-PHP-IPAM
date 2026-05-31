@@ -7,7 +7,16 @@ Simple-PHP-IPAM/data/tmp/
 Simple-PHP-IPAM/data/backups/
 Simple-PHP-IPAM/data/sessions/
 Simple-PHP-IPAM/data/*.bak
+
+# Per-deployment secrets — never commit. Historical leak: release tarballs
+# through v3.36.0 shipped the build machine's config.php verbatim
+# (release-builder bug fixed in v3.36.1). Untracking the working copy so
+# future builds and commits cannot leak app_secret again. Fresh installs
+# start from config.php.example; see upgrade.sh and the v3.36.1 release
+# notes for rotation/recovery procedure.
+Simple-PHP-IPAM/config.php
 Simple-PHP-IPAM/config.php.bak*
+Simple-PHP-IPAM/config.php.prebootstrap-backup
 
 # Composer / dev tools
 vendor/

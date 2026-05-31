@@ -106,7 +106,21 @@ mkdir -p "$PAYLOAD"
 # Copy release tree into staging payload. Exclude vendor/ from the source
 # rsync — we install production deps into the payload separately below so
 # the developer's local vendor/ (which has dev deps) is never bundled.
+#
+# Exclude /config.php (and its various bootstrap/upgrade backup forms) — the
+# developer's working config.php contains a real app_secret (and possibly a
+# real db DSN). Shipping it in the public release tarball would (a) leak the
+# build machine's app_secret on GitHub and (b) clobber the installer's
+# existing config.php on every deploy path that doesn't carefully preserve
+# it. upgrade.sh already excludes /config.php from its own rsync; the
+# release builder shipping a config.php at all is the upstream defect.
+# See v3.36.0 demo regression (decrypt of login_protection.secret_key) and
+# v3.36.1 release notes. config.php.example continues to ship so fresh
+# installs and the upgrade.sh "missing config.php" safety net still work.
 rsync -a \
+  --exclude '/config.php' \
+  --exclude '/config.php.bak-*' \
+  --exclude '/config.php.prebootstrap-backup' \
   --exclude '*.sqlite' --exclude '*.db' \
   --exclude 'data/ipam.sqlite' --exclude 'data/ipam.sqlite-wal' --exclude 'data/ipam.sqlite-shm' \
   --exclude 'data/*.bak' --exclude 'data/ipam.sqlite.pre-import-*' \
