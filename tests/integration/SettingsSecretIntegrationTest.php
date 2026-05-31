@@ -65,7 +65,13 @@ final class SettingsSecretIntegrationTest extends TestCase
         ");
 
         $GLOBALS['db']     = $this->db;
-        $GLOBALS['config'] = [];
+        // Seed app_secret in $config so the encrypt/decrypt path runs
+        // without going through ipam_app_secret()'s realpath(config.php)
+        // autogen branch. Pre-v3.36.1 this was implicit because config.php
+        // was tracked in git and always present in CI; v3.36.1 untracked
+        // config.php so the test must set app_secret explicitly. Value is a
+        // valid 32-byte base64-encoded payload (HKDF input).
+        $GLOBALS['config'] = ['app_secret' => str_repeat('A', 44)];
         $_SESSION          = [];
 
         ipam_setting_cache_bust();
@@ -165,8 +171,16 @@ final class SettingsSecretIntegrationTest extends TestCase
         ipam_secret_set($this->db, 'branding.site_name', 'My IPAM');
     }
 
-    public function testCorruptEnvelopeForManagedKeyFailsLoud(): void
+    public function testCorruptEnvelopeForManagedKeyDegradesToRegistryDefault(): void
     {
+        // v3.36.1: a corrupt managed envelope no longer throws at the call
+        // site — it logs and returns the registry default, so the app stays
+        // bootable after an app_secret rotation/loss and the admin can reach
+        // the Settings UI to overwrite the broken row. The original v3.31.0
+        // #1233 "fail loud" design was reverted after it bricked demo on the
+        // v3.36.0 upgrade (release tarball shipped its own config.php and
+        // clobbered the existing app_secret).
+        //
         // A well-formed IPAMSEC1 envelope (valid base64, long enough to clear
         // the nonce+MAC length floor) whose body is random bytes — not a valid
         // ciphertext for the current key, so the Poly1305 MAC check fails.
@@ -178,18 +192,43 @@ final class SettingsSecretIntegrationTest extends TestCase
         $st->execute([':k' => 'smtp.auth_pass', ':v' => $corrupt]);
         ipam_setting_cache_bust();
 
+        // Redirect error_log to a temp file so we can assert on its contents
+        // without polluting the test runner's stderr.
+        $errLog = tempnam(sys_get_temp_dir(), 'ipam-err-');
+        $prev   = ini_set('error_log', $errLog);
         try {
-            ipam_setting('smtp.auth_pass');
-            self::fail('ipam_setting() must throw IpamSecretDecryptException on a corrupt managed envelope');
-        } catch (IpamSecretDecryptException $e) {
-            $msg = $e->getMessage();
-            self::assertStringContainsString('smtp.auth_pass', $msg, 'message must name the key');
-            self::assertStringNotContainsString($corrupt, $msg, 'message must not leak the envelope');
+            $value = ipam_setting('smtp.auth_pass');
+            // Registry default for smtp.auth_pass is the empty string. The
+            // exact value matters less than "did not throw + is not the
+            // corrupt envelope + matches the registry default".
+            self::assertSame('', $value, 'must degrade to registry default');
+
+            $log = (string) file_get_contents($errLog);
+            self::assertStringContainsString('smtp.auth_pass', $log, 'log must name the key');
+            self::assertStringContainsString('decrypt failed', $log, 'log must say what went wrong');
+            self::assertStringNotContainsString($corrupt, $log, 'log must not leak the envelope');
             self::assertStringNotContainsString(
                 substr($corrupt, strlen(IPAM_SECRET_ENVELOPE_PREFIX)),
-                $msg,
-                'message must not leak the ciphertext body'
+                $log,
+                'log must not leak the ciphertext body'
             );
+
+            // Second read inside the same request hits the cache and must not
+            // re-log — both prevents log spam and proves the cache absorbed
+            // the degraded value.
+            $sizeAfterFirst = (int) filesize($errLog);
+            $value2 = ipam_setting('smtp.auth_pass');
+            self::assertSame('', $value2);
+            clearstatcache(true, $errLog);
+            self::assertSame($sizeAfterFirst, (int) filesize($errLog), 'second read must not re-log');
+        } finally {
+            if ($prev !== false) {
+                ini_set('error_log', $prev);
+            }
+            // $errLog comes from tempnam(sys_get_temp_dir(), ...) and is not
+            // user-controlled; safe to unlink unconditionally.
+            // nosemgrep: php.lang.security.unlink-use.unlink-use
+            @unlink($errLog);
         }
     }
 }

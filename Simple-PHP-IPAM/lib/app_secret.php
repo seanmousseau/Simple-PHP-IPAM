@@ -49,6 +49,25 @@ function ipam_app_secret(?string $configPathOverride = null): string
     /** @var array<string,string> $cached */
     static $cached = [];
 
+    // v3.36.1 (#1329): short-circuit on in-memory app_secret BEFORE doing any
+    // filesystem work. Pre-v3.36.1 config.php was tracked in git so it was
+    // always on disk; now it's gitignored and a fresh checkout (CI, tests,
+    // some container builds) starts without one. The realpath() check used
+    // to assume the file always existed and threw "config.php path does
+    // not resolve" before noticing that the in-memory $config already
+    // carried a valid app_secret. The autogen path still requires the
+    // file (we must persist) and still throws the same error there — this
+    // change only spares callers who never need to write.
+    if ($configPathOverride === null) {
+        $cfgAppSecret = ipam_config('app_secret');
+        if (is_string($cfgAppSecret) && $cfgAppSecret !== '') {
+            // Per-path cache below is keyed on $configPath; when the in-memory
+            // config is the source of truth we just return without caching.
+            // Repeat calls re-hit ipam_config(), which has its own cache.
+            return $cfgAppSecret;
+        }
+    }
+
     if ($configPathOverride !== null) {
         $configPath = realpath($configPathOverride);
         if ($configPath === false) {

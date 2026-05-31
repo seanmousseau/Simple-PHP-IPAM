@@ -119,6 +119,21 @@ jobs:
       - name: PHPStan
         run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
+      - name: Seed Simple-PHP-IPAM/config.php from .example (v3.36.1 #1329)
+        # v3.36.1 untracked config.php from the repo (release-tarball leak
+        # fix), so the CI checkout no longer carries one. ipam_app_secret()
+        # resolves config.php via realpath() and refuses to autogen if the
+        # file is missing, which crashes every Integration test that bootstraps
+        # a DB (migrations.php:4445 → lib/db.php:797 → lib/app_secret.php:63).
+        # Seed a fresh config.php from the .example before phpunit runs.
+        # PHPUnit's integration tests use in-memory SQLite via the
+        # tests/Helpers/InMemoryDb harness, not this file's DSN, so the
+        # contents only need to satisfy ipam_app_secret()'s presence check.
+        run: |
+          if [ ! -f Simple-PHP-IPAM/config.php ]; then
+            cp Simple-PHP-IPAM/config.php.example Simple-PHP-IPAM/config.php
+          fi
+
       - name: PHPUnit (Unit)
         if: always()
         run: vendor/bin/phpunit --testsuite Unit
