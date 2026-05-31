@@ -35,6 +35,7 @@
 | OIDC login broken after IdP rotation | This doc → "OIDC JWKS stale" | Inline runbook |
 | Login attempts piling up; legitimate user locked out | This doc → "Login rate-limit lockout" | Inline runbook |
 | Step-up auth silently failing for every admin | `auth-model.md` → Step-up + `lessons-learned.md` Bug Z | Diagnostic pointer |
+| PHP log spam: `decrypt failed for key …` (sensitive setting unreadable after app_secret rotation) | This doc → "Sensitive setting envelope cannot decrypt" | Inline runbook |
 
 ---
 
@@ -106,6 +107,31 @@ ssh root@192.168.80.15 \
 Or to clear the whole bucket (testing instance only): `DELETE FROM login_attempts`.
 
 The rate-limit is stateful and survives password resets. Reset both the password AND the `login_attempts` rows when fixing a cred-drift.
+
+### Sensitive setting envelope cannot decrypt
+
+**Symptom:** `error.log` contains `ipam_setting: decrypt failed for key <name>: …` on every page load. Pre-v3.36.1: the whole app failed at the boot path with a red "Configuration error" screen. v3.36.1+: the app boots, the affected setting silently falls back to its registry default, log spam continues until the row is fixed.
+
+**Root cause:** `app_secret` in `config.php` no longer matches the value used to encrypt the envelope. Either `config.php` was overwritten (the v3.36.0 release-tarball-clobbers-config.php class of bug — fixed in v3.36.1 via the release-builder exclude), or `app_secret` was rotated without re-encrypting DB-resident secrets.
+
+**Recovery (pick one):**
+
+1. **Resave via Settings UI** (preferred when the affected key has UI presence). Log in → Admin → Settings → find the key → re-enter the value → save. The save path re-encrypts under the current `app_secret`. Confirm by tailing `error.log` — the spam should stop.
+
+2. **Headless null-out** (when no admin login is possible, or the affected key has no value to restore):
+
+   ```bash
+   # Dry-run to see what would be cleared:
+   php tools/clear-broken-secret.php --all-broken --dry-run
+   # Apply:
+   php tools/clear-broken-secret.php --all-broken
+   ```
+
+   The tool refuses to touch non-sensitive keys, refuses to wipe rows that decrypt cleanly, and DELETEs the row so the next read falls through to the registry default (typically empty). Resave through the UI afterwards if you have the original plaintext.
+
+3. **Restore the original `app_secret`** (when you have a backup of the old `config.php`). Drop the original value back into `config.php`, restart php-fpm or the OLS lsphp process so the in-memory cache invalidates, and the existing envelopes decrypt as before. Then rotate `app_secret` properly via tools/rotate-app-secret if/when you want a fresh key (re-encrypts every envelope in one shot — see #TBD when that lands).
+
+**Don't:** edit the encrypted blob in the `settings` table by hand. The envelope carries a Poly1305 MAC; any byte you change makes the row fail to decrypt under any key. Always use the tool or the Settings UI.
 
 ---
 

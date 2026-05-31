@@ -206,8 +206,19 @@ rsync -a --delete \
   --exclude '*.sqlite' --exclude '*.db' \
   "$NEW_DIR/" "$TARGET_DIR/"
 
-if [[ ! -f "$TARGET_DIR/config.php" && -f "$NEW_DIR/config.php" ]]; then
-  cp -a "$NEW_DIR/config.php" "$TARGET_DIR/config.php"
+if [[ ! -f "$TARGET_DIR/config.php" ]]; then
+  # v3.36.1: the release tarball no longer ships a populated config.php
+  # (it leaked the build machine's app_secret and risked clobbering the
+  # existing config on upgrade — v3.36.0 demo regression). For a fresh
+  # install with no prior config, seed from config.php.example so the
+  # operator has a starting point with an empty app_secret that init.php
+  # will autogenerate on first run.
+  if [[ -f "$NEW_DIR/config.php.example" ]]; then
+    cp -a "$NEW_DIR/config.php.example" "$TARGET_DIR/config.php"
+  elif [[ -f "$NEW_DIR/config.php" ]]; then
+    # Back-compat for older tarballs (pre-v3.36.1) that still ship config.php.
+    cp -a "$NEW_DIR/config.php" "$TARGET_DIR/config.php"
+  fi
 fi
 # Always update data/.htaccess so security improvements are applied on upgrade
 if [[ -f "$NEW_DIR/data/.htaccess" ]]; then

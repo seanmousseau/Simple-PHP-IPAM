@@ -1607,14 +1607,29 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
         }
         // Pre-migration fallback path — silently fall through.
     } catch (IpamSecretDecryptException $e) {
-        // v3.31.0 (#1233): a decrypt failure for a managed settings secret
-        // (envelope present but undecryptable — app_secret changed or row
-        // corrupt) must fail loud, not silently fall back to a stale config
-        // or registry default. Re-throw so the caller sees it. Every other
-        // RuntimeException falls through to the catch-all below and is
-        // swallowed exactly as before this task.
-        error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
-        throw $e;
+        // v3.36.1 (#TBD): degrade instead of throwing. The v3.31.0 #1233 design
+        // failed loud at the boot path to avoid silently serving stale values
+        // after an intentional app_secret rotation, but the same throw makes
+        // the entire app unbootable when app_secret is *un*intentionally lost
+        // (e.g. release tarball ships its own config.php and clobbers the
+        // existing one — the v3.36.0 demo regression). Throwing also means the
+        // Settings UI itself can't render, so an admin has no in-app recovery
+        // path. We now:
+        //   1. error_log the failure so it stays observable.
+        //   2. SKIP the config.php fallback (Step 3) — the row is in the DB,
+        //      just unreadable; using the in-memory config value would silently
+        //      revive stale data, which is exactly what #1233 was guarding
+        //      against. This is the half of #1233 we're keeping.
+        //   3. Cache + return the registry default so subsequent reads in the
+        //      same request don't re-decrypt and re-log, and so the admin can
+        //      reach the Settings page and overwrite the broken row.
+        // Recovery: open Settings → resave the affected key (the new envelope
+        // will encrypt under the current app_secret), or run
+        // tools/clear-broken-secret.php for a CLI null-out.
+        error_log("ipam_setting: decrypt failed for key {$key}: " . $e->getMessage()
+            . ' — returning registry default; resave the setting to recover');
+        ipam_setting_cache_set($key, $fallback, $tenantId);
+        return $fallback;
     } catch (\Throwable $e) {
         // Non-PDO failure (e.g. cache helper bug). Log and fall through to the
         // config back-compat path; do not rethrow because callers that read
