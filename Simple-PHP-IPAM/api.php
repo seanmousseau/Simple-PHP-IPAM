@@ -94,7 +94,7 @@ if ($rawKey === '') {
         $cookiePath = to_str($config['session_cookie_path'] ?? '');
         if ($cookiePath === '') {
             $sn = to_str($_SERVER['SCRIPT_NAME'] ?? '');
-            if ($sn !== '') { $d = str_replace('\\', '/', dirname($sn)); $cookiePath = ($d === '' || $d === '.' || $d === '/') ? '/' : $d . '/'; } else { $cookiePath = '/'; }
+            if ($sn !== '') { $d = str_replace('\\', '/', dirname($sn)); $cookiePath = ($d === '.' || $d === '/') ? '/' : $d . '/'; } else { $cookiePath = '/'; }
         }
         session_set_cookie_params(['lifetime' => 0, 'path' => $cookiePath, 'domain' => '', 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
         $sesDir = __DIR__ . '/data/sessions';

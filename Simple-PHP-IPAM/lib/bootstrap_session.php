@@ -68,7 +68,10 @@ function ipam_bootstrap_session(array $config): void
         $scriptName = to_str($_SERVER['SCRIPT_NAME'] ?? '');
         if ($scriptName !== '') {
             $dir = str_replace('\\', '/', dirname($scriptName));
-            $configuredCookiePath = ($dir === '' || $dir === '.' || $dir === '/') ? '/' : $dir . '/';
+            // PHPStan 2.2+ (identical.alwaysFalse): dirname() never returns '',
+            // and str_replace on a non-empty input is non-empty too — the only
+            // sentinels here are '.' (current dir) and '/' (root).
+            $configuredCookiePath = ($dir === '.' || $dir === '/') ? '/' : $dir . '/';
         } else {
             $configuredCookiePath = '/';
         }
